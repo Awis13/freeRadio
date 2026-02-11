@@ -4,7 +4,9 @@ const path = require('path');
 const CONTROL_FILE = '/shared/stream_control.json';
 
 function normalizeStreaming(value) {
-  return value === true || value === 'true' || value === 1 || value === '1';
+  if (value === true || value === 'true' || value === 1 || value === '1') return true;
+  if (value === false || value === 'false' || value === 0 || value === '0') return false;
+  return null;
 }
 
 function writeControlState(streaming) {
@@ -20,16 +22,23 @@ function getControlState() {
   try {
     if (fs.existsSync(CONTROL_FILE)) {
       const parsed = JSON.parse(fs.readFileSync(CONTROL_FILE, 'utf8'));
-      return { streaming: normalizeStreaming(parsed.streaming), timestamp: parsed.timestamp || Date.now() };
+      const normalized = normalizeStreaming(parsed.streaming);
+      if (normalized !== null) {
+        return { streaming: normalized, timestamp: parsed.timestamp || Date.now() };
+      }
     }
   } catch (e) {
-    // If file is broken/partial, fail closed.
+    // Ignore broken file and restore default-open state.
   }
-  return writeControlState(false);
+  return writeControlState(true);
 }
 
 function setControlState(streaming) {
-  return writeControlState(normalizeStreaming(streaming));
+  const normalized = normalizeStreaming(streaming);
+  if (normalized === null) {
+    return getControlState();
+  }
+  return writeControlState(normalized);
 }
 
 module.exports = { getControlState, setControlState };

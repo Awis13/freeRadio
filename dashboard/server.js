@@ -18,6 +18,7 @@ const MUSIC_DIR = process.env.MUSIC_DIR || '/music';
 const VISUALS_DIR = process.env.VISUALS_DIR || '/visuals';
 const FFMPEG_PROGRESS_FILE = process.env.FFMPEG_PROGRESS_FILE || '';
 const OUTPUT_MODE = process.env.OUTPUT_MODE || 'hls';
+const STREAM_AUTOSTART = process.env.STREAM_AUTOSTART !== '0';
 
 const app = express();
 const server = http.createServer(app);
@@ -183,6 +184,11 @@ app.post('/api/stream/control', (req, res) => {
 });
 
 // --- Start ---
+if (STREAM_AUTOSTART) {
+  streamControl.setControlState(true);
+  console.log('[stream] autostart=true (forcing streaming ON at dashboard boot)');
+}
+
 icecastPoller.start();
 trackPoller.start();
 videoPoller.start();

@@ -21,14 +21,17 @@ fetch_rtmp_urls() {
 is_streaming_enabled() {
   local control_file="/shared/stream_control.json"
   if [ -f "$control_file" ]; then
-    # Fail closed: only explicit "streaming: true" enables output.
     if grep -qE '"streaming"[[:space:]]*:[[:space:]]*true' "$control_file"; then
       return 0
     fi
-    return 1
+    if grep -qE '"streaming"[[:space:]]*:[[:space:]]*false' "$control_file"; then
+      return 1
+    fi
+    # Unknown/partial content should not block stream start.
+    return 0
   fi
-  # Missing control file means "disabled" until dashboard sets true.
-  return 1
+  # Missing control file defaults to enabled.
+  return 0
 }
 
 # Fetch quality settings from file
