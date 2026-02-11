@@ -159,7 +159,6 @@ watch_stream_config() {
   while true; do
     sleep 2
     [ -f "$APPLIED_SIG_FILE" ] || continue
-    is_streaming_enabled || continue
 
     local expected_sig current_sig
     expected_sig=$(cat "$APPLIED_SIG_FILE" 2>/dev/null || true)
