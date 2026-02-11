@@ -218,7 +218,8 @@ build_outputs() {
     for url in $urls; do
       url=$(echo "$url" | sed 's/\\\//\//g')
       if [ -n "$url" ]; then
-        outputs="${outputs}|[f=flv]${url}"
+        # RTMP endpoint failures must not kill local/HLS stream.
+        outputs="${outputs}|[f=flv:onfail=ignore]${url}"
         echo "[+] Adding RTMP output: ${url}" >&2
       fi
     done
