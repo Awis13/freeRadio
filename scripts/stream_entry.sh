@@ -155,7 +155,17 @@ file_sig() {
 }
 
 current_stream_sig() {
-  echo "keys=$(file_sig /shared/stream_keys.enc);quality=$(file_sig /shared/stream_quality.json);control=$(file_sig /shared/stream_control.json)"
+  local control_state="none"
+  if [ -f /shared/stream_control.json ]; then
+    if grep -qE '"streaming"[[:space:]]*:[[:space:]]*true' /shared/stream_control.json; then
+      control_state="true"
+    elif grep -qE '"streaming"[[:space:]]*:[[:space:]]*false' /shared/stream_control.json; then
+      control_state="false"
+    else
+      control_state="unknown"
+    fi
+  fi
+  echo "keys=$(file_sig /shared/stream_keys.enc);quality=$(file_sig /shared/stream_quality.json);control=${control_state}"
 }
 
 watch_stream_config() {
@@ -200,10 +210,14 @@ build_outputs() {
   # Always keep local HLS output alive.
   local outputs="[f=hls:hls_time=2:hls_list_size=15:hls_flags=delete_segments+omit_endlist+split_by_time:hls_segment_filename=${HLS_DIR}/seg_%03d.ts]${HLS_PLAYLIST}"
 
+  local tee_args="-f tee"
+
   # Add RTMP outputs only when restream is enabled from GUI.
   if is_restream_enabled; then
     local rtmp_urls
     rtmp_urls=$(fetch_rtmp_urls)
+    # Keep local stream alive and attempt RTMP recovery after disconnects.
+    tee_args="-f tee -use_fifo 1 -fifo_options attempt_recovery=1:recover_any_error=1:recovery_wait_time=2:drop_pkts_on_overflow=1:restart_with_keyframe=1:max_recovery_attempts=0"
 
     if [ "$rtmp_urls" != "[]" ] && [ -n "$rtmp_urls" ]; then
       local urls
@@ -221,7 +235,7 @@ build_outputs() {
     echo "[!] Restream disabled: running local HLS only." >&2
   fi
   
-  echo "$base_args -f tee \"$outputs\""
+  echo "$base_args $tee_args \"$outputs\""
 }
 
 # Main stream function

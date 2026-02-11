@@ -17,37 +17,32 @@ src = fallback(track_sensitive = false, [music, safety])
 src = mksafe(src)
 
 # ============================================
-# PRO DJ CROSSFADE
-# Long smooth mix like club DJ
+# PRO DJ CROSSFADE (longer, smoother blend)
 # ============================================
 
-# Custom crossfade - smooth blend with log curves
 def pro_mix(old, new) =
-  # Log the transition
-  log("MIX: transition starting")
-  
-  # Smooth DJ blend:
-  # - Old track: 8s fade out (logarithmic)
-  # - New track: 6s fade in (logarithmic)
-  
+  log("MIX PRO: transition starting")
+
+  # Longer overlap than before:
+  # - old track fades out for 14s
+  # - new track fades in for 12s
   old_faded = fade.out(
-    duration = 8.0,
+    duration = 14.0,
     type = "log",
     old.source
   )
-  
+
   new_faded = fade.in(
-    duration = 6.0,
+    duration = 12.0,
     type = "log",
     new.source
   )
-  
-  # Mix both
+
   add(normalize = false, [old_faded, new_faded])
 end
 
-# 10 second crossfade window
-radio = cross(duration = 10.0, pro_mix, src)
+# Wider cross window for more "mix" feeling.
+radio = cross(duration = 16.0, pro_mix, src)
 radio = mksafe(radio)
 
 # Master processing
