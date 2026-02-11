@@ -386,6 +386,7 @@
   const rtmpUrlInput = document.getElementById('rtmp-url-input');
   const rtmpHelp = document.getElementById('rtmp-help');
   const platformEnabled = document.getElementById('platform-enabled');
+  const restreamAutoStartCheckbox = document.getElementById('restream-autostart-checkbox');
 
   function syncPlatformHints() {
     var name = (platformNameInput.value || '').trim().toLowerCase();
@@ -522,7 +523,31 @@
   };
 
   // Initial load
+  function loadRestreamSettings() {
+    fetch('/api/restream/settings')
+      .then(function(r) { return r.json(); })
+      .then(function(data) {
+        restreamAutoStartCheckbox.checked = !!data.autoStart;
+      })
+      .catch(function(e) { log('restream settings: error loading: ' + e); });
+  }
+
+  restreamAutoStartCheckbox.onchange = function() {
+    fetch('/api/restream/settings', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ autoStart: restreamAutoStartCheckbox.checked })
+    })
+      .then(function(r) { return r.json(); })
+      .then(function(data) {
+        if (!data.success) throw new Error(data.error || 'save failed');
+        log('restream autostart: ' + (data.autoStart ? 'ON' : 'OFF'));
+      })
+      .catch(function(e) { showError('Restream autostart save failed: ' + e); });
+  };
+
   loadPlatforms();
+  loadRestreamSettings();
   setInterval(loadPlatforms, 30000);
 
   // --- Stream Control ---
@@ -539,10 +564,10 @@
   
   function updateStreamToggle(streaming) {
     if (streaming) {
-      streamToggleBtn.textContent = 'Stop Stream';
+      streamToggleBtn.textContent = 'Stop Restream';
       streamToggleBtn.className = 'btn-toggle streaming';
     } else {
-      streamToggleBtn.textContent = 'Start Stream';
+      streamToggleBtn.textContent = 'Start Restream';
       streamToggleBtn.className = 'btn-toggle stopped';
     }
   }
@@ -559,9 +584,9 @@
       .then(function(r) { return r.json(); })
       .then(function(data) {
         updateStreamToggle(data.streaming);
-        log('stream: ' + (data.streaming ? 'STARTED' : 'STOPPED'));
+        log('restream: ' + (data.streaming ? 'STARTED' : 'STOPPED'));
       })
-      .catch(function(e) { showError('Stream toggle failed: ' + e); });
+      .catch(function(e) { showError('Restream toggle failed: ' + e); });
   };
   
   loadStreamControl();

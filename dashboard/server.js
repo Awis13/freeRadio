@@ -11,6 +11,7 @@ const fileManager = require('./lib/fileManager');
 const streamKeys = require('./lib/streamKeys');
 const quality = require('./lib/quality');
 const streamControl = require('./lib/streamControl');
+const restreamSettings = require('./lib/restreamSettings');
 
 const PORT = process.env.PORT || 9090;
 const HLS_DIR = process.env.HLS_DIR || '/hls';
@@ -18,7 +19,6 @@ const MUSIC_DIR = process.env.MUSIC_DIR || '/music';
 const VISUALS_DIR = process.env.VISUALS_DIR || '/visuals';
 const FFMPEG_PROGRESS_FILE = process.env.FFMPEG_PROGRESS_FILE || '';
 const OUTPUT_MODE = process.env.OUTPUT_MODE || 'hls';
-const STREAM_AUTOSTART = process.env.STREAM_AUTOSTART !== '0';
 
 const app = express();
 const server = http.createServer(app);
@@ -183,11 +183,24 @@ app.post('/api/stream/control', (req, res) => {
   res.json({ success: true, ...result });
 });
 
+// --- REST API: restream settings ---
+app.get('/api/restream/settings', (req, res) => {
+  res.json(restreamSettings.getSettings());
+});
+
+app.post('/api/restream/settings', (req, res) => {
+  const { autoStart } = req.body;
+  if (typeof autoStart !== 'boolean') {
+    return res.status(400).json({ error: 'autoStart must be boolean' });
+  }
+  const result = restreamSettings.setAutoStart(autoStart);
+  res.json({ success: true, ...result });
+});
+
 // --- Start ---
-if (STREAM_AUTOSTART) {
-  streamControl.setControlState(true);
-  console.log('[stream] autostart=true (forcing streaming ON at dashboard boot)');
-}
+const restreamCfg = restreamSettings.getSettings();
+streamControl.setControlState(restreamCfg.autoStart);
+console.log(`[restream] autostart=${restreamCfg.autoStart} (applied on dashboard boot)`);
 
 icecastPoller.start();
 trackPoller.start();

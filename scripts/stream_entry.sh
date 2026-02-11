@@ -17,8 +17,8 @@ fetch_rtmp_urls() {
   curl -s "${DASHBOARD_API}/api/rtmp-urls" 2>/dev/null || echo "[]"
 }
 
-# Check if streaming is enabled
-is_streaming_enabled() {
+# Check if RTMP restream is enabled
+is_restream_enabled() {
   local control_file="/shared/stream_control.json"
   if [ -f "$control_file" ]; then
     if grep -qE '"streaming"[[:space:]]*:[[:space:]]*true' "$control_file"; then
@@ -27,11 +27,10 @@ is_streaming_enabled() {
     if grep -qE '"streaming"[[:space:]]*:[[:space:]]*false' "$control_file"; then
       return 1
     fi
-    # Unknown/partial content should not block stream start.
-    return 0
+    return 1
   fi
-  # Missing control file defaults to enabled.
-  return 0
+  # Missing control file defaults to disabled for restream.
+  return 1
 }
 
 # Fetch quality settings from file
@@ -164,13 +163,6 @@ watch_stream_config() {
     sleep 2
     [ -f "$APPLIED_SIG_FILE" ] || continue
 
-    if pgrep -f "$MAIN_FFMPEG_MATCH" >/dev/null 2>&1 && ! is_streaming_enabled; then
-      echo "$(current_stream_sig)" > "$APPLIED_SIG_FILE"
-      echo "[!] Streaming disabled, stopping ffmpeg..."
-      pkill -TERM -f "$MAIN_FFMPEG_MATCH" 2>/dev/null || true
-      continue
-    fi
-
     local expected_sig current_sig
     expected_sig=$(cat "$APPLIED_SIG_FILE" 2>/dev/null || true)
     [ -n "$expected_sig" ] || continue
@@ -205,24 +197,28 @@ build_outputs() {
   # Base ffmpeg args (without output)
   local base_args="-hide_banner -loglevel error $PROGRESS_ARGS -fflags +genpts+igndts -i $FIFO -i $ICECAST_URL -map 0:v -map 1:a -vf fps=30,format=yuv420p -c:v libx264 -preset $speed -profile:v high -b:v $vbr -minrate $vbr -maxrate $vbr -bufsize $vb_buf -g 60 -keyint_min 60 -sc_threshold 0 -c:a aac -b:a $abr -ar 48000"
   
-  # Get RTMP URLs
-  local rtmp_urls
-  rtmp_urls=$(fetch_rtmp_urls)
-  
-  # Always build tee outputs (HLS + all RTMPs)
+  # Always keep local HLS output alive.
   local outputs="[f=hls:hls_time=2:hls_list_size=15:hls_flags=delete_segments+omit_endlist+split_by_time:hls_segment_filename=${HLS_DIR}/seg_%03d.ts]${HLS_PLAYLIST}"
-  
-  if [ "$rtmp_urls" != "[]" ] && [ -n "$rtmp_urls" ]; then
-    local urls
-    urls=$(echo "$rtmp_urls" | grep -o '"url":"[^"]*"' | sed 's/"url":"//;s/"$//')
-    for url in $urls; do
-      url=$(echo "$url" | sed 's/\\\//\//g')
-      if [ -n "$url" ]; then
-        # RTMP endpoint failures must not kill local/HLS stream.
-        outputs="${outputs}|[f=flv:onfail=ignore]${url}"
-        echo "[+] Adding RTMP output: ${url}" >&2
-      fi
-    done
+
+  # Add RTMP outputs only when restream is enabled from GUI.
+  if is_restream_enabled; then
+    local rtmp_urls
+    rtmp_urls=$(fetch_rtmp_urls)
+
+    if [ "$rtmp_urls" != "[]" ] && [ -n "$rtmp_urls" ]; then
+      local urls
+      urls=$(echo "$rtmp_urls" | grep -o '"url":"[^"]*"' | sed 's/"url":"//;s/"$//')
+      for url in $urls; do
+        url=$(echo "$url" | sed 's/\\\//\//g')
+        if [ -n "$url" ]; then
+          # RTMP endpoint failures must not kill local/HLS stream.
+          outputs="${outputs}|[f=flv:onfail=ignore]${url}"
+          echo "[+] Adding RTMP output: ${url}" >&2
+        fi
+      done
+    fi
+  else
+    echo "[!] Restream disabled: running local HLS only." >&2
   fi
   
   echo "$base_args -f tee \"$outputs\""
@@ -231,11 +227,6 @@ build_outputs() {
 # Main stream function
 stream() {
   local cmd stream_sig feeder_pid rc
-  if ! is_streaming_enabled; then
-    echo "[!] Streaming disabled, skip stream start."
-    return 0
-  fi
-
   cmd=$(build_outputs)
   stream_sig=$(current_stream_sig)
   echo "$stream_sig" > "$APPLIED_SIG_FILE"
@@ -257,13 +248,7 @@ stream() {
 watch_stream_config &
 
 while true; do
-  if is_streaming_enabled; then
-    stream || true
-  else
-    echo "[!] Streaming disabled, waiting..."
-    sleep 5
-    continue
-  fi
+  stream || true
   echo "[!] Restarting in 1s..."
   sleep 1
 done

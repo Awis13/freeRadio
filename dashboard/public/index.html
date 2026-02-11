@@ -85,7 +85,7 @@
       <!-- Stream Control -->
       <div class="panel">
         <div class="panel-head">
-          <span>Stream Control</span>
+          <span>Restream Control</span>
           <button id="stream-toggle-btn" class="btn-toggle">Loading...</button>
         </div>
       </div>
@@ -110,6 +110,10 @@
         <div class="panel-head"><span>Stream Platforms</span></div>
         <div class="panel-body">
           <div id="stream-platforms">
+            <label class="checkbox-label platform-autostart">
+              <input type="checkbox" id="restream-autostart-checkbox">
+              Auto-start restream after restart
+            </label>
             <div class="platform-list" id="platform-list"></div>
             <button class="upload-btn" id="add-platform-btn" style="margin-top:8px;width:100%">+ Add Platform</button>
           </div>

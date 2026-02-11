@@ -426,6 +426,12 @@ video {
   width: auto;
 }
 
+.platform-autostart {
+  margin-bottom: 10px;
+  font-size: 12px;
+  color: var(--text2);
+}
+
 .btn-primary,
 .btn-secondary {
   padding: 6px 14px;

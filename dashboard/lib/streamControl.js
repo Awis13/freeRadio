@@ -28,9 +28,9 @@ function getControlState() {
       }
     }
   } catch (e) {
-    // Ignore broken file and restore default-open state.
+    // Ignore broken file and restore default-off state.
   }
-  return writeControlState(true);
+  return writeControlState(false);
 }
 
 function setControlState(streaming) {
