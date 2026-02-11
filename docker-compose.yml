@@ -1,0 +1,106 @@
+services:
+  # 0. BPM-сканер (LIVE DAEMON) - uses librosa for accurate BPM detection
+  bpm-scanner:
+    image: python:3.11-slim
+    container_name: s23-bpm-scanner
+    entrypoint: bash
+    command: -c "pip install -q librosa soundfile numpy && python3 /scripts/bpm_scan.py"
+    volumes:
+      - ./content/music:/music
+      - ./scripts:/scripts:ro
+    restart: unless-stopped
+
+  # 1. Аудио-сервер
+  icecast:
+    image: infiniteproject/icecast
+    container_name: s23-icecast
+    ports:
+      - "8000:8000"
+    environment:
+      - ICECAST_SOURCE_PASSWORD=hackme
+      - ICECAST_ADMIN_PASSWORD=hackme
+      - ICECAST_PASSWORD=hackme
+      - ICECAST_RELAY_PASSWORD=hackme
+    networks:
+      - rave-net
+    restart: unless-stopped
+
+  # 2. DJ (Liquidsoap)
+  dj:
+    image: savonet/liquidsoap:v2.3.0
+    container_name: s23-dj
+    entrypoint: liquidsoap
+    command: /config/radio.liq
+    volumes:
+      - ./configs/liquidsoap:/config:ro
+      - ./content/music:/music:ro
+      - shared-data:/shared
+    networks:
+      - rave-net
+    depends_on:
+      - icecast
+    restart: unless-stopped
+
+  # 3. Стример (FFMPEG → HLS или RTMP + multi-streaming)
+  streamer:
+    image: linuxserver/ffmpeg:latest
+    container_name: s23-streamer
+    entrypoint: /scripts/stream_entry.sh
+    environment:
+      - OUTPUT_MODE=${OUTPUT_MODE:-hls}
+      - RTMP_URL=${RTMP_URL:-}
+      - ICECAST_URL=http://icecast:8000/live
+      - MAX_CLIP_DURATION=${MAX_CLIP_DURATION:-60}
+      - HLS_DIR=/hls
+      - HLS_PLAYLIST=/hls/stream.m3u8
+      - HLS_LIST_SIZE=6
+      - HLS_TIME=4
+      - HLS_DELETE_SEGMENTS=1
+      - STABLE_LOOP=1
+      - FFMPEG_PROGRESS_FILE=/shared/ffmpeg_progress.txt
+      - DASHBOARD_API=http://dashboard:9090
+    volumes:
+      - ./content/visuals:/visuals:ro
+      - ./scripts:/scripts:ro
+      - hls-data:/hls
+      - shared-data:/shared
+    networks:
+      - rave-net
+    depends_on:
+      - icecast
+      - dj
+    restart: unless-stopped
+
+  # 4. Dashboard (Node.js — preview + API + WebSocket)
+  # http://localhost:9090
+  dashboard:
+    build: ./dashboard
+    container_name: s23-dashboard
+    ports:
+      - "9090:9090"
+    environment:
+      - PORT=9090
+      - HLS_DIR=/hls
+      - MUSIC_DIR=/music
+      - VISUALS_DIR=/visuals
+      - OUTPUT_MODE=${OUTPUT_MODE:-hls}
+      - FFMPEG_PROGRESS_FILE=/shared/ffmpeg_progress.txt
+    volumes:
+      - ./content/music:/music
+      - ./content/visuals:/visuals
+      - hls-data:/hls:ro
+      - shared-data:/shared
+    networks:
+      - rave-net
+    depends_on:
+      - icecast
+      - streamer
+    restart: unless-stopped
+
+volumes:
+  hls-data:
+  shared-data:
+
+networks:
+  rave-net:
+    driver: bridge

@@ -1,0 +1,173 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>SYSTEM 23</title>
+  <link rel="stylesheet" href="/style.css" />
+</head>
+<body>
+  <header>
+    <div class="tag active">SYSTEM 23</div>
+    <div class="tag" id="mode-tag">HLS</div>
+    <div class="quality-selector">
+      <label>Quality:</label>
+      <select id="quality-select">
+        <option value="high">High (1080p)</option>
+        <option value="medium">Medium (720p)</option>
+        <option value="low">Low (480p)</option>
+      </select>
+    </div>
+    <div id="uptime"></div>
+  </header>
+
+  <div id="error-banner" class="error-banner"></div>
+
+  <div class="grid">
+    <!-- Main column -->
+    <div class="main-col">
+      <!-- Player -->
+      <div class="panel player-wrap">
+        <video id="player" controls autoplay playsinline muted></video>
+      </div>
+
+      <!-- Music Library -->
+      <div class="panel">
+        <div class="panel-head">
+          <span>Music Library</span>
+          <span id="music-count" style="margin-left:auto"></span>
+        </div>
+        <div class="panel-body">
+          <div class="file-list" id="music-list"></div>
+        </div>
+        <div class="upload-row">
+          <input type="file" id="music-input" multiple accept=".wav,.mp3,.flac,.ogg,.aac,.m4a" style="display:none" />
+          <button class="upload-btn" onclick="document.getElementById('music-input').click()">Upload</button>
+          <span class="upload-status" id="music-upload-status"></span>
+        </div>
+      </div>
+
+      <!-- Visuals Library -->
+      <div class="panel">
+        <div class="panel-head">
+          <span>Visuals Library</span>
+          <span id="visuals-count" style="margin-left:auto"></span>
+        </div>
+        <div class="panel-body">
+          <div class="file-list" id="visuals-list"></div>
+        </div>
+        <div class="upload-row">
+          <input type="file" id="visuals-input" multiple accept=".mp4,.mov,.mkv" style="display:none" />
+          <button class="upload-btn" onclick="document.getElementById('visuals-input').click()">Upload</button>
+          <span class="upload-status" id="visuals-upload-status"></span>
+        </div>
+      </div>
+    </div>
+
+    <!-- Sidebar -->
+    <div class="sidebar">
+      <!-- Now Playing -->
+      <div class="panel now-playing">
+        <div class="panel-head"><span>Now Playing</span></div>
+        <div class="panel-body">
+          <div class="track-section">
+            <div class="track-label">Audio</div>
+            <div class="track-name" id="audio-track">--</div>
+          </div>
+          <div class="track-section">
+            <div class="track-label">Video</div>
+            <div class="track-name" id="video-track">--</div>
+          </div>
+          <div class="track-bpm" id="track-bpm"></div>
+        </div>
+      </div>
+
+      <!-- Stream Control -->
+      <div class="panel">
+        <div class="panel-head">
+          <span>Stream Control</span>
+          <button id="stream-toggle-btn" class="btn-toggle">Loading...</button>
+        </div>
+      </div>
+
+      <!-- Stream Stats -->
+      <div class="panel">
+        <div class="panel-head"><span>Stream Stats</span></div>
+        <div class="panel-body">
+          <div class="stats-grid">
+            <div><div class="stat-label">Listeners</div><div class="stat-value" id="stat-listeners">--</div></div>
+            <div><div class="stat-label">Audio</div><div class="stat-value" id="stat-audio-br">--</div></div>
+            <div><div class="stat-label">FPS</div><div class="stat-value" id="stat-fps">--</div></div>
+            <div><div class="stat-label">Speed</div><div class="stat-value" id="stat-speed">--</div></div>
+            <div><div class="stat-label">Video Bitrate</div><div class="stat-value" id="stat-video-br">--</div></div>
+            <div><div class="stat-label">Encode Time</div><div class="stat-value" id="stat-time">--</div></div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Stream Platforms -->
+      <div class="panel">
+        <div class="panel-head"><span>Stream Platforms</span></div>
+        <div class="panel-body">
+          <div id="stream-platforms">
+            <div class="platform-list" id="platform-list"></div>
+            <button class="upload-btn" id="add-platform-btn" style="margin-top:8px;width:100%">+ Add Platform</button>
+          </div>
+        </div>
+      </div>
+
+      <!-- Debug Log -->
+      <div class="panel">
+        <div class="panel-head">
+          <span>Debug</span>
+          <div class="dbg-actions">
+            <button class="dbg-btn" id="dbg-clear">Clear</button>
+            <button class="dbg-btn" id="dbg-pause">Pause</button>
+          </div>
+        </div>
+        <div class="dbg-body">
+          <pre class="log" id="log"></pre>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Platform Modal -->
+  <div id="platform-modal" class="modal" style="display:none">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h3 id="modal-title">Add Platform</h3>
+        <button class="modal-close" onclick="closePlatformModal()">&times;</button>
+      </div>
+      <div class="modal-body">
+        <div class="form-group">
+          <label>Platform Name</label>
+          <input type="text" id="platform-name-input" placeholder="e.g. Kick, YouTube...">
+        </div>
+        <div class="form-group">
+          <label>RTMP URL</label>
+          <input type="text" id="rtmp-url-input" placeholder="rtmp://... or rtmps://...">
+          <small id="rtmp-help" style="opacity:.75">Kick: use server URL (usually ends with <code>/app</code>), key goes below.</small>
+        </div>
+        <div class="form-group">
+          <label>Stream Key</label>
+          <input type="password" id="stream-key-input" placeholder="Enter stream key...">
+        </div>
+        <div class="form-group">
+          <label class="checkbox-label">
+            <input type="checkbox" id="platform-enabled" checked>
+            Enabled
+          </label>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn-secondary" onclick="closePlatformModal()">Cancel</button>
+        <button class="btn-primary" onclick="savePlatform()">Save</button>
+      </div>
+    </div>
+  </div>
+
+  <script src="/js/hls.min.js"></script>
+  <script src="/app.js"></script>
+</body>
+</html>

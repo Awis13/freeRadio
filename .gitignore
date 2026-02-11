@@ -1,0 +1,8 @@
+.DS_Store
+**/.DS_Store
+node_modules/
+dashboard/node_modules/
+content/music/*
+content/visuals/*
+!content/music/.gitkeep
+!content/visuals/.gitkeep
