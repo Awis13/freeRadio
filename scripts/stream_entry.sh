@@ -21,13 +21,14 @@ fetch_rtmp_urls() {
 is_streaming_enabled() {
   local control_file="/shared/stream_control.json"
   if [ -f "$control_file" ]; then
-    local streaming
-    streaming=$(cat "$control_file" | grep -o '"streaming":[a-z]*' | cut -d':' -f2)
-    if [ "$streaming" = "false" ]; then
-      return 1
+    # Fail closed: only explicit "streaming: true" enables output.
+    if grep -qE '"streaming"[[:space:]]*:[[:space:]]*true' "$control_file"; then
+      return 0
     fi
+    return 1
   fi
-  return 0
+  # Missing control file means "disabled" until dashboard sets true.
+  return 1
 }
 
 # Fetch quality settings from file
@@ -160,6 +161,13 @@ watch_stream_config() {
     sleep 2
     [ -f "$APPLIED_SIG_FILE" ] || continue
 
+    if pgrep -f "$MAIN_FFMPEG_MATCH" >/dev/null 2>&1 && ! is_streaming_enabled; then
+      echo "$(current_stream_sig)" > "$APPLIED_SIG_FILE"
+      echo "[!] Streaming disabled, stopping ffmpeg..."
+      pkill -TERM -f "$MAIN_FFMPEG_MATCH" 2>/dev/null || true
+      continue
+    fi
+
     local expected_sig current_sig
     expected_sig=$(cat "$APPLIED_SIG_FILE" 2>/dev/null || true)
     [ -n "$expected_sig" ] || continue
@@ -219,6 +227,11 @@ build_outputs() {
 # Main stream function
 stream() {
   local cmd stream_sig feeder_pid rc
+  if ! is_streaming_enabled; then
+    echo "[!] Streaming disabled, skip stream start."
+    return 0
+  fi
+
   cmd=$(build_outputs)
   stream_sig=$(current_stream_sig)
   echo "$stream_sig" > "$APPLIED_SIG_FILE"
