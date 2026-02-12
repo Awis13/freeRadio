@@ -47,8 +47,8 @@ get_quality_settings() {
 get_video_bitrate() {
   local preset="$1"
   case "$preset" in
-    low) echo "2000k" ;;
-    medium) echo "4000k" ;;
+    low) echo "2500k" ;;
+    medium) echo "6000k" ;;  # YouTube recommended for 1080p30
     *) echo "8000k" ;;  # high default
   esac
 }
@@ -58,7 +58,7 @@ get_audio_bitrate() {
   local preset="$1"
   case "$preset" in
     low) echo "128k" ;;
-    medium) echo "192k" ;;
+    medium) echo "256k" ;;  # YouTube recommended
     *) echo "256k" ;;  # high default
   esac
 }
@@ -126,11 +126,10 @@ feed_fifo() {
     HISTORY+=("$RANDOM_FILE")
     [ ${#HISTORY[@]} -gt $HISTORY_SIZE ] && HISTORY=("${HISTORY[@]:1}")
 
-    # Пишем в FIFO: используем COPY (-c copy) вместо перекодирования!
-    # Работает только если все видео в одном формате (обычно так и есть)
+    # Пишем в FIFO: перекодируем в H.264 с repeat-headers для стабильности
     ffmpeg -hide_banner -loglevel error -re -i "$RANDOM_FILE" \
       -vf "scale=1920:1080:force_original_aspect_ratio=decrease,pad=1920:1080:(ow-iw)/2:(oh-ih)/2:black,fps=30" \
-      -c:v mpeg2video -b:v 20M -maxrate 20M -bufsize 40M -g 30 \
+      -c:v libx264 -preset ultrafast -tune zerolatency -x264-params "repeat-headers=1:keyint=30" -b:v 8M -maxrate 8M -bufsize 16M \
       -pix_fmt yuv420p -f mpegts - 2>/dev/null || true
   done
 }
@@ -200,12 +199,13 @@ build_outputs() {
   abr=$(get_audio_bitrate "$preset")
   speed=$(get_preset_speed "$preset")
   vbr_num="${vbr%k}"
-  vb_buf="$((vbr_num * 2))k"
+  vb_buf="${vbr_num}k"  # YouTube requires bufsize = bitrate for stable CBR
   
   echo "[+] Quality preset: $preset (video: $vbr, audio: $abr, speed: $speed)" >&2
   
   # Base ffmpeg args (without output)
-  local base_args="-hide_banner -loglevel error $PROGRESS_ARGS -fflags +genpts+igndts -i $FIFO -i $ICECAST_URL -map 0:v -map 1:a -vf fps=30,format=yuv420p -c:v libx264 -preset $speed -profile:v high -b:v $vbr -minrate $vbr -maxrate $vbr -bufsize $vb_buf -g 60 -keyint_min 60 -sc_threshold 0 -c:a aac -b:a $abr -ar 48000"
+  # +genpts+igndts: fix timestamps, +discardcorrupt: skip bad packets
+  local base_args="-hide_banner -loglevel error $PROGRESS_ARGS -thread_queue_size 2048 -fflags +genpts+igndts+discardcorrupt -flags output_corrupt -i $FIFO -i $ICECAST_URL -map 0:v -map 1:a -vf fps=30,format=yuv420p -c:v libx264 -preset fast -profile:v high -b:v $vbr -minrate $vbr -maxrate $vbr -bufsize $vb_buf -g 60 -keyint_min 60 -sc_threshold 0 -c:a aac -b:a $abr -ar 48000"
   
   # Always keep local HLS output alive.
   local outputs="[f=hls:hls_time=2:hls_list_size=15:hls_flags=delete_segments+omit_endlist+split_by_time:hls_segment_filename=${HLS_DIR}/seg_%03d.ts]${HLS_PLAYLIST}"
@@ -216,8 +216,8 @@ build_outputs() {
   if is_restream_enabled; then
     local rtmp_urls
     rtmp_urls=$(fetch_rtmp_urls)
-    # Keep local stream alive and attempt RTMP recovery after disconnects.
-    tee_args="-f tee -use_fifo 1 -fifo_options attempt_recovery=1:recover_any_error=1:recovery_wait_time=2:drop_pkts_on_overflow=1:restart_with_keyframe=1:max_recovery_attempts=0"
+    # Simple tee without fifo - fifo causes sync issues with multiple RTMP outputs
+    tee_args="-f tee"
 
     if [ "$rtmp_urls" != "[]" ] && [ -n "$rtmp_urls" ]; then
       local urls
