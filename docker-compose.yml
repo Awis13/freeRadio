@@ -1,10 +1,10 @@
 services:
-  # 0. BPM-сканер (LIVE DAEMON) - uses librosa for accurate BPM detection
-  bpm-scanner:
-    image: python:3.11-slim
-    container_name: s23-bpm-scanner
-    entrypoint: bash
-    command: -c "pip install -q librosa soundfile numpy && python3 /scripts/bpm_scan.py"
+  # 0. Audio Analyzer (Essentia) - beat detection, structure analysis, mix points
+  audio-analyzer:
+    image: mtgupf/essentia:latest
+    container_name: s23-audio-analyzer
+    entrypoint: python3
+    command: /scripts/audio_analyzer_simple.py
     volumes:
       - ./content/music:/music
       - ./scripts:/scripts:ro
@@ -30,7 +30,7 @@ services:
     image: savonet/liquidsoap:v2.3.0
     container_name: s23-dj
     entrypoint: liquidsoap
-    command: /config/radio.liq
+    command: /config/radio_bpm.liq
     volumes:
       - ./configs/liquidsoap:/config:ro
       - ./content/music:/music:ro
