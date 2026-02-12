@@ -135,6 +135,11 @@ def save_analysis(data):
     with open(ANALYSIS_MAP, 'a') as f:
         f.write(line)
     
+    # Also update .bpm_map for dashboard compatibility
+    bpm_line = f"{data['filepath']}|{data['bpm']:.1f}\n"
+    with open(os.path.join(MUSIC_DIR, '.bpm_map'), 'a') as f:
+        f.write(bpm_line)
+    
     print(f"    [+] Saved")
 
 
