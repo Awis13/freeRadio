@@ -17,8 +17,8 @@ fetch_rtmp_urls() {
   curl -s "${DASHBOARD_API}/api/rtmp-urls" 2>/dev/null || echo "[]"
 }
 
-# Check if RTMP restream is enabled
-is_restream_enabled() {
+# Check if streaming is enabled
+is_streaming_enabled() {
   local control_file="/shared/stream_control.json"
   if [ -f "$control_file" ]; then
     if grep -qE '"streaming"[[:space:]]*:[[:space:]]*true' "$control_file"; then
@@ -27,10 +27,11 @@ is_restream_enabled() {
     if grep -qE '"streaming"[[:space:]]*:[[:space:]]*false' "$control_file"; then
       return 1
     fi
-    return 1
+    # Unknown/partial content should not block stream start.
+    return 0
   fi
-  # Missing control file defaults to disabled for restream.
-  return 1
+  # Missing control file defaults to enabled.
+  return 0
 }
 
 # Fetch quality settings from file
@@ -47,8 +48,8 @@ get_quality_settings() {
 get_video_bitrate() {
   local preset="$1"
   case "$preset" in
-    low) echo "2500k" ;;
-    medium) echo "6000k" ;;  # YouTube recommended for 1080p30
+    low) echo "2000k" ;;
+    medium) echo "4000k" ;;
     *) echo "8000k" ;;  # high default
   esac
 }
@@ -58,7 +59,7 @@ get_audio_bitrate() {
   local preset="$1"
   case "$preset" in
     low) echo "128k" ;;
-    medium) echo "256k" ;;  # YouTube recommended
+    medium) echo "192k" ;;
     *) echo "256k" ;;  # high default
   esac
 }
@@ -126,11 +127,11 @@ feed_fifo() {
     HISTORY+=("$RANDOM_FILE")
     [ ${#HISTORY[@]} -gt $HISTORY_SIZE ] && HISTORY=("${HISTORY[@]:1}")
 
-    # Пишем в FIFO: перекодируем в H.264 с repeat-headers для стабильности
+    # Пишем в FIFO: H.264 с Annex-B format для YouTube
     ffmpeg -hide_banner -loglevel error -re -i "$RANDOM_FILE" \
       -vf "scale=1920:1080:force_original_aspect_ratio=decrease,pad=1920:1080:(ow-iw)/2:(oh-ih)/2:black,fps=30" \
       -c:v libx264 -preset ultrafast -tune zerolatency -x264-params "repeat-headers=1:keyint=30" -b:v 8M -maxrate 8M -bufsize 16M \
-      -pix_fmt yuv420p -f mpegts - 2>/dev/null || true
+      -pix_fmt yuv420p -bsf:v h264_mp4toannexb -f mpegts - 2>/dev/null || true
   done
 }
 
@@ -154,23 +155,20 @@ file_sig() {
 }
 
 current_stream_sig() {
-  local control_state="none"
-  if [ -f /shared/stream_control.json ]; then
-    if grep -qE '"streaming"[[:space:]]*:[[:space:]]*true' /shared/stream_control.json; then
-      control_state="true"
-    elif grep -qE '"streaming"[[:space:]]*:[[:space:]]*false' /shared/stream_control.json; then
-      control_state="false"
-    else
-      control_state="unknown"
-    fi
-  fi
-  echo "keys=$(file_sig /shared/stream_keys.enc);quality=$(file_sig /shared/stream_quality.json);control=${control_state}"
+  echo "keys=$(file_sig /shared/stream_keys.enc);quality=$(file_sig /shared/stream_quality.json);control=$(file_sig /shared/stream_control.json)"
 }
 
 watch_stream_config() {
   while true; do
     sleep 2
     [ -f "$APPLIED_SIG_FILE" ] || continue
+
+    if pgrep -f "$MAIN_FFMPEG_MATCH" >/dev/null 2>&1 && ! is_streaming_enabled; then
+      echo "$(current_stream_sig)" > "$APPLIED_SIG_FILE"
+      echo "[!] Streaming disabled, stopping ffmpeg..."
+      pkill -TERM -f "$MAIN_FFMPEG_MATCH" 2>/dev/null || true
+      continue
+    fi
 
     local expected_sig current_sig
     expected_sig=$(cat "$APPLIED_SIG_FILE" 2>/dev/null || true)
@@ -199,48 +197,43 @@ build_outputs() {
   abr=$(get_audio_bitrate "$preset")
   speed=$(get_preset_speed "$preset")
   vbr_num="${vbr%k}"
-  vb_buf="${vbr_num}k"  # YouTube requires bufsize = bitrate for stable CBR
+  vb_buf="$((vbr_num * 2))k"
   
   echo "[+] Quality preset: $preset (video: $vbr, audio: $abr, speed: $speed)" >&2
   
   # Base ffmpeg args (without output)
-  # +genpts+igndts: fix timestamps, +discardcorrupt: skip bad packets
-  local base_args="-hide_banner -loglevel error $PROGRESS_ARGS -thread_queue_size 2048 -fflags +genpts+igndts+discardcorrupt -flags output_corrupt -i $FIFO -i $ICECAST_URL -map 0:v -map 1:a -vf fps=30,format=yuv420p -c:v libx264 -preset fast -profile:v high -b:v $vbr -minrate $vbr -maxrate $vbr -bufsize $vb_buf -g 60 -keyint_min 60 -sc_threshold 0 -c:a aac -b:a $abr -ar 48000"
+  local base_args="-hide_banner -loglevel error $PROGRESS_ARGS -fflags +genpts+igndts -i $FIFO -i $ICECAST_URL -map 0:v -map 1:a -vf fps=30,format=yuv420p -c:v libx264 -preset $speed -profile:v high -b:v $vbr -minrate $vbr -maxrate $vbr -bufsize $vb_buf -g 60 -keyint_min 60 -sc_threshold 0 -c:a aac -b:a $abr -ar 48000"
   
-  # Always keep local HLS output alive.
+  # Get RTMP URLs
+  local rtmp_urls
+  rtmp_urls=$(fetch_rtmp_urls)
+  
+  # Always build tee outputs (HLS + all RTMPs)
   local outputs="[f=hls:hls_time=2:hls_list_size=15:hls_flags=delete_segments+omit_endlist+split_by_time:hls_segment_filename=${HLS_DIR}/seg_%03d.ts]${HLS_PLAYLIST}"
-
-  local tee_args="-f tee"
-
-  # Add RTMP outputs only when restream is enabled from GUI.
-  if is_restream_enabled; then
-    local rtmp_urls
-    rtmp_urls=$(fetch_rtmp_urls)
-    # Simple tee without fifo - fifo causes sync issues with multiple RTMP outputs
-    tee_args="-f tee"
-
-    if [ "$rtmp_urls" != "[]" ] && [ -n "$rtmp_urls" ]; then
-      local urls
-      urls=$(echo "$rtmp_urls" | grep -o '"url":"[^"]*"' | sed 's/"url":"//;s/"$//')
-      for url in $urls; do
-        url=$(echo "$url" | sed 's/\\\//\//g')
-        if [ -n "$url" ]; then
-          # RTMP endpoint failures must not kill local/HLS stream.
-          outputs="${outputs}|[f=flv:onfail=ignore]${url}"
-          echo "[+] Adding RTMP output: ${url}" >&2
-        fi
-      done
-    fi
-  else
-    echo "[!] Restream disabled: running local HLS only." >&2
+  
+  if [ "$rtmp_urls" != "[]" ] && [ -n "$rtmp_urls" ]; then
+    local urls
+    urls=$(echo "$rtmp_urls" | grep -o '"url":"[^"]*"' | sed 's/"url":"//;s/"$//')
+    for url in $urls; do
+      url=$(echo "$url" | sed 's/\\\//\//g')
+      if [ -n "$url" ]; then
+        outputs="${outputs}|[f=flv]${url}"
+        echo "[+] Adding RTMP output: ${url}" >&2
+      fi
+    done
   fi
   
-  echo "$base_args $tee_args \"$outputs\""
+  echo "$base_args -f tee \"$outputs\""
 }
 
 # Main stream function
 stream() {
   local cmd stream_sig feeder_pid rc
+  if ! is_streaming_enabled; then
+    echo "[!] Streaming disabled, skip stream start."
+    return 0
+  fi
+
   cmd=$(build_outputs)
   stream_sig=$(current_stream_sig)
   echo "$stream_sig" > "$APPLIED_SIG_FILE"
@@ -262,7 +255,13 @@ stream() {
 watch_stream_config &
 
 while true; do
-  stream || true
+  if is_streaming_enabled; then
+    stream || true
+  else
+    echo "[!] Streaming disabled, waiting..."
+    sleep 5
+    continue
+  fi
   echo "[!] Restarting in 1s..."
   sleep 1
 done
