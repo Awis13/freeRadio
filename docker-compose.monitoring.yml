@@ -1,0 +1,63 @@
+services:
+  # Prometheus - сбор метрик
+  prometheus:
+    image: prom/prometheus:latest
+    container_name: s23-prometheus
+    ports:
+      - "9092:9090"
+    volumes:
+      - ./configs/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus-data:/prometheus
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.path=/prometheus'
+      - '--storage.tsdb.retention.time=7d'
+      - '--web.enable-lifecycle'
+    networks:
+      - rave-net
+    restart: unless-stopped
+
+  # Grafana - визуализация
+  grafana:
+    image: grafana/grafana:latest
+    container_name: s23-grafana
+    ports:
+      - "3000:3000"
+    volumes:
+      - grafana-data:/var/lib/grafana
+      - ./configs/grafana/dashboards:/etc/grafana/provisioning/dashboards:ro
+      - ./configs/grafana/datasources:/etc/grafana/provisioning/datasources:ro
+    environment:
+      - GF_SECURITY_ADMIN_USER=admin
+      - GF_SECURITY_ADMIN_PASSWORD=admin
+      - GF_USERS_ALLOW_SIGN_UP=false
+    networks:
+      - rave-net
+    restart: unless-stopped
+    depends_on:
+      - prometheus
+
+  # Node Exporter - метрики системы
+  node-exporter:
+    image: prom/node-exporter:latest
+    container_name: s23-node-exporter
+    volumes:
+      - /proc:/host/proc:ro
+      - /sys:/host/sys:ro
+      - /:/rootfs:ro
+    command:
+      - '--path.procfs=/host/proc'
+      - '--path.sysfs=/host/sys'
+      - '--collector.filesystem.ignored-mount-points=^/(sys|proc|dev|host|etc)($$|/)'
+    networks:
+      - rave-net
+    restart: unless-stopped
+
+volumes:
+  prometheus-data:
+  grafana-data:
+
+networks:
+  rave-net:
+    name: freeradio_rave-net
+    external: true

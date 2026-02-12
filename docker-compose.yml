@@ -79,6 +79,7 @@ services:
     container_name: s23-dashboard
     ports:
       - "9090:9090"
+      - "9091:9091"
     environment:
       - PORT=9090
       - HLS_DIR=/hls
