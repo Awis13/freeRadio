@@ -32,6 +32,27 @@ def get_existing_tracks():
     return existing
 
 
+def is_file_stable(filepath, wait_secs=2, max_attempts=3):
+    """
+    Check if file has finished copying by verifying size is stable.
+    Returns True if file size hasn't changed between checks.
+    """
+    for attempt in range(max_attempts):
+        try:
+            size1 = os.path.getsize(filepath)
+            time.sleep(wait_secs)
+            size2 = os.path.getsize(filepath)
+            
+            if size1 == size2:
+                return True
+            
+            print(f"    [~] File still copying (size changed: {size1} -> {size2}), waiting...")
+        except OSError:
+            return False
+    
+    return False
+
+
 def analyze_file(filepath):
     """Analyze single file with Essentia."""
     try:
@@ -160,6 +181,11 @@ def main():
         # Analyze new files
         for filepath in sorted(files):
             if filepath in existing:
+                continue
+            
+            # Skip if file is still being copied
+            if not is_file_stable(filepath):
+                print(f"[~] Skipping {os.path.basename(filepath)} — still copying")
                 continue
             
             result = analyze_file(filepath)

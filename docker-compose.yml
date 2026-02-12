@@ -29,6 +29,7 @@ services:
   dj:
     image: savonet/liquidsoap:v2.3.0
     container_name: s23-dj
+    user: root
     entrypoint: liquidsoap
     command: /config/radio_bpm.liq
     volumes:

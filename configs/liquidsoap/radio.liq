@@ -1,5 +1,6 @@
 #!/usr/bin/env liquidsoap
 
+settings.init.allow_root := true
 settings.log.level := 3
 settings.log.stdout := true
 settings.frame.audio.samplerate := 44100

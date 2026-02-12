@@ -2,6 +2,7 @@
 
 # SYSTEM 23 — Hard Techno AutoDJ with Analysis-Based Mixing
 
+settings.init.allow_root := true
 settings.log.level := 3
 settings.log.stdout := true
 settings.frame.audio.samplerate := 44100
