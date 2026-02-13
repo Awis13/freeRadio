@@ -80,52 +80,36 @@ echo "[+] Go!"
 # Создаем FIFO
 [ -p "$FIFO" ] || mkfifo "$FIFO"
 
-# Функция: smart random с памятью
+# Функция: честный shuffle — каждое видео играет ровно раз за раунд
 feed_fifo() {
-  declare -a HISTORY
-  HISTORY_SIZE=2  # Только 2 последних нельзя, остальные все доступны
+  declare -a SHUFFLED
+  SHUFFLED=()
 
   while true; do
-    mapfile -t ALL_VIDEOS < <(find /visuals -type f \( -name "*.mp4" -o -name "*.mov" -o -name "*.mkv" \) 2>/dev/null)
+    # Раунд закончился или первый запуск — пересканировать и перемешать
+    if [ ${#SHUFFLED[@]} -eq 0 ]; then
+      mapfile -t ALL_VIDEOS < <(find /visuals -type f \( -name "*.mp4" -o -name "*.mov" -o -name "*.mkv" \) 2>/dev/null)
 
-    if [ ${#ALL_VIDEOS[@]} -eq 0 ]; then
-      sleep 2
-      continue
-    fi
+      if [ ${#ALL_VIDEOS[@]} -eq 0 ]; then
+        sleep 2
+        continue
+      fi
 
-    # Фильтруем историю
-    AVAILABLE=()
-    for video in "${ALL_VIDEOS[@]}"; do
-      FOUND=0
-      for hist in "${HISTORY[@]}"; do
-        [ "$video" = "$hist" ] && { FOUND=1; break; }
+      # Fisher-Yates shuffle
+      SHUFFLED=("${ALL_VIDEOS[@]}")
+      for ((i=${#SHUFFLED[@]}-1; i>0; i--)); do
+        j=$((RANDOM % (i+1)))
+        tmp="${SHUFFLED[$i]}"
+        SHUFFLED[$i]="${SHUFFLED[$j]}"
+        SHUFFLED[$j]="$tmp"
       done
-      [ $FOUND -eq 0 ] && AVAILABLE+=("$video")
-    done
 
-    # Если мало доступных - чистим половину истории
-    if [ ${#AVAILABLE[@]} -lt 2 ] && [ ${#HISTORY[@]} -gt 2 ]; then
-      HISTORY=("${HISTORY[@]:$((HISTORY_SIZE/2))}")
-      AVAILABLE=()
-      for video in "${ALL_VIDEOS[@]}"; do
-        FOUND=0
-        for hist in "${HISTORY[@]}"; do
-          [ "$video" = "$hist" ] && { FOUND=1; break; }
-        done
-        [ $FOUND -eq 0 ] && AVAILABLE+=("$video")
-      done
+      echo "[+] Новый раунд видео: ${#SHUFFLED[@]} клипов"
     fi
 
-    # Выбираем файл
-    if [ ${#AVAILABLE[@]} -gt 0 ]; then
-      RANDOM_FILE="${AVAILABLE[$RANDOM % ${#AVAILABLE[@]}]}"
-    else
-      RANDOM_FILE="${ALL_VIDEOS[$RANDOM % ${#ALL_VIDEOS[@]}]}"
-    fi
-
-    # Обновляем историю
-    HISTORY+=("$RANDOM_FILE")
-    [ ${#HISTORY[@]} -gt $HISTORY_SIZE ] && HISTORY=("${HISTORY[@]:1}")
+    # Берём следующий клип из перемешанного списка
+    RANDOM_FILE="${SHUFFLED[0]}"
+    SHUFFLED=("${SHUFFLED[@]:1}")
 
     # Пишем в FIFO: H.264 с Annex-B format для YouTube
     ffmpeg -hide_banner -loglevel error -re -i "$RANDOM_FILE" \

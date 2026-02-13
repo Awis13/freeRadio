@@ -18,32 +18,42 @@ src = fallback(track_sensitive = false, [music, safety])
 src = mksafe(src)
 
 # ============================================
-# PRO DJ CROSSFADE (longer, smoother blend)
+# HARD TECHNO CROSSFADE — бочка в бочку
 # ============================================
 
 def pro_mix(old, new) =
   log("MIX PRO: transition starting")
 
-  # Longer overlap than before:
-  # - old track fades out for 14s
-  # - new track fades in for 12s
+  # Equal-power (sin) кривые: сумма энергий постоянна,
+  # нет провала громкости в середине перехода.
+  # Старый трек держится дольше — уходит за 6с,
+  # новый плавно вступает за 12с.
   old_faded = fade.out(
-    duration = 14.0,
-    type = "log",
+    duration = 6.0,
+    type = "sin",
     old.source
   )
 
   new_faded = fade.in(
     duration = 12.0,
-    type = "log",
+    type = "sin",
     new.source
   )
 
-  add(normalize = false, [old_faded, new_faded])
+  mixed = add(normalize = false, [old_faded, new_faded])
+
+  # Компрессор на микс — склеивает бочки, не даёт провалу
+  compress(
+    threshold = -14.0,
+    ratio = 3.0,
+    attack = 5.0,
+    release = 100.0,
+    mixed
+  )
 end
 
-# Wider cross window for more "mix" feeling.
-radio = cross(duration = 16.0, pro_mix, src)
+# 12с окно перехода
+radio = cross(duration = 12.0, pro_mix, src)
 radio = mksafe(radio)
 
 # Master processing
