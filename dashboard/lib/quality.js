@@ -7,21 +7,21 @@ const PRESETS = {
     name: 'High (1080p 8Mbps)',
     videoBitrate: '8000k',
     audioBitrate: '256k',
-    preset: 'medium',
+    preset: 'veryfast',
     scale: '1920:1080'
   },
   medium: {
     name: 'Medium (720p 4Mbps)',
     videoBitrate: '4000k',
     audioBitrate: '192k',
-    preset: 'fast',
+    preset: 'veryfast',
     scale: '1280:720'
   },
   low: {
     name: 'Low (480p 2Mbps)',
     videoBitrate: '2000k',
     audioBitrate: '128k',
-    preset: 'fast',
+    preset: 'veryfast',
     scale: '854:480'
   }
 };

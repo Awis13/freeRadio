@@ -68,8 +68,7 @@ get_audio_bitrate() {
 get_preset_speed() {
   local preset="$1"
   case "$preset" in
-    low|medium) echo "fast" ;;
-    *) echo "medium" ;;  # high default
+    *) echo "veryfast" ;;
   esac
 }
 
