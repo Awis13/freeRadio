@@ -17,13 +17,16 @@ music = playlist(
   "/music"
 )
 
+queue = request.queue(id="queue")
+
 safety = blank(duration = 1.0)
-my_source = fallback(track_sensitive = false, [music, safety])
+my_source = fallback(track_sensitive = true, [queue, music, safety])
 my_source = mksafe(my_source)
 
 current_track = ref("")
 next_track = ref("")
 current_title = ref("")
+queue_list = ref([])
 
 def on_track_handler(m) =
   filename = m["filename"] ?? ""
@@ -32,6 +35,11 @@ def on_track_handler(m) =
   next_track := filename
   current_title := title
   file.write(data=filename, "/shared/current_audio.txt")
+  # Remove first item from queue list if it matches
+  items = queue_list()
+  if list.length(items) > 0 then
+    queue_list := list.tl(items)
+  end
 end
 
 my_source = source.on_metadata(my_source, on_track_handler)
@@ -43,6 +51,47 @@ harbor.http.register(port=7000, method="GET", "/metadata",
     resp.content_type("application/json")
     resp.header("access-control-allow-origin", "*")
     resp.data('{"title": "#{current_title}", "filename": "#{current_track}"}')
+  end
+)
+
+# ---- QUEUE ENDPOINTS ----
+
+harbor.http.register(port=7000, method="POST", "/queue/push",
+  fun(req, resp) -> begin
+    body = req.body()
+    path = string.trim(body)
+    if path != "" then
+      queue.push(request.create(path))
+      queue_list := list.append(queue_list(), [path])
+      resp.content_type("application/json")
+      resp.header("access-control-allow-origin", "*")
+      resp.data('{"ok": true, "path": "#{path}"}')
+    else
+      resp.content_type("application/json")
+      resp.header("access-control-allow-origin", "*")
+      resp.status_code(400)
+      resp.data('{"error": "empty path"}')
+    end
+  end
+)
+
+harbor.http.register(port=7000, method="POST", "/skip",
+  fun(_, resp) -> begin
+    source.skip(my_source)
+    resp.content_type("application/json")
+    resp.header("access-control-allow-origin", "*")
+    resp.data('{"ok": true}')
+  end
+)
+
+harbor.http.register(port=7000, method="GET", "/queue",
+  fun(_, resp) -> begin
+    items = queue_list()
+    json_items = list.map(fun(p) -> '"#{p}"', items)
+    json_str = string.concat(separator=",", json_items)
+    resp.content_type("application/json")
+    resp.header("access-control-allow-origin", "*")
+    resp.data("[#{json_str}]")
   end
 )
 

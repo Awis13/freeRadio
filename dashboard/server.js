@@ -7,12 +7,12 @@ const { createTrackPoller } = require('./lib/track');
 const { createVideoPoller } = require('./lib/video');
 const { createFfmpegPoller } = require('./lib/ffmpeg');
 const { createBpmMapPoller } = require('./lib/bpmMap');
-const { MetricsExporter } = require('./lib/metrics');
 const fileManager = require('./lib/fileManager');
 const streamKeys = require('./lib/streamKeys');
 const quality = require('./lib/quality');
 const streamControl = require('./lib/streamControl');
 const restreamSettings = require('./lib/restreamSettings');
+const createQueueRouter = require('./lib/queue');
 
 const PORT = process.env.PORT || 9090;
 const HLS_DIR = process.env.HLS_DIR || '/hls';
@@ -67,25 +67,6 @@ const bpmPoller = createBpmMapPoller(path.join(MUSIC_DIR, '.bpm_map'), (data) =>
   broadcast('bpm', data);
 });
 
-// --- Prometheus Metrics ---
-const metrics = new MetricsExporter();
-metrics.start();
-
-// Update metrics from pollers
-setInterval(() => {
-  if (state.ffmpeg) {
-    metrics.update('ffmpeg_bitrate', state.ffmpeg.bitrate || 0);
-    metrics.update('ffmpeg_fps', state.ffmpeg.fps || 0);
-  }
-  if (state.audio && state.bpm) {
-    const bpm = state.bpm[state.audio.filename?.split('/').pop()];
-    if (bpm) metrics.update('current_track_bpm', bpm);
-  }
-  if (state.bpm) {
-    metrics.update('analyzed_tracks', Object.keys(state.bpm).length);
-  }
-}, 5000);
-
 // --- WebSocket ---
 function broadcast(type, data) {
   const msg = JSON.stringify({ type, data });
@@ -127,6 +108,9 @@ app.get('/api/status', (req, res) => {
 // --- REST API: file management ---
 app.use('/api/music', fileManager(MUSIC_DIR));
 app.use('/api/visuals', fileManager(VISUALS_DIR));
+
+// --- REST API: queue control ---
+app.use('/api/queue', createQueueRouter());
 
 // --- REST API: stream keys management ---
 app.use(express.json());

@@ -1,7 +1,7 @@
 (function () {
   'use strict';
 
-  // --- DOM refs ---
+  // --- DOM refs (Management tab) ---
   const video = document.getElementById('player');
   const modeTag = document.getElementById('mode-tag');
   const uptimeEl = document.getElementById('uptime');
@@ -28,15 +28,41 @@
   const dbgClear = document.getElementById('dbg-clear');
   const dbgPause = document.getElementById('dbg-pause');
 
+  // --- DOM refs (Studio tab) ---
+  const studioPlayer = document.getElementById('studio-player');
+  const studioAudioTrack = document.getElementById('studio-audio-track');
+  const studioBpm = document.getElementById('studio-bpm');
+  const studioFps = document.getElementById('studio-fps');
+  const studioBitrate = document.getElementById('studio-bitrate');
+  const studioListeners = document.getElementById('studio-listeners');
+  const queueList = document.getElementById('queue-list');
+  const skipBtn = document.getElementById('skip-btn');
+  const trackSelector = document.getElementById('track-selector');
+  const queueSearch = document.getElementById('queue-search');
+
   // --- State ---
   let bpmMap = {};
   let logsPaused = false;
   const logs = [];
   let startTime = Date.now();
+  let musicFiles = [];
+  let activeTab = 'studio';
+
+  // --- Tab Switching ---
+  document.querySelectorAll('.tab-btn').forEach(function(btn) {
+    btn.addEventListener('click', function() {
+      var tab = btn.dataset.tab;
+      activeTab = tab;
+      document.querySelectorAll('.tab-btn').forEach(function(b) { b.classList.remove('active'); });
+      btn.classList.add('active');
+      document.querySelectorAll('.tab-content').forEach(function(c) { c.classList.remove('active'); });
+      document.getElementById('tab-' + tab).classList.add('active');
+    });
+  });
 
   // --- Logging ---
   function log(msg) {
-    const ts = new Date().toISOString().slice(11, 23);
+    var ts = new Date().toISOString().slice(11, 23);
     logs.push('[' + ts + '] ' + msg);
     if (logs.length > 500) logs.shift();
     if (!logsPaused) {
@@ -80,15 +106,15 @@
 
   function cleanTrackName(filename) {
     if (!filename) return '';
-    // Strip path, extension
     var name = filename.split('/').pop() || filename;
     name = name.replace(/\.[^.]+$/, '');
-    // Replace underscores with spaces
     name = name.replace(/_/g, ' ');
     return name;
   }
 
   // --- HLS Player ---
+  var hlsInstance = null;
+
   function initPlayer() {
     var src = '/hls/stream.m3u8';
     log('init player src=' + src);
@@ -102,26 +128,33 @@
 
     if (isIOS || isSafari) {
       log('mode=native-hls');
+      studioPlayer.src = src;
       video.src = src;
+      studioPlayer.play().catch(function () {});
       video.play().catch(function () {});
       return;
     }
 
     if (typeof Hls === 'undefined') {
       log('hls.js not loaded, falling back to native');
+      studioPlayer.src = src;
       video.src = src;
+      studioPlayer.play().catch(function () {});
       video.play().catch(function () {});
       return;
     }
 
     if (!Hls.isSupported()) {
       log('MSE not supported');
+      studioPlayer.src = src;
       video.src = src;
       return;
     }
 
     log('mode=hls.js v' + (Hls.version || '?'));
-    var hls = new Hls({
+
+    // Studio player (primary)
+    hlsInstance = new Hls({
       lowLatencyMode: false,
       backBufferLength: 30,
       enableWorker: true,
@@ -132,32 +165,61 @@
       maxMaxBufferLength: 40
     });
 
-    hls.on(Hls.Events.ERROR, function (_, data) {
+    hlsInstance.on(Hls.Events.ERROR, function (_, data) {
       var msg = 'hls:error ' + data.type + '/' + data.details + ' fatal=' + data.fatal;
       log(msg);
       if (data.fatal) {
         if (data.type === Hls.ErrorTypes.NETWORK_ERROR) {
           log('hls: network error, retrying in 3s...');
-          setTimeout(function () { hls.startLoad(); }, 3000);
+          setTimeout(function () { hlsInstance.startLoad(); }, 3000);
         } else if (data.type === Hls.ErrorTypes.MEDIA_ERROR) {
           log('hls: media error, recovering...');
-          hls.recoverMediaError();
+          hlsInstance.recoverMediaError();
         }
       }
     });
 
-    hls.on(Hls.Events.MANIFEST_PARSED, function () {
+    hlsInstance.on(Hls.Events.MANIFEST_PARSED, function () {
       log('hls: manifest parsed, starting playback');
-      video.play().catch(function () {});
+      studioPlayer.play().catch(function () {});
     });
 
-    hls.on(Hls.Events.FRAG_LOADED, function (_, data) {
+    hlsInstance.on(Hls.Events.FRAG_LOADED, function (_, data) {
       var sn = data.frag ? data.frag.sn : '?';
       log('hls:frag sn=' + sn);
     });
 
-    hls.loadSource(src);
-    hls.attachMedia(video);
+    hlsInstance.loadSource(src);
+    hlsInstance.attachMedia(studioPlayer);
+
+    // Management player (secondary) — separate HLS instance
+    var hls2 = new Hls({
+      lowLatencyMode: false,
+      backBufferLength: 30,
+      enableWorker: true,
+      liveSyncDurationCount: 3,
+      liveMaxLatencyDurationCount: 10,
+      liveDurationInfinity: true,
+      maxBufferLength: 20,
+      maxMaxBufferLength: 40
+    });
+
+    hls2.on(Hls.Events.ERROR, function (_, data) {
+      if (data.fatal) {
+        if (data.type === Hls.ErrorTypes.NETWORK_ERROR) {
+          setTimeout(function () { hls2.startLoad(); }, 3000);
+        } else if (data.type === Hls.ErrorTypes.MEDIA_ERROR) {
+          hls2.recoverMediaError();
+        }
+      }
+    });
+
+    hls2.on(Hls.Events.MANIFEST_PARSED, function () {
+      video.play().catch(function () {});
+    });
+
+    hls2.loadSource(src);
+    hls2.attachMedia(video);
   }
 
   initPlayer();
@@ -237,11 +299,12 @@
     if (!data) return;
     var name = data.title || cleanTrackName(data.filename) || '--';
     audioTrack.textContent = name;
+    studioAudioTrack.textContent = name;
 
-    // Find BPM
     var filename = (data.filename || '').split('/').pop();
     var bpm = bpmMap[filename];
     trackBpm.textContent = bpm ? Math.round(bpm) + ' BPM' : '';
+    studioBpm.textContent = bpm ? Math.round(bpm) + ' BPM' : '';
   }
 
   function updateVideo(data) {
@@ -253,6 +316,7 @@
   function updateIcecast(data) {
     if (!data) return;
     statListeners.textContent = data.listeners || '0';
+    studioListeners.textContent = data.listeners || '0';
     statAudioBr.textContent = data.bitrate ? data.bitrate + ' kbps' : '--';
     if (data.serverStart) {
       startTime = new Date(data.serverStart).getTime() || Date.now();
@@ -265,6 +329,8 @@
     statSpeed.textContent = data.speed || '--';
     statVideoBr.textContent = data.bitrate || '--';
     statTime.textContent = data.time || '--';
+    studioFps.textContent = data.fps || '--';
+    studioBitrate.textContent = data.bitrate || '--';
   }
 
   function refreshBpmInList() {
@@ -285,7 +351,13 @@
   function loadFileList(type) {
     fetch('/api/' + type)
       .then(function (r) { return r.json(); })
-      .then(function (files) { renderFileList(type, files); })
+      .then(function (files) {
+        renderFileList(type, files);
+        if (type === 'music') {
+          musicFiles = files;
+          renderTrackSelector();
+        }
+      })
       .catch(function (e) { log('files: error loading ' + type + ': ' + e); });
   }
 
@@ -377,6 +449,113 @@
   setInterval(function () { loadFileList('music'); }, 30000);
   setInterval(function () { loadFileList('visuals'); }, 30000);
 
+  // --- Queue Control ---
+  function loadQueue() {
+    fetch('/api/queue')
+      .then(function(r) { return r.json(); })
+      .then(function(items) { renderQueue(items); })
+      .catch(function() { renderQueue([]); });
+  }
+
+  function renderQueue(items) {
+    queueList.innerHTML = '';
+    if (!items || items.length === 0) {
+      var empty = document.createElement('div');
+      empty.className = 'queue-empty';
+      empty.textContent = 'Queue empty — random mode';
+      queueList.appendChild(empty);
+      return;
+    }
+    items.forEach(function(path, i) {
+      var div = document.createElement('div');
+      div.className = 'queue-item';
+      var num = document.createElement('span');
+      num.className = 'queue-num';
+      num.textContent = (i + 1) + '.';
+      div.appendChild(num);
+      var name = document.createElement('span');
+      name.className = 'queue-name';
+      name.textContent = cleanTrackName(path);
+      name.title = path;
+      div.appendChild(name);
+      queueList.appendChild(div);
+    });
+  }
+
+  function addToQueue(filename) {
+    fetch('/api/queue/push', {
+      method: 'POST',
+      headers: { 'Content-Type': 'text/plain' },
+      body: filename
+    })
+      .then(function(r) { return r.json(); })
+      .then(function(data) {
+        if (data.ok) {
+          log('queue: added ' + filename);
+          loadQueue();
+        } else {
+          showError('Queue push failed: ' + (data.error || 'unknown'));
+        }
+      })
+      .catch(function(e) { showError('Queue push failed: ' + e); });
+  }
+
+  skipBtn.onclick = function() {
+    fetch('/api/queue/skip', { method: 'POST' })
+      .then(function(r) { return r.json(); })
+      .then(function(data) {
+        if (data.ok) {
+          log('queue: skipped track');
+          setTimeout(loadQueue, 1000);
+        }
+      })
+      .catch(function(e) { showError('Skip failed: ' + e); });
+  };
+
+  // --- Track Selector ---
+  function renderTrackSelector(filter) {
+    trackSelector.innerHTML = '';
+    var search = (filter || '').toLowerCase();
+    var filtered = musicFiles.filter(function(f) {
+      return !search || f.name.toLowerCase().indexOf(search) !== -1;
+    });
+    filtered.forEach(function(f) {
+      var div = document.createElement('div');
+      div.className = 'selector-item';
+
+      var name = document.createElement('span');
+      name.className = 'selector-name';
+      name.textContent = f.name;
+      name.title = f.name;
+      div.appendChild(name);
+
+      var bpm = bpmMap[f.name];
+      if (bpm) {
+        var bpmEl = document.createElement('span');
+        bpmEl.className = 'selector-bpm';
+        bpmEl.textContent = Math.round(bpm) + ' BPM';
+        div.appendChild(bpmEl);
+      }
+
+      var addBtn = document.createElement('button');
+      addBtn.className = 'btn-add-queue';
+      addBtn.textContent = '+';
+      addBtn.title = 'Add to queue';
+      addBtn.onclick = function() { addToQueue(f.name); };
+      div.appendChild(addBtn);
+
+      trackSelector.appendChild(div);
+    });
+  }
+
+  queueSearch.oninput = function() {
+    renderTrackSelector(queueSearch.value);
+  };
+
+  // Poll queue
+  loadQueue();
+  setInterval(loadQueue, 5000);
+
   // --- Stream Platforms Management ---
   const platformList = document.getElementById('platform-list');
   const addPlatformBtn = document.getElementById('add-platform-btn');
@@ -435,7 +614,7 @@
 
       var delBtn = document.createElement('button');
       delBtn.className = 'platform-del';
-      delBtn.textContent = '×';
+      delBtn.textContent = '\u00d7';
       delBtn.onclick = function() { deletePlatform(name); };
       div.appendChild(delBtn);
 
@@ -552,7 +731,7 @@
 
   // --- Stream Control ---
   const streamToggleBtn = document.getElementById('stream-toggle-btn');
-  
+
   function loadStreamControl() {
     fetch('/api/stream/control')
       .then(function(r) { return r.json(); })
@@ -561,7 +740,7 @@
       })
       .catch(function(e) { log('stream control: error loading: ' + e); });
   }
-  
+
   function updateStreamToggle(streaming) {
     if (streaming) {
       streamToggleBtn.textContent = 'Stop Restream';
@@ -571,11 +750,11 @@
       streamToggleBtn.className = 'btn-toggle stopped';
     }
   }
-  
+
   streamToggleBtn.onclick = function() {
     var currentlyStreaming = streamToggleBtn.classList.contains('streaming');
     var newState = !currentlyStreaming;
-    
+
     fetch('/api/stream/control', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -588,7 +767,7 @@
       })
       .catch(function(e) { showError('Restream toggle failed: ' + e); });
   };
-  
+
   loadStreamControl();
   setInterval(loadStreamControl, 5000);
 
