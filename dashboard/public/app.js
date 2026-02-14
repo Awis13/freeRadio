@@ -1365,10 +1365,13 @@
       var body = document.createElement('div');
       body.className = 'overlay-layer-body';
 
-      if (layer.type === 'now_playing' || layer.type === 'static_text' || layer.type === 'clock') {
+      if (layer.type === 'now_playing' || layer.type === 'scrolling_now_playing' || layer.type === 'static_text' || layer.type === 'clock' || layer.type === 'scrolling_text') {
+        var isScrolling = layer.type === 'scrolling_text' || layer.type === 'scrolling_now_playing';
         body.innerHTML =
           '<div class="overlay-props">' +
-          (layer.type === 'static_text' ? '<div class="form-group"><label>Text</label><input type="text" value="' + (layer.text || '') + '" onchange="updateOverlayLayer(' + idx + ', \'text\', this.value)"></div>' : '') +
+          (layer.type === 'static_text' || layer.type === 'scrolling_text' ? '<div class="form-group"><label>Text</label><input type="text" value="' + (layer.text || '') + '" onchange="updateOverlayLayer(' + idx + ', \'text\', this.value)"></div>' : '') +
+          (layer.type === 'scrolling_now_playing' ? '<div class="form-group"><label>Source</label><span class="text-secondary">Current track (auto)</span></div>' : '') +
+          (isScrolling ? '<div class="form-group"><label>Speed (px/sec)</label><input type="number" value="' + (layer.speed || 100) + '" onchange="updateOverlayLayer(' + idx + ', \'speed\', parseInt(this.value))"></div>' : '') +
           (layer.type === 'clock' ? '<div class="form-group"><label>Format</label><input type="text" value="' + (layer.format || '%H:%M') + '" onchange="updateOverlayLayer(' + idx + ', \'format\', this.value)"></div>' : '') +
           '<div class="overlay-pos-grid">' +
           '<div class="form-group"><label>Font Size</label><input type="number" value="' + (layer.fontsize || 28) + '" onchange="updateOverlayLayer(' + idx + ', \'fontsize\', parseInt(this.value))"></div>' +
@@ -1427,8 +1430,10 @@
   document.getElementById('add-overlay-btn').onclick = function() {
     openGenericModal('Add Overlay Layer',
       '<div class="form-group"><label>Type</label><select id="new-overlay-type">' +
-      '<option value="now_playing">Now Playing</option>' +
+      '<option value="now_playing">Now Playing (static)</option>' +
+      '<option value="scrolling_now_playing">Now Playing (scrolling)</option>' +
       '<option value="static_text">Static Text</option>' +
+      '<option value="scrolling_text">Scrolling Text</option>' +
       '<option value="clock">Clock</option>' +
       '<option value="logo">Logo</option></select></div>',
       function() {
@@ -1449,6 +1454,19 @@
           layer.text = 'SYSTEM 23';
           layer.fontsize = 18;
           layer.fontcolor = 'white';
+        } else if (type === 'scrolling_text') {
+          layer.text = 'SYSTEM 23 RADIO - HARD TECHNO 24/7';
+          layer.fontsize = 32;
+          layer.fontcolor = 'white';
+          layer.speed = 150;
+          layer.y = 'H-80';
+          layer.boxcolor = 'black@0.5';
+        } else if (type === 'scrolling_now_playing') {
+          layer.fontsize = 32;
+          layer.fontcolor = 'white';
+          layer.speed = 120;
+          layer.y = 'H-80';
+          layer.boxcolor = 'black@0.5';
         } else if (type === 'clock') {
           layer.format = '%H:%M';
           layer.fontsize = 24;

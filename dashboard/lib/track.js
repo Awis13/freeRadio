@@ -2,7 +2,25 @@ const fs = require('fs');
 const path = require('path');
 
 const TRACK_FILE = '/shared/current_audio.txt';
+const CLEAN_TRACK_FILE = '/shared/current_track_clean.txt';
 const POLL_INTERVAL = 2000;
+
+// Clean track name: remove path, extension, replace _ with space, remove junk
+function cleanTrackName(filename) {
+  if (!filename) return '';
+  // Get basename
+  let name = path.basename(filename);
+  // Remove extension
+  name = name.replace(/\.[^.]+$/, '');
+  // Replace underscores, dots, dashes with spaces
+  name = name.replace(/[_\.\-]+/g, ' ');
+  // Remove common junk patterns
+  name = name.replace(/\b(official|video|audio|lyrics|hq|hd|1080p|720p|4k|remastered|remaster)\b/gi, '');
+  // Remove multiple spaces
+  name = name.replace(/\s+/g, ' ');
+  // Trim
+  return name.trim();
+}
 
 function createTrackPoller(onUpdate) {
   let timer = null;
@@ -17,7 +35,14 @@ function createTrackPoller(onUpdate) {
           lastTrack = filename;
           const basename = path.basename(filename);
           const name = basename.replace(/\.[^.]+$/, '');
-          console.log('[track] UPDATE:', name);
+          // Write cleaned name for scrolling overlay
+          const cleanName = cleanTrackName(filename);
+          try {
+            fs.writeFileSync(CLEAN_TRACK_FILE, cleanName);
+          } catch (e) {
+            console.log('[track] ERROR writing clean file:', e.message);
+          }
+          console.log('[track] UPDATE:', name, 'clean:', cleanName);
           onUpdate({
             title: name,
             filename: filename

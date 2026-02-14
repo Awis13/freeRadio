@@ -17,6 +17,27 @@ fetch_rtmp_urls() {
   curl -s "${DASHBOARD_API}/api/rtmp-urls" 2>/dev/null || echo "[]"
 }
 
+# Check if RTMP URLs contain only YouTube (returns "youtube" or "multi")
+get_rtmp_mode() {
+  local rtmp_urls="$1"
+  local url_count youtube_count
+  
+  if [ "$rtmp_urls" = "[]" ] || [ -z "$rtmp_urls" ]; then
+    echo "none"
+    return
+  fi
+  
+  # Count total URLs and YouTube URLs
+  url_count=$(echo "$rtmp_urls" | grep -o '"url":"[^"]*"' | wc -l)
+  youtube_count=$(echo "$rtmp_urls" | grep -o '"url":"[^"]*"' | grep -c "youtube\|youtu.be" || echo "0")
+  
+  if [ "$url_count" -eq "$youtube_count" ] && [ "$youtube_count" -gt 0 ]; then
+    echo "youtube"  # Only YouTube
+  else
+    echo "multi"     # YouTube + others or only others
+  fi
+}
+
 # Check if streaming is enabled
 is_streaming_enabled() {
   local control_file="/shared/stream_control.json"
@@ -50,6 +71,9 @@ get_video_bitrate() {
   case "$preset" in
     low) echo "2000k" ;;
     medium) echo "4000k" ;;
+    kick) echo "8000k" ;;  # kick safe bitrate
+    standard) echo "8000k" ;;  # multi-platform standard
+    ultra|godmode) echo "12000k" ;;  # ultra/godmode super quality
     *) echo "8000k" ;;  # high default
   esac
 }
@@ -59,7 +83,8 @@ get_audio_bitrate() {
   local preset="$1"
   case "$preset" in
     low) echo "128k" ;;
-    medium) echo "192k" ;;
+    medium|kick|standard) echo "192k" ;;  # kick/standard uses 192k
+    ultra|godmode) echo "320k" ;;  # ultra/godmode super quality
     *) echo "256k" ;;  # high default
   esac
 }
@@ -68,7 +93,48 @@ get_audio_bitrate() {
 get_preset_speed() {
   local preset="$1"
   case "$preset" in
+    godmode|kick|standard) echo "veryfast" ;;  # veryfast for godmode/kick/standard
+    ultra) echo "fast" ;;  # slower = better quality for ultra
     *) echo "veryfast" ;;
+  esac
+}
+
+# Get extra x264 options based on preset (tune, etc.)
+get_x264_extras() {
+  local preset="$1"
+  case "$preset" in
+    ultra|godmode) echo "-tune animation" ;;
+    kick|standard) echo "" ;;  # no tune for kick/standard
+    *) echo "" ;;
+  esac
+}
+
+# Get FPS based on preset
+get_fps() {
+  local preset="$1"
+  case "$preset" in
+    ultra60|godmode60) echo "60" ;;  # 60fps for special presets only
+    *) echo "30" ;;  # 30fps default
+  esac
+}
+
+# Get GOP size based on preset (2 seconds worth of frames)
+get_gop_size() {
+  local preset="$1"
+  case "$preset" in
+    ultra60|godmode60) echo "120" ;;  # 2 seconds at 60fps
+    *) echo "60" ;;  # 2 seconds at 30fps
+  esac
+}
+
+# Get video filter with optional upscaling for VP9 force
+get_video_filter_with_scale() {
+  local preset="$1"
+  local base_filter="$2"
+  case "$preset" in
+    godmode) echo "scale=2560:1440:flags=lanczos" ;;  # ONLY scale for godmode (VP9 force)
+    standard|kick) echo "scale=1920:1080:flags=lanczos,$base_filter" ;;  # 1080p for multi-platform
+    *) echo "$base_filter" ;;
   esac
 }
 
@@ -171,7 +237,7 @@ file_sig() {
 }
 
 current_stream_sig() {
-  echo "keys=$(file_sig /shared/stream_keys.enc);quality=$(file_sig /shared/stream_quality.json);control=$(file_sig /shared/stream_control.json);overlay=$(file_sig /shared/overlay_config.json);visual=$(file_sig /shared/active_visual_profile.json)"
+  echo "keys=$(file_sig /shared/stream_keys.enc);quality=$(file_sig /shared/stream_quality.json);control=$(file_sig /shared/stream_control.json);overlay=$(file_sig /shared/overlay_config.json);visual=$(file_sig /shared/active_visual_profile.json);filter=$(file_sig /shared/overlay_filter_string.txt)"
 }
 
 watch_stream_config() {
@@ -203,23 +269,40 @@ watch_stream_config() {
 
 # Build ffmpeg outputs for multi-streaming
 build_outputs() {
-  local quality_json preset vbr abr speed vbr_num vb_buf
+  local quality_json preset vbr abr speed vbr_num vb_buf gop
+  
+  # Get RTMP URLs first to determine mode
+  local rtmp_urls rtmp_mode
+  rtmp_urls=$(fetch_rtmp_urls)
+  rtmp_mode=$(get_rtmp_mode "$rtmp_urls")
   
   quality_json=$(get_quality_settings)
   preset=$(echo "$quality_json" | grep -o '"preset":"[^"]*"' | cut -d'"' -f4)
   [ -z "$preset" ] && preset="high"
   
+  # Auto-switch preset based on RTMP mode
+  # Only YouTube -> allow godmode (1440p VP9 force)
+  # Multi-platform (YouTube + Kick/Twitch) -> force standard (1080p 8Mbps)
+  if [ "$rtmp_mode" = "multi" ] && { [ "$preset" = "godmode" ] || [ "$preset" = "ultra" ]; }; then
+    echo "[!] Multi-platform detected, forcing standard preset (1080p 8Mbps)" >&2
+    preset="standard"
+  elif [ "$rtmp_mode" = "youtube" ] && [ "$preset" = "godmode" ]; then
+    echo "[!] YouTube only detected, using godmode (1440p VP9 force)" >&2
+  fi
+  
   vbr=$(get_video_bitrate "$preset")
   abr=$(get_audio_bitrate "$preset")
   speed=$(get_preset_speed "$preset")
+  gop="60"  # Fixed GOP 60 for auto FPS (2 seconds at 30fps typical)
   vbr_num="${vbr%k}"
   vb_buf="$((vbr_num * 2))k"
   
-  echo "[+] Quality preset: $preset (video: $vbr, audio: $abr, speed: $speed)" >&2
+  echo "[+] Quality preset: $preset (video: $vbr, audio: $abr, speed: $speed, gop: $gop) [RTMP mode: $rtmp_mode]" >&2
   
   # Base ffmpeg args (without output)
-  local vfilter
-  vfilter=$(build_video_filters)
+  local vfilter base_vfilter
+  base_vfilter=$(build_video_filters)
+  vfilter=$(get_video_filter_with_scale "$preset" "$base_vfilter")
   echo "[+] Video filter: $vfilter" >&2
 
   # Check for logo overlay inputs
@@ -250,11 +333,12 @@ build_outputs() {
     fi
   fi
 
-  local base_args="-hide_banner -loglevel error $PROGRESS_ARGS -fflags +genpts+igndts -thread_queue_size 10240 -i $FIFO -thread_queue_size 10240 -i $ICECAST_URL $logo_inputs -map 0:v -map 1:a -vf $vfilter -c:v libx264 -preset $speed -profile:v high -b:v $vbr -minrate $vbr -maxrate $vbr -bufsize $vb_buf -g 60 -keyint_min 60 -sc_threshold 0 -c:a aac -b:a $abr -ar 48000"
+  # Get extra x264 options
+  local x264_extras
+  x264_extras=$(get_x264_extras "$preset")
   
-  # Get RTMP URLs
-  local rtmp_urls
-  rtmp_urls=$(fetch_rtmp_urls)
+  # Note: No -r flag, FPS is auto from source (no dup frames!)
+  local base_args="-hide_banner -loglevel error $PROGRESS_ARGS -fflags +genpts+igndts -thread_queue_size 10240 -i $FIFO -thread_queue_size 10240 -i $ICECAST_URL $logo_inputs -map 0:v -map 1:a -vf $vfilter -c:v libx264 -preset $speed -profile:v high $x264_extras -b:v $vbr -minrate $vbr -maxrate $vbr -bufsize $vb_buf -g $gop -keyint_min $gop -sc_threshold 0 -c:a aac -b:a $abr -ar 48000"
   
   # Always build tee outputs (HLS + all RTMPs)
   local outputs="[f=hls:hls_time=2:hls_list_size=15:hls_flags=delete_segments+omit_endlist+split_by_time:hls_segment_filename=${HLS_DIR}/seg_%03d.ts]${HLS_PLAYLIST}"
@@ -271,7 +355,7 @@ build_outputs() {
     done
   fi
   
-  echo "$base_args -f tee \"$outputs\""
+  echo "$base_args -f tee \"$outputs\" "
 }
 
 # Main stream function

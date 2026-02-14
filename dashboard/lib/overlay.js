@@ -99,6 +99,31 @@ function buildDrawtext(layer) {
     case 'clock':
       common.push(`text='%{localtime\\:${(layer.format || '%H\\:%M').replace(/:/g, '\\:')}}'`);
       break;
+    case 'scrolling_text':
+      if (layer.text) {
+        // Escape special chars for FFmpeg drawtext
+        const escaped = layer.text
+          .replace(/\\/g, '\\\\\\\\')
+          .replace(/'/g, "\\'")
+          .replace(/:/g, '\\:');
+        common.push(`text='${escaped}'`);
+      }
+      // Scrolling animation: move from right to left
+      // x=w-mod(t*speed,w+text_w) - starts at w, moves left at speed pixels/sec
+      var scrollSpeed = layer.speed || 100;
+      common.push(`x=w-mod(t*${scrollSpeed},w+text_w)`);
+      // Center vertically or use specified y
+      if (!layer.y) common.push('y=(h-text_h)/2');
+      break;
+    case 'scrolling_now_playing':
+      // Read from file and scroll - same as now_playing but scrolling
+      // Uses cleaned track name (no path, no extension, no underscores)
+      common.push('textfile=/shared/current_track_clean.txt');
+      common.push('reload=1');
+      var scrollSpeed2 = layer.speed || 100;
+      common.push(`x=w-mod(t*${scrollSpeed2},w+text_w)`);
+      if (!layer.y) common.push('y=(h-text_h)/2');
+      break;
     default:
       return null;
   }

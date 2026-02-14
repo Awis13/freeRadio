@@ -3,6 +3,37 @@ const fs = require('fs');
 const QUALITY_FILE = '/shared/stream_quality.json';
 
 const PRESETS = {
+  godmode: {
+    name: 'God Mode (1440p VP9 Force)',
+    videoBitrate: '12000k',
+    audioBitrate: '320k',
+    preset: 'veryfast',
+    tune: 'animation',
+    scale: '2560:1440',
+    forceVp9: true
+  },
+  ultra: {
+    name: 'Ultra (1080p 12Mbps)',
+    videoBitrate: '12000k',
+    audioBitrate: '320k',
+    preset: 'fast',
+    tune: 'animation',
+    scale: '1920:1080'
+  },
+  standard: {
+    name: 'Standard (1080p 8Mbps)',
+    videoBitrate: '8000k',
+    audioBitrate: '192k',
+    preset: 'veryfast',
+    scale: '1920:1080'
+  },
+  kick: {
+    name: 'Kick Safe (1080p 8Mbps)',
+    videoBitrate: '8000k',
+    audioBitrate: '192k',
+    preset: 'veryfast',
+    scale: '1920:1080'
+  },
   high: {
     name: 'High (1080p 8Mbps)',
     videoBitrate: '8000k',
