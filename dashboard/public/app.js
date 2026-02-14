@@ -1948,6 +1948,43 @@
 
   loadAudioSettings();
 
+  // --- Video Enhancement Settings ---
+  var videoEnhanceCheck = document.getElementById('video-enhance');
+
+  function loadVideoSettings() {
+    fetch('/api/video')
+      .then(function(r) { return r.json(); })
+      .then(function(data) {
+        if (videoEnhanceCheck) {
+          videoEnhanceCheck.checked = data.enhanced === true;
+          log('video: enhancement = ' + (data.enhanced ? 'ON' : 'OFF'));
+        }
+      })
+      .catch(function(e) { log('video: error loading settings: ' + e); });
+  }
+
+  if (videoEnhanceCheck) {
+    videoEnhanceCheck.onchange = function() {
+      var enabled = videoEnhanceCheck.checked;
+      fetch('/api/video', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ enhanced: enabled })
+      })
+        .then(function(r) { return r.json(); })
+        .then(function(data) {
+          if (data.success) {
+            log('video: enhancement ' + (enabled ? 'ENABLED' : 'DISABLED'));
+            log('video: restart streamer to apply');
+            alert('Video Enhance ' + (enabled ? 'enabled' : 'disabled') + '. Restart streamer to apply.');
+          }
+        })
+        .catch(function(e) { showError('Video settings change failed: ' + e); });
+    };
+  }
+
+  loadVideoSettings();
+
   // ============================
   // GENERIC MODAL
   // ============================

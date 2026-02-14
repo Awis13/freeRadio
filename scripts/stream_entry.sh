@@ -87,6 +87,27 @@ get_audio_filter() {
   fi
 }
 
+# Fetch video settings from file
+get_video_settings() {
+  local video_file="/shared/stream_video.json"
+  if [ -f "$video_file" ]; then
+    cat "$video_file"
+  else
+    echo '{"enhanced":false}'
+  fi
+}
+
+# Get video enhancement filter
+get_video_enhancement_filter() {
+  local video_json
+  video_json=$(get_video_settings)
+  if echo "$video_json" | grep -q '"enhanced":[[:space:]]*true'; then
+    echo "eq=saturation=1.15:contrast=1.03,unsharp=3:3:0.5,deband"
+  else
+    echo ""
+  fi
+}
+
 # Get video bitrate based on preset
 get_video_bitrate() {
   local preset="$1"
@@ -153,10 +174,22 @@ get_gop_size() {
 get_video_filter_with_scale() {
   local preset="$1"
   local base_filter="$2"
+  local enhance_filter="$3"
+  local final_filter=""
+  
+  # Combine base filter with enhancement if present
+  if [ -n "$enhance_filter" ] && [ -n "$base_filter" ]; then
+    final_filter="$base_filter,$enhance_filter"
+  elif [ -n "$enhance_filter" ]; then
+    final_filter="$enhance_filter"
+  else
+    final_filter="$base_filter"
+  fi
+  
   case "$preset" in
-    godmode) echo "scale=2560:1440:flags=lanczos" ;;  # ONLY scale for godmode (VP9 force)
-    standard|kick) echo "scale=1920:1080:flags=lanczos,$base_filter" ;;  # 1080p for multi-platform
-    *) echo "$base_filter" ;;
+    godmode) echo "scale=2560:1440:flags=lanczos${final_filter:+,}$final_filter" ;;  # Scale first, then filters
+    standard|kick) echo "scale=1920:1080:flags=lanczos${final_filter:+,}$final_filter" ;;  # 1080p for multi-platform
+    *) echo "$final_filter" ;;
   esac
 }
 
@@ -259,7 +292,7 @@ file_sig() {
 }
 
 current_stream_sig() {
-  echo "keys=$(file_sig /shared/stream_keys.enc);quality=$(file_sig /shared/stream_quality.json);audio=$(file_sig /shared/stream_audio.json);control=$(file_sig /shared/stream_control.json);overlay=$(file_sig /shared/overlay_config.json);visual=$(file_sig /shared/active_visual_profile.json);filter=$(file_sig /shared/overlay_filter_string.txt)"
+  echo "keys=$(file_sig /shared/stream_keys.enc);quality=$(file_sig /shared/stream_quality.json);audio=$(file_sig /shared/stream_audio.json);video=$(file_sig /shared/stream_video.json);control=$(file_sig /shared/stream_control.json);overlay=$(file_sig /shared/overlay_config.json);visual=$(file_sig /shared/active_visual_profile.json);filter=$(file_sig /shared/overlay_filter_string.txt)"
 }
 
 watch_stream_config() {
@@ -322,9 +355,13 @@ build_outputs() {
   echo "[+] Quality preset: $preset (video: $vbr, audio: $abr, speed: $speed, gop: $gop) [RTMP mode: $rtmp_mode]" >&2
   
   # Base ffmpeg args (without output)
-  local vfilter base_vfilter
+  local vfilter base_vfilter enhance_vfilter
   base_vfilter=$(build_video_filters)
-  vfilter=$(get_video_filter_with_scale "$preset" "$base_vfilter")
+  enhance_vfilter=$(get_video_enhancement_filter)
+  if [ -n "$enhance_vfilter" ]; then
+    echo "[+] Video enhancement: ENABLED" >&2
+  fi
+  vfilter=$(get_video_filter_with_scale "$preset" "$base_vfilter" "$enhance_vfilter")
   echo "[+] Video filter: $vfilter" >&2
 
   # Check for logo overlay inputs

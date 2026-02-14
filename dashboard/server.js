@@ -11,6 +11,7 @@ const fileManager = require('./lib/fileManager');
 const streamKeys = require('./lib/streamKeys');
 const quality = require('./lib/quality');
 const audioSettings = require('./lib/audioSettings');
+const videoSettings = require('./lib/videoSettings');
 const streamControl = require('./lib/streamControl');
 const restreamSettings = require('./lib/restreamSettings');
 const createQueueRouter = require('./lib/queue');
@@ -208,6 +209,21 @@ app.post('/api/audio', (req, res) => {
   const { enhanced } = req.body;
   try {
     const result = audioSettings.setAudioSettings({ enhanced });
+    res.json({ success: true, ...result });
+  } catch (e) {
+    res.status(400).json({ error: e.message });
+  }
+});
+
+// --- REST API: video settings ---
+app.get('/api/video', (req, res) => {
+  res.json(videoSettings.getVideoSettings());
+});
+
+app.post('/api/video', (req, res) => {
+  const { enhanced } = req.body;
+  try {
+    const result = videoSettings.setVideoSettings({ enhanced });
     res.json({ success: true, ...result });
   } catch (e) {
     res.status(400).json({ error: e.message });
