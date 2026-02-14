@@ -10,7 +10,7 @@ FFMPEG_PROGRESS_FILE="${FFMPEG_PROGRESS_FILE:-}"
 DASHBOARD_API="${DASHBOARD_API:-http://dashboard:9090}"
 FIFO="/tmp/videofifo.ts"
 APPLIED_SIG_FILE="/tmp/applied_stream_sig.txt"
-MAIN_FFMPEG_MATCH="/tmp/videofifo.ts -i http://icecast:8000/live"
+MAIN_FFMPEG_MATCH="/tmp/videofifo.ts"
 
 # Fetch RTMP URLs from dashboard API (for multi-streaming)
 fetch_rtmp_urls() {
@@ -79,6 +79,39 @@ echo "[+] Go!"
 # Создаем FIFO
 [ -p "$FIFO" ] || mkfifo "$FIFO"
 
+# Get video list from active visual profile or fallback to all visuals
+get_video_list() {
+  local profile="/shared/active_visual_profile.json"
+  if [ -f "$profile" ]; then
+    local files
+    files=$(grep -o '"[^"]*\.\(mp4\|mov\|mkv\)"' "$profile" 2>/dev/null | tr -d '"')
+    if [ -n "$files" ]; then
+      local result=()
+      while IFS= read -r f; do
+        if [ -f "/visuals/$f" ]; then
+          result+=("/visuals/$f")
+        fi
+      done <<< "$files"
+      if [ ${#result[@]} -gt 0 ]; then
+        printf '%s\n' "${result[@]}"
+        return
+      fi
+    fi
+  fi
+  # Fallback: all videos
+  find /visuals -type f \( -name "*.mp4" -o -name "*.mov" -o -name "*.mkv" \) 2>/dev/null
+}
+
+# Build video filter chain from overlay config
+build_video_filters() {
+  local filter_file="/shared/overlay_filter_string.txt"
+  if [ -f "$filter_file" ]; then
+    cat "$filter_file"
+  else
+    echo "fps=30,format=yuv420p"
+  fi
+}
+
 # Функция: честный shuffle — каждое видео играет ровно раз за раунд
 feed_fifo() {
   declare -a SHUFFLED
@@ -87,7 +120,7 @@ feed_fifo() {
   while true; do
     # Раунд закончился или первый запуск — пересканировать и перемешать
     if [ ${#SHUFFLED[@]} -eq 0 ]; then
-      mapfile -t ALL_VIDEOS < <(find /visuals -type f \( -name "*.mp4" -o -name "*.mov" -o -name "*.mkv" \) 2>/dev/null)
+      mapfile -t ALL_VIDEOS < <(get_video_list)
 
       if [ ${#ALL_VIDEOS[@]} -eq 0 ]; then
         sleep 2
@@ -110,11 +143,11 @@ feed_fifo() {
     RANDOM_FILE="${SHUFFLED[0]}"
     SHUFFLED=("${SHUFFLED[@]:1}")
 
-    # Пишем в FIFO: H.264 с Annex-B format для YouTube
+    # Пишем в FIFO: mpeg2video в mpegts (лёгкий кодек, ~10x быстрее x264)
+    # mpegts обеспечивает правильный фрейминг на стыках клипов
     ffmpeg -hide_banner -loglevel error -re -i "$RANDOM_FILE" \
-      -vf "scale=1920:1080:force_original_aspect_ratio=decrease,pad=1920:1080:(ow-iw)/2:(oh-ih)/2:black,fps=30" \
-      -c:v libx264 -preset ultrafast -tune zerolatency -x264-params "repeat-headers=1:keyint=30" -b:v 8M -maxrate 8M -bufsize 16M \
-      -pix_fmt yuv420p -bsf:v h264_mp4toannexb -f mpegts - 2>/dev/null || true
+      -vf "scale=1920:1080:force_original_aspect_ratio=decrease,pad=1920:1080:(ow-iw)/2:(oh-ih)/2:black,fps=30,format=yuv420p" \
+      -c:v mpeg2video -q:v 2 -an -f mpegts - 2>/dev/null || true
   done
 }
 
@@ -138,7 +171,7 @@ file_sig() {
 }
 
 current_stream_sig() {
-  echo "keys=$(file_sig /shared/stream_keys.enc);quality=$(file_sig /shared/stream_quality.json);control=$(file_sig /shared/stream_control.json)"
+  echo "keys=$(file_sig /shared/stream_keys.enc);quality=$(file_sig /shared/stream_quality.json);control=$(file_sig /shared/stream_control.json);overlay=$(file_sig /shared/overlay_config.json);visual=$(file_sig /shared/active_visual_profile.json)"
 }
 
 watch_stream_config() {
@@ -185,7 +218,39 @@ build_outputs() {
   echo "[+] Quality preset: $preset (video: $vbr, audio: $abr, speed: $speed)" >&2
   
   # Base ffmpeg args (without output)
-  local base_args="-hide_banner -loglevel error $PROGRESS_ARGS -fflags +genpts+igndts -i $FIFO -i $ICECAST_URL -map 0:v -map 1:a -vf fps=30,format=yuv420p -c:v libx264 -preset $speed -profile:v high -b:v $vbr -minrate $vbr -maxrate $vbr -bufsize $vb_buf -g 60 -keyint_min 60 -sc_threshold 0 -c:a aac -b:a $abr -ar 48000"
+  local vfilter
+  vfilter=$(build_video_filters)
+  echo "[+] Video filter: $vfilter" >&2
+
+  # Check for logo overlay inputs
+  local logo_inputs=""
+  local logo_overlays=""
+  if [ -f "/shared/overlay_compiled.json" ]; then
+    local logo_count
+    logo_count=$(grep -c '"asset"' /shared/overlay_compiled.json 2>/dev/null | tr -d '[:space:]' || echo "0")
+    [ -z "$logo_count" ] && logo_count=0
+    if [ "$logo_count" -gt 0 ]; then
+      local idx=2  # input 0=video, 1=audio, logos start at 2
+      while IFS= read -r asset_path; do
+        if [ -f "$asset_path" ]; then
+          logo_inputs="$logo_inputs -i $asset_path"
+          local x y
+          x=$(grep -A2 "$asset_path" /shared/overlay_compiled.json | grep -o '"x":"[^"]*"' | head -1 | cut -d'"' -f4)
+          y=$(grep -A2 "$asset_path" /shared/overlay_compiled.json | grep -o '"y":"[^"]*"' | head -1 | cut -d'"' -f4)
+          [ -z "$x" ] && x="W-w-20"
+          [ -z "$y" ] && y="20"
+          if [ -z "$logo_overlays" ]; then
+            logo_overlays="[0:v][$idx:v]overlay=$x:$y"
+          else
+            logo_overlays="$logo_overlays;[tmp][$idx:v]overlay=$x:$y"
+          fi
+          idx=$((idx + 1))
+        fi
+      done < <(grep -o '"asset":"[^"]*"' /shared/overlay_compiled.json | cut -d'"' -f4)
+    fi
+  fi
+
+  local base_args="-hide_banner -loglevel error $PROGRESS_ARGS -fflags +genpts+igndts -i $FIFO -i $ICECAST_URL $logo_inputs -map 0:v -map 1:a -vf $vfilter -c:v libx264 -preset $speed -profile:v high -b:v $vbr -minrate $vbr -maxrate $vbr -bufsize $vb_buf -g 60 -keyint_min 60 -sc_threshold 0 -c:a aac -b:a $abr -ar 48000"
   
   # Get RTMP URLs
   local rtmp_urls

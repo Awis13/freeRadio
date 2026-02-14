@@ -13,6 +13,12 @@ const quality = require('./lib/quality');
 const streamControl = require('./lib/streamControl');
 const restreamSettings = require('./lib/restreamSettings');
 const createQueueRouter = require('./lib/queue');
+const { createPlaylistRouter } = require('./lib/playlist');
+const { createTrackRouter } = require('./lib/trackMeta');
+const { createVisualProfileRouter } = require('./lib/visualProfile');
+const { createOverlayRouter } = require('./lib/overlay');
+const { createScheduleRouter, startExecutor, onTrackChange } = require('./lib/schedule');
+const { createHistoryRouter } = require('./lib/history');
 
 const PORT = process.env.PORT || 9090;
 const HLS_DIR = process.env.HLS_DIR || '/hls';
@@ -30,17 +36,21 @@ const state = {
   outputMode: OUTPUT_MODE,
   audio: { title: '', filename: '' },
   video: { title: '', filename: '' },
-  track: { title: '', filename: '' },  // для совместимости
+  track: { title: '', filename: '' },  // for compatibility
   icecast: { listeners: 0, bitrate: 0, serverStart: '' },
   ffmpeg: { fps: '', speed: '', bitrate: '', frame: '', time: '' },
   bpm: {}
 };
 
+// BPM getter for playlist/track modules
+function getBpmMap() {
+  return state.bpm;
+}
+
 // --- Pollers ---
 const icecastPoller = createIcecastPoller((data) => {
   state.icecast = data;
   broadcast('icecast', data);
-  // Also update track title from icecast if liquidsoap doesn't provide it
   if (data.title && !state.track.title) {
     state.track = { title: data.title, filename: '' };
     broadcast('track', state.track);
@@ -48,6 +58,10 @@ const icecastPoller = createIcecastPoller((data) => {
 });
 
 const trackPoller = createTrackPoller((data) => {
+  // Log track change to history
+  if (data.filename && data.filename !== state.audio.filename) {
+    onTrackChange(data.filename);
+  }
   state.audio = data;
   broadcast('audio', data);
 });
@@ -76,10 +90,9 @@ function broadcast(type, data) {
 }
 
 wss.on('connection', (ws) => {
-  // Для совместимости с фронтендом
   const initState = {
     ...state,
-    track: state.audio  // track = audio для совместимости
+    track: state.audio
   };
   ws.send(JSON.stringify({ type: 'init', data: initState }));
 });
@@ -87,7 +100,7 @@ wss.on('connection', (ws) => {
 // --- Static files ---
 app.use(express.static(path.join(__dirname, 'public')));
 
-// hls.js — скачанный при сборке Docker образа
+// hls.js
 app.get('/js/hls.min.js', (req, res) => {
   res.sendFile('/app/hls.min.js');
 });
@@ -110,50 +123,59 @@ app.use('/api/music', fileManager(MUSIC_DIR));
 app.use('/api/visuals', fileManager(VISUALS_DIR));
 
 // --- REST API: queue control ---
-app.use('/api/queue', createQueueRouter());
+app.use('/api/queue', createQueueRouter(MUSIC_DIR, getBpmMap));
+
+// --- REST API: playlists ---
+app.use('/api/playlists', createPlaylistRouter(MUSIC_DIR, getBpmMap));
+
+// --- REST API: track metadata ---
+app.use('/api/tracks', createTrackRouter(MUSIC_DIR, getBpmMap));
+
+// --- REST API: schedule ---
+app.use('/api/schedule', createScheduleRouter());
+
+// --- REST API: history ---
+app.use('/api/history', createHistoryRouter());
+
+// --- REST API: visual profiles ---
+app.use('/api/visual-profiles', createVisualProfileRouter(VISUALS_DIR));
+
+// --- REST API: overlays ---
+app.use('/api/overlays', createOverlayRouter());
 
 // --- REST API: stream keys management ---
 app.use(express.json());
 
-// Get all platforms (with masked keys)
 app.get('/api/stream-keys', (req, res) => {
   res.json(streamKeys.getPlatforms());
 });
 
-// Add/update platform
 app.post('/api/stream-keys/:platform', (req, res) => {
   const { platform } = req.params;
   const { enabled, streamKey, rtmpUrl } = req.body;
-  
   streamKeys.setPlatform(platform, { enabled, streamKey, rtmpUrl });
   res.json({ success: true });
 });
 
-// Toggle platform enabled/disabled without changing key/url
 app.patch('/api/stream-keys/:platform/enabled', (req, res) => {
   const { platform } = req.params;
   const { enabled } = req.body;
-
   if (typeof enabled !== 'boolean') {
     return res.status(400).json({ error: 'enabled must be boolean' });
   }
-
   const result = streamKeys.setPlatformEnabled(platform, enabled);
   if (!result) {
     return res.status(404).json({ error: 'platform not found' });
   }
-
   res.json({ success: true, ...result });
 });
 
-// Delete platform
 app.delete('/api/stream-keys/:platform', (req, res) => {
   const { platform } = req.params;
   streamKeys.deletePlatform(platform);
   res.json({ success: true });
 });
 
-// Get RTMP URLs for streamer (internal use)
 app.get('/api/rtmp-urls', (req, res) => {
   res.json(streamKeys.getEnabledRtmpUrls());
 });
@@ -176,7 +198,7 @@ app.post('/api/quality', (req, res) => {
   }
 });
 
-// --- REST API: stream control (start/stop) ---
+// --- REST API: stream control ---
 app.get('/api/stream/control', (req, res) => {
   res.json(streamControl.getControlState());
 });
@@ -201,6 +223,9 @@ app.post('/api/restream/settings', (req, res) => {
   res.json({ success: true, ...result });
 });
 
+// --- Overlay assets serving ---
+app.use('/overlay-assets', express.static('/shared/overlay_assets'));
+
 // --- Start ---
 const restreamCfg = restreamSettings.getSettings();
 streamControl.setControlState(restreamCfg.autoStart);
@@ -211,6 +236,9 @@ trackPoller.start();
 videoPoller.start();
 ffmpegPoller.start();
 bpmPoller.start();
+
+// Start schedule executor daemon
+startExecutor(getBpmMap);
 
 server.listen(PORT, '0.0.0.0', () => {
   console.log(`[dashboard] http://0.0.0.0:${PORT}`);

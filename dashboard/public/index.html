@@ -20,6 +20,10 @@
     </div>
     <nav class="tabs">
       <button class="tab-btn active" data-tab="studio">Studio</button>
+      <button class="tab-btn" data-tab="schedule">Schedule</button>
+      <button class="tab-btn" data-tab="playlists">Playlists</button>
+      <button class="tab-btn" data-tab="visuals">Visuals</button>
+      <button class="tab-btn" data-tab="analytics">Analytics</button>
       <button class="tab-btn" data-tab="management">Management</button>
     </nav>
     <div id="uptime"></div>
@@ -30,20 +34,66 @@
   <!-- Studio Tab -->
   <div id="tab-studio" class="tab-content active">
     <div class="studio-layout">
-      <!-- Large Player -->
-      <div class="studio-player">
-        <div class="panel player-wrap">
-          <video id="studio-player" controls autoplay playsinline muted></video>
+      <div class="studio-main">
+        <!-- Large Player -->
+        <div class="studio-player">
+          <div class="panel player-wrap">
+            <video id="studio-player" controls autoplay playsinline muted></video>
+          </div>
+        </div>
+
+        <!-- Queue + Track Selector -->
+        <div class="studio-queue-area">
+          <div class="panel">
+            <div class="panel-head">
+              <span>Queue</span>
+              <button class="btn-small btn-danger" id="clear-queue-btn">Clear</button>
+              <button class="btn-skip" id="skip-btn">Skip</button>
+            </div>
+            <div class="panel-body">
+              <div class="queue-list" id="queue-list">
+                <div class="queue-empty">Queue empty — random mode</div>
+              </div>
+            </div>
+          </div>
+          <div class="panel">
+            <div class="panel-head">
+              <span>Add to Queue</span>
+              <input type="text" class="queue-search" id="queue-search" placeholder="Search tracks...">
+            </div>
+            <div class="panel-body">
+              <div class="track-selector" id="track-selector"></div>
+            </div>
+          </div>
         </div>
       </div>
 
       <!-- Studio Sidebar -->
       <div class="studio-sidebar">
-        <!-- Now Playing (large) -->
+        <!-- Now Playing -->
         <div class="panel studio-now-playing">
           <div class="panel-body">
             <div class="studio-track-name" id="studio-audio-track">--</div>
             <div class="studio-bpm" id="studio-bpm"></div>
+          </div>
+        </div>
+
+        <!-- Schedule Widget -->
+        <div class="panel" id="schedule-widget">
+          <div class="panel-head"><span>Schedule</span></div>
+          <div class="panel-body">
+            <div id="schedule-widget-content" class="schedule-widget-content">
+              <div class="sw-row"><span class="sw-label">Now</span> <span class="sw-value" id="sw-now">--</span></div>
+              <div class="sw-row"><span class="sw-label">Next</span> <span class="sw-value" id="sw-next">--</span></div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Restream Status -->
+        <div class="panel" id="restream-widget">
+          <div class="panel-head"><span>Restream</span></div>
+          <div class="panel-body">
+            <div id="restream-status-list" class="restream-status-list"></div>
           </div>
         </div>
 
@@ -57,28 +107,225 @@
             </div>
           </div>
         </div>
+      </div>
+    </div>
+  </div>
 
-        <!-- Queue -->
+  <!-- Schedule Tab -->
+  <div id="tab-schedule" class="tab-content">
+    <div class="schedule-layout">
+      <div class="schedule-main">
+        <!-- Weekly Grid -->
         <div class="panel">
           <div class="panel-head">
-            <span>Queue</span>
-            <button class="btn-skip" id="skip-btn">Skip</button>
+            <span>Weekly Schedule</span>
+            <button class="btn-small btn-primary" id="add-weekly-slot-btn">+ Add Slot</button>
+          </div>
+          <div class="panel-body schedule-grid-wrap">
+            <div class="schedule-grid" id="schedule-grid"></div>
+          </div>
+        </div>
+
+        <!-- Events -->
+        <div class="panel">
+          <div class="panel-head">
+            <span>One-time Events</span>
+            <button class="btn-small btn-primary" id="add-event-btn">+ Add Event</button>
           </div>
           <div class="panel-body">
-            <div class="queue-list" id="queue-list">
-              <div class="queue-empty">Queue empty — random mode</div>
+            <div id="events-list" class="events-list"></div>
+          </div>
+        </div>
+      </div>
+
+      <div class="schedule-sidebar">
+        <!-- Schedule Settings -->
+        <div class="panel">
+          <div class="panel-head"><span>Settings</span></div>
+          <div class="panel-body">
+            <div class="form-group">
+              <label>Timezone</label>
+              <input type="text" id="schedule-timezone" value="Europe/Moscow" placeholder="e.g. Europe/Moscow">
+            </div>
+            <div class="form-group">
+              <label>Default Playlist</label>
+              <select id="schedule-default-playlist"><option value="">-- None --</option></select>
+            </div>
+            <div class="form-group">
+              <label class="checkbox-label">
+                <input type="checkbox" id="schedule-enabled" checked>
+                Schedule enabled
+              </label>
+            </div>
+            <button class="btn-primary" id="save-schedule-settings" style="width:100%;margin-top:8px">Save Settings</button>
+          </div>
+        </div>
+
+        <!-- Current Status -->
+        <div class="panel">
+          <div class="panel-head"><span>Current Status</span></div>
+          <div class="panel-body">
+            <div id="schedule-current-status">
+              <div class="sw-row"><span class="sw-label">Active</span> <span class="sw-value" id="sched-active-slot">--</span></div>
+              <div class="sw-row"><span class="sw-label">Playlist</span> <span class="sw-value" id="sched-active-playlist">--</span></div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Playlists Tab -->
+  <div id="tab-playlists" class="tab-content">
+    <div class="playlists-layout">
+      <div class="playlists-list-panel">
+        <div class="panel">
+          <div class="panel-head">
+            <span>Playlists</span>
+            <button class="btn-small btn-primary" id="create-playlist-btn">+ Create</button>
+            <label class="btn-small btn-secondary import-btn">
+              Import M3U
+              <input type="file" id="import-m3u-input" accept=".m3u,.m3u8,.pls" style="display:none">
+            </label>
+          </div>
+          <div class="panel-body">
+            <div id="playlists-list" class="playlists-list"></div>
+          </div>
+        </div>
+      </div>
+
+      <div class="playlist-detail-panel">
+        <div class="panel" id="playlist-detail">
+          <div class="panel-head">
+            <span id="playlist-detail-title">Select a playlist</span>
+            <div id="playlist-detail-actions" style="display:none;margin-left:auto;display:flex;gap:6px">
+              <button class="btn-small btn-primary" id="playlist-load-queue-btn">Load to Queue</button>
+              <button class="btn-small btn-danger" id="playlist-delete-btn">Delete</button>
+            </div>
+          </div>
+          <div class="panel-body">
+            <div id="playlist-detail-content">
+              <div class="empty-state">Select a playlist from the list</div>
             </div>
           </div>
         </div>
 
-        <!-- Track Selector -->
-        <div class="panel">
+        <!-- Track Library for adding -->
+        <div class="panel" id="track-library-panel" style="display:none">
           <div class="panel-head">
-            <span>Add to Queue</span>
-            <input type="text" class="queue-search" id="queue-search" placeholder="Search tracks...">
+            <span>Track Library</span>
+            <input type="text" class="queue-search" id="playlist-track-search" placeholder="Search...">
           </div>
           <div class="panel-body">
-            <div class="track-selector" id="track-selector"></div>
+            <div id="playlist-track-library" class="track-selector"></div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Visuals Tab -->
+  <div id="tab-visuals" class="tab-content">
+    <div class="visuals-layout">
+      <div class="visuals-main">
+        <!-- Visual Profiles -->
+        <div class="panel">
+          <div class="panel-head">
+            <span>Visual Profiles</span>
+            <button class="btn-small btn-primary" id="create-visual-profile-btn">+ Create</button>
+          </div>
+          <div class="panel-body">
+            <div id="visual-profiles-list" class="visual-profiles-list"></div>
+          </div>
+        </div>
+
+        <!-- Profile Detail / Video Selection -->
+        <div class="panel" id="visual-profile-detail" style="display:none">
+          <div class="panel-head">
+            <span id="vp-detail-title">Profile</span>
+            <div style="margin-left:auto;display:flex;gap:6px">
+              <button class="btn-small btn-primary" id="vp-activate-btn">Activate</button>
+              <button class="btn-small btn-danger" id="vp-delete-btn">Delete</button>
+            </div>
+          </div>
+          <div class="panel-body">
+            <div id="vp-video-grid" class="video-grid"></div>
+          </div>
+        </div>
+      </div>
+
+      <div class="visuals-sidebar">
+        <!-- Overlay Editor -->
+        <div class="panel">
+          <div class="panel-head">
+            <span>Overlays</span>
+            <label class="checkbox-label" style="margin-left:auto">
+              <input type="checkbox" id="overlays-enabled-check">
+              Enabled
+            </label>
+          </div>
+          <div class="panel-body">
+            <div id="overlay-layers" class="overlay-layers"></div>
+            <button class="btn-small btn-primary" id="add-overlay-btn" style="width:100%;margin-top:8px">+ Add Layer</button>
+          </div>
+        </div>
+
+        <!-- Overlay Assets -->
+        <div class="panel">
+          <div class="panel-head">
+            <span>Overlay Assets</span>
+          </div>
+          <div class="panel-body">
+            <div id="overlay-assets-list" class="overlay-assets-list"></div>
+          </div>
+          <div class="upload-row">
+            <input type="file" id="overlay-asset-input" accept=".png,.jpg,.jpeg,.gif,.svg,.webp" style="display:none" />
+            <button class="upload-btn" onclick="document.getElementById('overlay-asset-input').click()">Upload Logo</button>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Analytics Tab -->
+  <div id="tab-analytics" class="tab-content">
+    <div class="analytics-layout">
+      <div class="analytics-main">
+        <!-- Listener Graph -->
+        <div class="panel">
+          <div class="panel-head"><span>Listeners Over Time</span></div>
+          <div class="panel-body">
+            <canvas id="listeners-chart" width="800" height="200"></canvas>
+          </div>
+        </div>
+        <!-- Top Tracks -->
+        <div class="panel">
+          <div class="panel-head"><span>Top Tracks</span></div>
+          <div class="panel-body">
+            <canvas id="tracks-chart" width="800" height="300"></canvas>
+          </div>
+        </div>
+      </div>
+      <div class="analytics-sidebar">
+        <!-- Uptime Stats -->
+        <div class="panel">
+          <div class="panel-head"><span>Stream Uptime</span></div>
+          <div class="panel-body">
+            <div id="analytics-uptime" class="analytics-stat-block">
+              <div class="big-stat" id="analytics-uptime-value">--</div>
+              <div class="stat-label">Total uptime</div>
+            </div>
+          </div>
+        </div>
+        <!-- Quick Stats -->
+        <div class="panel">
+          <div class="panel-head"><span>Quick Stats</span></div>
+          <div class="panel-body">
+            <div class="analytics-stats">
+              <div class="sw-row"><span class="sw-label">Total tracks played</span> <span class="sw-value" id="analytics-total-tracks">--</span></div>
+              <div class="sw-row"><span class="sw-label">Unique tracks</span> <span class="sw-value" id="analytics-unique-tracks">--</span></div>
+              <div class="sw-row"><span class="sw-label">Peak listeners</span> <span class="sw-value" id="analytics-peak-listeners">--</span></div>
+            </div>
           </div>
         </div>
       </div>
@@ -232,6 +479,21 @@
       <div class="modal-footer">
         <button class="btn-secondary" onclick="closePlatformModal()">Cancel</button>
         <button class="btn-primary" onclick="savePlatform()">Save</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Generic Modal (for playlists, schedule, overlays) -->
+  <div id="generic-modal" class="modal" style="display:none">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h3 id="generic-modal-title">Modal</h3>
+        <button class="modal-close" onclick="closeGenericModal()">&times;</button>
+      </div>
+      <div class="modal-body" id="generic-modal-body"></div>
+      <div class="modal-footer">
+        <button class="btn-secondary" onclick="closeGenericModal()">Cancel</button>
+        <button class="btn-primary" id="generic-modal-save">Save</button>
       </div>
     </div>
   </div>

@@ -95,6 +95,25 @@ harbor.http.register(port=7000, method="GET", "/queue",
   end
 )
 
+harbor.http.register(port=7000, method="POST", "/queue/clear",
+  fun(_, resp) -> begin
+    queue_list := []
+    resp.content_type("application/json")
+    resp.header("access-control-allow-origin", "*")
+    resp.data('{"ok": true}')
+  end
+)
+
+harbor.http.register(port=7000, method="GET", "/queue/length",
+  fun(_, resp) -> begin
+    items = queue_list()
+    len = list.length(items)
+    resp.content_type("application/json")
+    resp.header("access-control-allow-origin", "*")
+    resp.data('{"length": #{len}}')
+  end
+)
+
 # ---- HELPERS ----
 
 # Get basename from path

@@ -1,44 +1,14 @@
-const http = require('http');
 const express = require('express');
+const liq = require('./liqClient');
+const { resolvePlaylist } = require('./playlist');
 
-const DJ_HOST = 'dj';
-const DJ_PORT = 7000;
-
-function request(method, path, body) {
-  return new Promise((resolve, reject) => {
-    const opts = {
-      hostname: DJ_HOST,
-      port: DJ_PORT,
-      path,
-      method,
-      timeout: 5000,
-      headers: {}
-    };
-    if (body) {
-      opts.headers['Content-Length'] = Buffer.byteLength(body);
-    }
-    const req = http.request(opts, (res) => {
-      let data = '';
-      res.on('data', (c) => { data += c; });
-      res.on('end', () => {
-        try { resolve({ status: res.statusCode, data: JSON.parse(data) }); }
-        catch (e) { resolve({ status: res.statusCode, data: data }); }
-      });
-    });
-    req.on('error', reject);
-    req.on('timeout', () => { req.destroy(); reject(new Error('timeout')); });
-    if (body) req.write(body);
-    req.end();
-  });
-}
-
-function createQueueRouter() {
+function createQueueRouter(musicDir, getBpmMap) {
   const router = express.Router();
 
   // GET /api/queue — list queued tracks
   router.get('/', async (req, res) => {
     try {
-      const result = await request('GET', '/queue');
+      const result = await liq.getQueue();
       res.json(result.data);
     } catch (e) {
       res.status(502).json({ error: 'liquidsoap unavailable' });
@@ -50,9 +20,8 @@ function createQueueRouter() {
     try {
       const filename = (typeof req.body === 'string' ? req.body : JSON.stringify(req.body)).trim();
       if (!filename) return res.status(400).json({ error: 'no filename' });
-      // Send raw path to liquidsoap
       const filePath = '/music/' + filename;
-      const result = await request('POST', '/queue/push', filePath);
+      const result = await liq.pushTrack(filePath);
       res.json(result.data);
     } catch (e) {
       res.status(502).json({ error: 'liquidsoap unavailable' });
@@ -62,10 +31,60 @@ function createQueueRouter() {
   // POST /api/queue/skip — skip current track
   router.post('/skip', async (req, res) => {
     try {
-      const result = await request('POST', '/skip', '');
+      const result = await liq.skip();
       res.json(result.data);
     } catch (e) {
       res.status(502).json({ error: 'liquidsoap unavailable' });
+    }
+  });
+
+  // POST /api/queue/clear — clear queue
+  router.post('/clear', async (req, res) => {
+    try {
+      const result = await liq.clearQueue();
+      res.json(result.data);
+    } catch (e) {
+      res.status(502).json({ error: 'liquidsoap unavailable' });
+    }
+  });
+
+  // POST /api/queue/load-playlist — load playlist into queue
+  router.post('/load-playlist', express.json(), async (req, res) => {
+    try {
+      const { playlistId, clear } = req.body;
+      if (!playlistId) return res.status(400).json({ error: 'playlistId required' });
+
+      const tracks = resolvePlaylist(playlistId, musicDir, getBpmMap());
+      if (tracks.length === 0) {
+        return res.status(404).json({ error: 'playlist empty or not found' });
+      }
+
+      // Clear queue first if requested (default: true)
+      if (clear !== false) {
+        try { await liq.clearQueue(); } catch (e) {}
+        try { await liq.skip(); } catch (e) {}
+      }
+
+      // Push tracks to queue (first batch of 5)
+      const batch = tracks.slice(0, 5);
+      const results = [];
+      for (const track of batch) {
+        try {
+          const r = await liq.pushTrack('/music/' + track);
+          results.push({ track, ok: true });
+        } catch (e) {
+          results.push({ track, ok: false, error: e.message });
+        }
+      }
+
+      res.json({
+        ok: true,
+        loaded: results.filter(r => r.ok).length,
+        total: tracks.length,
+        results
+      });
+    } catch (e) {
+      res.status(500).json({ error: e.message });
     }
   });
 
