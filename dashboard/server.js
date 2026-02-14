@@ -227,9 +227,11 @@ app.post('/api/restream/settings', (req, res) => {
 app.use('/overlay-assets', express.static('/shared/overlay_assets'));
 
 // --- Start ---
+// Local HLS streaming always starts on boot.
+// autoStart only controls whether RTMP restream URLs are active on boot.
+streamControl.setControlState(true);
 const restreamCfg = restreamSettings.getSettings();
-streamControl.setControlState(restreamCfg.autoStart);
-console.log(`[restream] autostart=${restreamCfg.autoStart} (applied on dashboard boot)`);
+console.log(`[restream] streaming=true (always), rtmp autostart=${restreamCfg.autoStart}`);
 
 icecastPoller.start();
 trackPoller.start();

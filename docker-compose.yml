@@ -44,7 +44,10 @@ services:
 
   # 3. Стример (FFMPEG → HLS или RTMP + multi-streaming)
   streamer:
-    image: linuxserver/ffmpeg:latest
+    build:
+      context: .
+      dockerfile: Dockerfile.streamer
+    image: s23-streamer
     container_name: s23-streamer
     entrypoint: /scripts/stream_entry.sh
     environment:

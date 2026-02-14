@@ -250,7 +250,7 @@ build_outputs() {
     fi
   fi
 
-  local base_args="-hide_banner -loglevel error $PROGRESS_ARGS -fflags +genpts+igndts -i $FIFO -i $ICECAST_URL $logo_inputs -map 0:v -map 1:a -vf $vfilter -c:v libx264 -preset $speed -profile:v high -b:v $vbr -minrate $vbr -maxrate $vbr -bufsize $vb_buf -g 60 -keyint_min 60 -sc_threshold 0 -c:a aac -b:a $abr -ar 48000"
+  local base_args="-hide_banner -loglevel error $PROGRESS_ARGS -fflags +genpts+igndts -thread_queue_size 10240 -i $FIFO -thread_queue_size 10240 -i $ICECAST_URL $logo_inputs -map 0:v -map 1:a -vf $vfilter -c:v libx264 -preset $speed -profile:v high -b:v $vbr -minrate $vbr -maxrate $vbr -bufsize $vb_buf -g 60 -keyint_min 60 -sc_threshold 0 -c:a aac -b:a $abr -ar 48000"
   
   # Get RTMP URLs
   local rtmp_urls
@@ -286,9 +286,9 @@ stream() {
   stream_sig=$(current_stream_sig)
   echo "$stream_sig" > "$APPLIED_SIG_FILE"
 
-  feed_fifo > "$FIFO" &
+  feed_fifo | mbuffer -q -s 128k -m 1G > "$FIFO" &
   feeder_pid=$!
-  echo "[+] Feeder started (PID: $feeder_pid)"
+  echo "[+] Feeder started with 1G mbuffer (PID: $feeder_pid)"
 
   echo "[+] FFmpeg command: $cmd" >&2
   rc=0
