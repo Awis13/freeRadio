@@ -4,7 +4,7 @@ services:
     image: prom/prometheus:latest
     container_name: s23-prometheus
     ports:
-      - "9092:9090"
+      - "100.110.164.51:9092:9090"
     volumes:
       - ./configs/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
       - prometheus-data:/prometheus
@@ -22,7 +22,7 @@ services:
     image: grafana/grafana:latest
     container_name: s23-grafana
     ports:
-      - "3000:3000"
+      - "100.110.164.51:3000:3000"
     volumes:
       - grafana-data:/var/lib/grafana
       - ./configs/grafana/dashboards:/etc/grafana/provisioning/dashboards:ro

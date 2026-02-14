@@ -15,7 +15,7 @@ services:
     image: infiniteproject/icecast
     container_name: s23-icecast
     ports:
-      - "8000:8000"
+      - "100.110.164.51:8000:8000"
     environment:
       - ICECAST_SOURCE_PASSWORD=hackme
       - ICECAST_ADMIN_PASSWORD=hackme
@@ -76,13 +76,12 @@ services:
     restart: unless-stopped
 
   # 4. Dashboard (Node.js — preview + API + WebSocket)
-  # http://localhost:9090
+  # http://localhost (port 80)
   dashboard:
     build: ./dashboard
     container_name: s23-dashboard
     ports:
-      - "9090:9090"
-      - "9091:9091"
+      - "100.110.164.51:80:9090"
     environment:
       - PORT=9090
       - HLS_DIR=/hls
