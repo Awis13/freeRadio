@@ -1911,6 +1911,43 @@
 
   loadQuality();
 
+  // --- Audio Enhancement Settings ---
+  var audioEnhanceCheck = document.getElementById('audio-enhance');
+
+  function loadAudioSettings() {
+    fetch('/api/audio')
+      .then(function(r) { return r.json(); })
+      .then(function(data) {
+        if (audioEnhanceCheck) {
+          audioEnhanceCheck.checked = data.enhanced === true;
+          log('audio: enhancement = ' + (data.enhanced ? 'ON' : 'OFF'));
+        }
+      })
+      .catch(function(e) { log('audio: error loading settings: ' + e); });
+  }
+
+  if (audioEnhanceCheck) {
+    audioEnhanceCheck.onchange = function() {
+      var enabled = audioEnhanceCheck.checked;
+      fetch('/api/audio', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ enhanced: enabled })
+      })
+        .then(function(r) { return r.json(); })
+        .then(function(data) {
+          if (data.success) {
+            log('audio: enhancement ' + (enabled ? 'ENABLED' : 'DISABLED'));
+            log('audio: restart streamer to apply');
+            alert('Audio Boost ' + (enabled ? 'enabled' : 'disabled') + '. Restart streamer to apply.');
+          }
+        })
+        .catch(function(e) { showError('Audio settings change failed: ' + e); });
+    };
+  }
+
+  loadAudioSettings();
+
   // ============================
   // GENERIC MODAL
   // ============================

@@ -65,6 +65,28 @@ get_quality_settings() {
   fi
 }
 
+# Fetch audio settings from file
+get_audio_settings() {
+  local audio_file="/shared/stream_audio.json"
+  if [ -f "$audio_file" ]; then
+    cat "$audio_file"
+  else
+    echo '{"enhanced":false}'
+  fi
+}
+
+# Get audio enhancement filter
+get_audio_filter() {
+  local audio_json
+  audio_json=$(get_audio_settings)
+  if echo "$audio_json" | grep -q '"enhanced":[[:space:]]*true'; then
+    # Simplified audio filter without complex mcompand (spaces break shell)
+    echo "loudnorm=I=-14:TP=-1.5:LRA=11,highpass=f=40,lowpass=f=18000,equalizer=f=100:t=h:width=200:g=2,equalizer=f=1000:t=h:width=200:g=1,equalizer=f=10000:t=h:width=2000:g=2"
+  else
+    echo ""
+  fi
+}
+
 # Get video bitrate based on preset
 get_video_bitrate() {
   local preset="$1"
@@ -237,7 +259,7 @@ file_sig() {
 }
 
 current_stream_sig() {
-  echo "keys=$(file_sig /shared/stream_keys.enc);quality=$(file_sig /shared/stream_quality.json);control=$(file_sig /shared/stream_control.json);overlay=$(file_sig /shared/overlay_config.json);visual=$(file_sig /shared/active_visual_profile.json);filter=$(file_sig /shared/overlay_filter_string.txt)"
+  echo "keys=$(file_sig /shared/stream_keys.enc);quality=$(file_sig /shared/stream_quality.json);audio=$(file_sig /shared/stream_audio.json);control=$(file_sig /shared/stream_control.json);overlay=$(file_sig /shared/overlay_config.json);visual=$(file_sig /shared/active_visual_profile.json);filter=$(file_sig /shared/overlay_filter_string.txt)"
 }
 
 watch_stream_config() {
@@ -337,8 +359,19 @@ build_outputs() {
   local x264_extras
   x264_extras=$(get_x264_extras "$preset")
   
+  # Get audio enhancement filter
+  local audio_filter audio_args
+  audio_filter=$(get_audio_filter)
+  if [ -n "$audio_filter" ]; then
+    audio_args="-af \"$audio_filter\""
+    echo "[+] Audio enhancement: ENABLED" >&2
+  else
+    audio_args=""
+    echo "[+] Audio enhancement: disabled" >&2
+  fi
+  
   # Note: No -r flag, FPS is auto from source (no dup frames!)
-  local base_args="-hide_banner -loglevel error $PROGRESS_ARGS -fflags +genpts+igndts -thread_queue_size 10240 -i $FIFO -thread_queue_size 10240 -i $ICECAST_URL $logo_inputs -map 0:v -map 1:a -vf $vfilter -c:v libx264 -preset $speed -profile:v high $x264_extras -b:v $vbr -minrate $vbr -maxrate $vbr -bufsize $vb_buf -g $gop -keyint_min $gop -sc_threshold 0 -c:a aac -b:a $abr -ar 48000"
+  local base_args="-hide_banner -loglevel error $PROGRESS_ARGS -fflags +genpts+igndts -thread_queue_size 10240 -i $FIFO -thread_queue_size 10240 -i $ICECAST_URL $logo_inputs -map 0:v -map 1:a -vf $vfilter -c:v libx264 -preset $speed -profile:v high $x264_extras -b:v $vbr -minrate $vbr -maxrate $vbr -bufsize $vb_buf -g $gop -keyint_min $gop -sc_threshold 0 $audio_args -c:a aac -b:a $abr -ar 48000"
   
   # Always build tee outputs (HLS + all RTMPs)
   local outputs="[f=hls:hls_time=2:hls_list_size=15:hls_flags=delete_segments+omit_endlist+split_by_time:hls_segment_filename=${HLS_DIR}/seg_%03d.ts]${HLS_PLAYLIST}"

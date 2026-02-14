@@ -10,6 +10,7 @@ const { createBpmMapPoller } = require('./lib/bpmMap');
 const fileManager = require('./lib/fileManager');
 const streamKeys = require('./lib/streamKeys');
 const quality = require('./lib/quality');
+const audioSettings = require('./lib/audioSettings');
 const streamControl = require('./lib/streamControl');
 const restreamSettings = require('./lib/restreamSettings');
 const createQueueRouter = require('./lib/queue');
@@ -192,6 +193,21 @@ app.post('/api/quality', (req, res) => {
   const { preset } = req.body;
   try {
     const result = quality.setQuality(preset);
+    res.json({ success: true, ...result });
+  } catch (e) {
+    res.status(400).json({ error: e.message });
+  }
+});
+
+// --- REST API: audio settings ---
+app.get('/api/audio', (req, res) => {
+  res.json(audioSettings.getAudioSettings());
+});
+
+app.post('/api/audio', (req, res) => {
+  const { enhanced } = req.body;
+  try {
+    const result = audioSettings.setAudioSettings({ enhanced });
     res.json({ success: true, ...result });
   } catch (e) {
     res.status(400).json({ error: e.message });
