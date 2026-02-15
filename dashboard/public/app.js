@@ -1,15 +1,12 @@
 (function () {
   'use strict';
 
-  // --- DOM refs (Management tab) ---
-  var video = document.getElementById('player');
+  // --- DOM refs ---
+  var studioPlayer = document.getElementById('studio-player');
   var modeTag = document.getElementById('mode-tag');
   var uptimeEl = document.getElementById('uptime');
   var qualitySelect = document.getElementById('quality-select');
   var errorBanner = document.getElementById('error-banner');
-  var audioTrack = document.getElementById('audio-track');
-  var videoTrack = document.getElementById('video-track');
-  var trackBpm = document.getElementById('track-bpm');
   var statListeners = document.getElementById('stat-listeners');
   var statAudioBr = document.getElementById('stat-audio-br');
   var statFps = document.getElementById('stat-fps');
@@ -28,13 +25,9 @@
   var dbgClear = document.getElementById('dbg-clear');
   var dbgPause = document.getElementById('dbg-pause');
 
-  // --- DOM refs (Studio tab) ---
-  var studioPlayer = document.getElementById('studio-player');
+  // --- Studio DOM refs ---
   var studioAudioTrack = document.getElementById('studio-audio-track');
   var studioBpm = document.getElementById('studio-bpm');
-  var studioFps = document.getElementById('studio-fps');
-  var studioBitrate = document.getElementById('studio-bitrate');
-  var studioListeners = document.getElementById('studio-listeners');
   var queueList = document.getElementById('queue-list');
   var skipBtn = document.getElementById('skip-btn');
   var clearQueueBtn = document.getElementById('clear-queue-btn');
@@ -64,11 +57,19 @@
       btn.classList.add('active');
       document.querySelectorAll('.tab-content').forEach(function(c) { c.classList.remove('active'); });
       document.getElementById('tab-' + tab).classList.add('active');
-      // Load tab-specific data
       if (tab === 'playlists') loadPlaylists();
       if (tab === 'schedule') { loadSchedule(); loadPlaylistsForSelect(); }
       if (tab === 'visuals') { loadVisualProfiles(); loadOverlays(); loadOverlayAssets(); }
       if (tab === 'analytics') loadAnalytics();
+    });
+  });
+
+  // --- Collapsible panels ---
+  document.querySelectorAll('.panel-toggle').forEach(function(head) {
+    head.addEventListener('click', function(e) {
+      if (e.target.closest('.dbg-actions')) return;
+      var panel = head.closest('.panel-collapsible');
+      panel.classList.toggle('collapsed');
     });
   });
 
@@ -134,7 +135,15 @@
     return name;
   }
 
-  // --- HLS Player ---
+  function timeAgo(ts) {
+    var diff = Math.floor((Date.now() - ts) / 1000);
+    if (diff < 60) return 'just now';
+    if (diff < 3600) return Math.floor(diff / 60) + 'm ago';
+    if (diff < 86400) return Math.floor(diff / 3600) + 'h ago';
+    return Math.floor(diff / 86400) + 'd ago';
+  }
+
+  // --- HLS Player (single instance) ---
   var hlsInstance = null;
 
   function initPlayer() {
@@ -151,25 +160,20 @@
     if (isIOS || isSafari) {
       log('mode=native-hls');
       studioPlayer.src = src;
-      video.src = src;
       studioPlayer.play().catch(function () {});
-      video.play().catch(function () {});
       return;
     }
 
     if (typeof Hls === 'undefined') {
       log('hls.js not loaded, falling back to native');
       studioPlayer.src = src;
-      video.src = src;
       studioPlayer.play().catch(function () {});
-      video.play().catch(function () {});
       return;
     }
 
     if (!Hls.isSupported()) {
       log('MSE not supported');
       studioPlayer.src = src;
-      video.src = src;
       return;
     }
 
@@ -212,37 +216,13 @@
 
     hlsInstance.loadSource(src);
     hlsInstance.attachMedia(studioPlayer);
-
-    var hls2 = new Hls({
-      lowLatencyMode: false,
-      backBufferLength: 30,
-      enableWorker: true,
-      liveSyncDurationCount: 3,
-      liveMaxLatencyDurationCount: 10,
-      liveDurationInfinity: true,
-      maxBufferLength: 20,
-      maxMaxBufferLength: 40
-    });
-
-    hls2.on(Hls.Events.ERROR, function (_, data) {
-      if (data.fatal) {
-        if (data.type === Hls.ErrorTypes.NETWORK_ERROR) {
-          setTimeout(function () { hls2.startLoad(); }, 3000);
-        } else if (data.type === Hls.ErrorTypes.MEDIA_ERROR) {
-          hls2.recoverMediaError();
-        }
-      }
-    });
-
-    hls2.on(Hls.Events.MANIFEST_PARSED, function () {
-      video.play().catch(function () {});
-    });
-
-    hls2.loadSource(src);
-    hls2.attachMedia(video);
   }
 
   initPlayer();
+
+  // Load file lists immediately
+  loadFileList('music');
+  loadFileList('visuals');
 
   // --- WebSocket ---
   var ws = null;
@@ -282,7 +262,6 @@
       case 'init':
         updateMode(msg.data.outputMode);
         updateAudio(msg.data.audio);
-        updateVideo(msg.data.video);
         updateIcecast(msg.data.icecast);
         updateFfmpeg(msg.data.ffmpeg);
         bpmMap = msg.data.bpm || {};
@@ -294,7 +273,6 @@
         updateAudio(msg.data);
         break;
       case 'video':
-        updateVideo(msg.data);
         break;
       case 'icecast':
         updateIcecast(msg.data);
@@ -322,33 +300,23 @@
   function updateAudio(data) {
     if (!data) return;
     var name = data.title || cleanTrackName(data.filename) || '--';
-    audioTrack.textContent = name;
     studioAudioTrack.textContent = name;
 
     var filename = (data.filename || '').split('/').pop();
     var bpm = bpmMap[filename];
-    trackBpm.textContent = bpm ? Math.round(bpm) + ' BPM' : '';
     studioBpm.textContent = bpm ? Math.round(bpm) + ' BPM' : '';
-  }
-
-  function updateVideo(data) {
-    if (!data) return;
-    var name = data.title || cleanTrackName(data.filename) || '--';
-    videoTrack.textContent = name;
   }
 
   function updateIcecast(data) {
     if (!data) return;
     statListeners.textContent = data.listeners || '0';
-    studioListeners.textContent = data.listeners || '0';
     statAudioBr.textContent = data.bitrate ? data.bitrate + ' kbps' : '--';
     if (data.serverStart) {
       startTime = new Date(data.serverStart).getTime() || Date.now();
     }
-    // Track listener history for analytics
     var count = parseInt(data.listeners) || 0;
     listenerHistory.push({ ts: Date.now(), count: count });
-    if (listenerHistory.length > 720) listenerHistory.shift(); // ~1 hour at 5s intervals
+    if (listenerHistory.length > 720) listenerHistory.shift();
     if (count > peakListeners) peakListeners = count;
   }
 
@@ -358,8 +326,6 @@
     statSpeed.textContent = data.speed || '--';
     statVideoBr.textContent = data.bitrate || '--';
     statTime.textContent = data.time || '--';
-    studioFps.textContent = data.fps || '--';
-    studioBitrate.textContent = data.bitrate || '--';
   }
 
   function refreshBpmInList() {
@@ -538,6 +504,7 @@
         if (data.ok) {
           log('queue: skipped track');
           setTimeout(loadQueue, 1000);
+          setTimeout(loadTrackHistory, 2000);
         }
       })
       .catch(function(e) { showError('Skip failed: ' + e); });
@@ -597,6 +564,148 @@
 
   loadQueue();
   setInterval(loadQueue, 5000);
+
+  // ============================
+  // TRACK HISTORY (Studio sidebar)
+  // ============================
+  function loadTrackHistory() {
+    fetch('/api/history?limit=10')
+      .then(function(r) { return r.json(); })
+      .then(function(entries) { renderTrackHistory(entries); })
+      .catch(function() {});
+  }
+
+  function renderTrackHistory(entries) {
+    var container = document.getElementById('track-history-list');
+    container.innerHTML = '';
+
+    if (!entries || entries.length === 0) {
+      container.innerHTML = '<div class="empty-state">No history yet</div>';
+      return;
+    }
+
+    // Show most recent first
+    var reversed = entries.slice().reverse();
+    reversed.forEach(function(entry, idx) {
+      var div = document.createElement('div');
+      div.className = 'track-history-item';
+
+      var name = cleanTrackName(entry.track);
+      var nameEl = document.createElement('span');
+      nameEl.className = 'track-history-name';
+      nameEl.textContent = name;
+      nameEl.title = name;
+      div.appendChild(nameEl);
+
+      if (idx === 0) {
+        var nowBadge = document.createElement('span');
+        nowBadge.className = 'now-badge';
+        nowBadge.textContent = 'NOW';
+        div.appendChild(nowBadge);
+      } else {
+        var timeEl = document.createElement('span');
+        timeEl.className = 'track-history-time';
+        timeEl.textContent = timeAgo(entry.ts);
+        div.appendChild(timeEl);
+      }
+
+      if (entry.bpm) {
+        var bpmEl = document.createElement('span');
+        bpmEl.className = 'track-history-bpm';
+        bpmEl.textContent = Math.round(entry.bpm);
+        div.appendChild(bpmEl);
+      }
+
+      container.appendChild(div);
+    });
+  }
+
+  loadTrackHistory();
+  setInterval(loadTrackHistory, 15000);
+
+  // ============================
+  // RESTREAM STATUS WIDGET
+  // ============================
+  var lastRtmpHealth = null;
+
+  function updateRestreamStatus(healthData) {
+    lastRtmpHealth = healthData;
+    var container = document.getElementById('restream-status-list');
+    container.innerHTML = '';
+
+    var outputs = (healthData && healthData.outputs) ? healthData.outputs : {};
+    var keys = Object.keys(outputs);
+
+    if (keys.length === 0) {
+      loadRestreamStatusFallback();
+      return;
+    }
+
+    keys.forEach(function(name) {
+      var info = outputs[name];
+      var status = info.status || 'offline';
+      var div = document.createElement('div');
+      div.className = 'restream-status-item';
+
+      var dotClass = 'restream-status-dot';
+      var statusText = 'OFF';
+      if (status === 'live') {
+        dotClass += ' live';
+        statusText = 'LIVE';
+      } else if (status === 'error') {
+        dotClass += ' error';
+        statusText = 'ERROR';
+      } else {
+        dotClass += ' off';
+        statusText = 'OFF';
+      }
+
+      var dot = document.createElement('span');
+      dot.className = dotClass;
+      div.appendChild(dot);
+
+      var nameEl = document.createElement('span');
+      nameEl.textContent = name;
+      div.appendChild(nameEl);
+
+      var statusEl = document.createElement('span');
+      statusEl.className = 'restream-status-text ' + status;
+      statusEl.textContent = statusText;
+      div.appendChild(statusEl);
+
+      if (status === 'error' && info.error) {
+        div.title = info.error;
+      }
+
+      container.appendChild(div);
+    });
+  }
+
+  function loadRestreamStatusFallback() {
+    fetch('/api/stream-keys')
+      .then(function(r) { return r.json(); })
+      .then(function(platforms) {
+        var container = document.getElementById('restream-status-list');
+        container.innerHTML = '';
+        Object.entries(platforms).forEach(function(entry) {
+          var name = entry[0];
+          var config = entry[1];
+          var div = document.createElement('div');
+          div.className = 'restream-status-item';
+          div.innerHTML =
+            '<span class="restream-status-dot ' + (config.enabled ? 'on' : 'off') + '"></span>' +
+            '<span>' + name + '</span>' +
+            '<span class="restream-status-text off">' + (config.enabled ? 'READY' : 'OFF') + '</span>';
+          container.appendChild(div);
+        });
+        if (Object.keys(platforms).length === 0) {
+          container.innerHTML = '<div class="empty-state">No platforms</div>';
+        }
+      })
+      .catch(function() {});
+  }
+
+  loadRestreamStatusFallback();
 
   // ============================
   // PLAYLISTS
@@ -663,7 +772,6 @@
     contentEl.innerHTML = '';
 
     if (pl.type === 'smart') {
-      // Show rules
       var rulesDiv = document.createElement('div');
       rulesDiv.className = 'smart-rules';
 
@@ -683,7 +791,6 @@
       rulesDiv.innerHTML = html;
       contentEl.appendChild(rulesDiv);
 
-      // Show resolved tracks
       var tracksDiv = document.createElement('div');
       tracksDiv.className = 'playlist-tracks';
       tracksDiv.innerHTML = '<div class="panel-head" style="margin-top:12px"><span>Resolved Tracks (' + (pl.resolvedTracks || []).length + ')</span></div>';
@@ -697,7 +804,6 @@
       libraryPanel.style.display = 'none';
 
     } else {
-      // Manual playlist — show tracks with drag reorder
       var tracks = pl.tracks || [];
       if (tracks.length === 0) {
         contentEl.innerHTML = '<div class="empty-state">No tracks. Add from library below.</div>';
@@ -735,7 +841,6 @@
           };
           item.appendChild(removeBtn);
 
-          // Drag events
           item.ondragstart = function(e) {
             e.dataTransfer.setData('text/plain', idx);
             item.classList.add('dragging');
@@ -755,7 +860,6 @@
         });
       }
 
-      // Show track library for adding
       libraryPanel.style.display = 'block';
       renderPlaylistTrackLibrary(pl.id, pl.tracks || []);
     }
@@ -875,7 +979,6 @@
       .catch(function(e) { showError('Update rules failed: ' + e); });
   };
 
-  // Create playlist
   document.getElementById('create-playlist-btn').onclick = function() {
     openGenericModal('Create Playlist',
       '<div class="form-group"><label>Name</label><input type="text" id="new-playlist-name" placeholder="My Playlist"></div>' +
@@ -902,7 +1005,6 @@
     );
   };
 
-  // Delete playlist
   document.getElementById('playlist-delete-btn').onclick = function() {
     if (!selectedPlaylistId) return;
     if (!confirm('Delete this playlist?')) return;
@@ -919,7 +1021,6 @@
       .catch(function(e) { showError('Delete failed: ' + e); });
   };
 
-  // Load playlist to queue
   document.getElementById('playlist-load-queue-btn').onclick = function() {
     if (!selectedPlaylistId) return;
     fetch('/api/queue/load-playlist', {
@@ -939,7 +1040,6 @@
       .catch(function(e) { showError('Load playlist failed: ' + e); });
   };
 
-  // Import M3U
   document.getElementById('import-m3u-input').onchange = function() {
     var file = this.files[0];
     if (!file) return;
@@ -995,7 +1095,6 @@
     var grid = document.getElementById('schedule-grid');
     grid.innerHTML = '';
 
-    // Header row
     var headerRow = document.createElement('div');
     headerRow.className = 'sched-header-row';
     headerRow.innerHTML = '<div class="sched-time-col"></div>';
@@ -1004,7 +1103,6 @@
     });
     grid.appendChild(headerRow);
 
-    // Time rows (every 2 hours)
     for (var h = 0; h < 24; h += 2) {
       var row = document.createElement('div');
       row.className = 'sched-row';
@@ -1020,12 +1118,11 @@
         cell.dataset.day = d;
         cell.dataset.hour = h;
 
-        // Find slots that overlap this time
         var slots = Object.values(scheduleData.weekly || {}).filter(function(s) {
           if (s.day !== d) return false;
           var startH = parseInt(s.startTime.split(':')[0]);
           var endH = parseInt(s.endTime.split(':')[0]);
-          if (endH <= startH) endH += 24; // overnight
+          if (endH <= startH) endH += 24;
           return h >= startH && h < endH || (h + 24 >= startH && h + 24 < endH);
         });
 
@@ -1076,7 +1173,6 @@
     var s = scheduleData.settings || {};
     document.getElementById('schedule-timezone').value = s.timezone || 'Europe/Moscow';
     document.getElementById('schedule-enabled').checked = s.enabled !== false;
-    // Populate playlist dropdown
     loadPlaylistsForSelect();
     setTimeout(function() {
       var sel = document.getElementById('schedule-default-playlist');
@@ -1185,7 +1281,6 @@
       .catch(function(e) { showError('Delete event failed: ' + e); });
   }
 
-  // Poll schedule widget
   setInterval(loadScheduleCurrent, 30000);
 
   // ============================
@@ -1248,7 +1343,6 @@
     var grid = document.getElementById('vp-video-grid');
     grid.innerHTML = '';
 
-    // Get all available visuals
     fetch('/api/visuals')
       .then(function(r) { return r.json(); })
       .then(function(allVideos) {
@@ -1275,7 +1369,6 @@
         });
       });
 
-    // Activate button
     document.getElementById('vp-activate-btn').onclick = function() {
       fetch('/api/visual-profiles/' + profile.id + '/activate', { method: 'POST' })
         .then(function() {
@@ -1285,7 +1378,6 @@
         .catch(function(e) { showError('Activate failed: ' + e); });
     };
 
-    // Delete button
     document.getElementById('vp-delete-btn').onclick = function() {
       if (!confirm('Delete profile "' + profile.name + '"?')) return;
       fetch('/api/visual-profiles/' + profile.id, { method: 'DELETE' })
@@ -1556,7 +1648,6 @@
     var graphW = w - padding * 2;
     var graphH = h - padding * 2;
 
-    // Grid
     ctx.strokeStyle = '#1c2631';
     ctx.lineWidth = 1;
     for (var i = 0; i <= 4; i++) {
@@ -1570,7 +1661,6 @@
       ctx.fillText(Math.round(maxCount * i / 4), 2, gy + 4);
     }
 
-    // Line
     ctx.strokeStyle = '#c4ffcb';
     ctx.lineWidth = 2;
     ctx.beginPath();
@@ -1582,7 +1672,6 @@
     });
     ctx.stroke();
 
-    // Fill
     ctx.lineTo(padding + graphW, padding + graphH);
     ctx.lineTo(padding, padding + graphH);
     ctx.closePath();
@@ -1597,11 +1686,7 @@
         document.getElementById('analytics-total-tracks').textContent = data.totalPlayed || 0;
         document.getElementById('analytics-unique-tracks').textContent = data.uniqueTracks || 0;
         document.getElementById('analytics-peak-listeners').textContent = peakListeners;
-
-        // Draw top tracks chart
         drawTopTracksChart(data.topTracks || []);
-
-        // Uptime
         if (data.uptimeMs) {
           var hrs = Math.floor(data.uptimeMs / 3600000);
           var mins = Math.floor((data.uptimeMs % 3600000) / 60000);
@@ -1634,112 +1719,23 @@
       var y = 20 + idx * (barH + gap);
       var barW = (w - labelW - 60) * (t.count / maxPlays);
 
-      // Bar
       ctx.fillStyle = '#243244';
       ctx.fillRect(labelW, y, w - labelW - 60, barH);
       ctx.fillStyle = '#c4ffcb';
       ctx.fillRect(labelW, y, barW, barH);
 
-      // Label
       ctx.fillStyle = '#d7e1ea';
       ctx.font = '11px monospace';
       var name = t.track.length > 28 ? t.track.substr(0, 28) + '...' : t.track;
       ctx.fillText(name, 4, y + 15);
 
-      // Count
       ctx.fillStyle = '#9fb6cc';
       ctx.fillText(t.count + 'x', w - 50, y + 15);
     });
   }
 
   // ============================
-  // RESTREAM STATUS WIDGET (Studio sidebar)
-  // ============================
-  var lastRtmpHealth = null;
-
-  function updateRestreamStatus(healthData) {
-    lastRtmpHealth = healthData;
-    var container = document.getElementById('restream-status-list');
-    container.innerHTML = '';
-
-    var outputs = (healthData && healthData.outputs) ? healthData.outputs : {};
-    var keys = Object.keys(outputs);
-
-    if (keys.length === 0) {
-      // Fallback: show config-based status
-      loadRestreamStatusFallback();
-      return;
-    }
-
-    keys.forEach(function(name) {
-      var info = outputs[name];
-      var status = info.status || 'offline';
-      var div = document.createElement('div');
-      div.className = 'restream-status-item';
-
-      var dotClass = 'restream-status-dot';
-      var statusText = 'OFF';
-      if (status === 'live') {
-        dotClass += ' live';
-        statusText = 'LIVE';
-      } else if (status === 'error') {
-        dotClass += ' error';
-        statusText = 'ERROR';
-      } else {
-        dotClass += ' off';
-        statusText = 'OFF';
-      }
-
-      var dot = document.createElement('span');
-      dot.className = dotClass;
-      div.appendChild(dot);
-
-      var nameEl = document.createElement('span');
-      nameEl.textContent = name;
-      div.appendChild(nameEl);
-
-      var statusEl = document.createElement('span');
-      statusEl.className = 'restream-status-text ' + status;
-      statusEl.textContent = statusText;
-      div.appendChild(statusEl);
-
-      if (status === 'error' && info.error) {
-        div.title = info.error;
-      }
-
-      container.appendChild(div);
-    });
-  }
-
-  function loadRestreamStatusFallback() {
-    fetch('/api/stream-keys')
-      .then(function(r) { return r.json(); })
-      .then(function(platforms) {
-        var container = document.getElementById('restream-status-list');
-        container.innerHTML = '';
-        Object.entries(platforms).forEach(function(entry) {
-          var name = entry[0];
-          var config = entry[1];
-          var div = document.createElement('div');
-          div.className = 'restream-status-item';
-          div.innerHTML =
-            '<span class="restream-status-dot ' + (config.enabled ? 'on' : 'off') + '"></span>' +
-            '<span>' + name + '</span>' +
-            '<span class="restream-status-text off">' + (config.enabled ? 'READY' : 'OFF') + '</span>';
-          container.appendChild(div);
-        });
-        if (Object.keys(platforms).length === 0) {
-          container.innerHTML = '<div class="empty-state">No platforms</div>';
-        }
-      })
-      .catch(function() {});
-  }
-
-  // Initial load from config (will be replaced by WS data)
-  loadRestreamStatusFallback();
-
-  // ============================
-  // STREAM PLATFORMS (Management tab)
+  // STREAM PLATFORMS (Studio sidebar)
   // ============================
   var platformList = document.getElementById('platform-list');
   var addPlatformBtn = document.getElementById('add-platform-btn');
@@ -1911,10 +1907,10 @@
 
   function updateStreamToggle(streaming) {
     if (streaming) {
-      streamToggleBtn.textContent = 'Stop Restream';
+      streamToggleBtn.textContent = 'STOP';
       streamToggleBtn.className = 'btn-toggle streaming';
     } else {
-      streamToggleBtn.textContent = 'Start Restream';
+      streamToggleBtn.textContent = 'GO LIVE';
       streamToggleBtn.className = 'btn-toggle stopped';
     }
   }
@@ -1963,8 +1959,6 @@
       .then(function(data) {
         if (data.success) {
           log('quality: changed to ' + preset + ' (' + data.settings.name + ')');
-          log('quality: restart streamer to apply');
-          alert('Quality changed to ' + data.settings.name + '. Restart streamer to apply.');
         }
       })
       .catch(function(e) { showError('Quality change failed: ' + e); });
@@ -1999,8 +1993,6 @@
         .then(function(data) {
           if (data.success) {
             log('audio: enhancement ' + (enabled ? 'ENABLED' : 'DISABLED'));
-            log('audio: restart streamer to apply');
-            alert('Audio Boost ' + (enabled ? 'enabled' : 'disabled') + '. Restart streamer to apply.');
           }
         })
         .catch(function(e) { showError('Audio settings change failed: ' + e); });
@@ -2036,8 +2028,6 @@
         .then(function(data) {
           if (data.success) {
             log('video: enhancement ' + (enabled ? 'ENABLED' : 'DISABLED'));
-            log('video: restart streamer to apply');
-            alert('Video Enhance ' + (enabled ? 'enabled' : 'disabled') + '. Restart streamer to apply.');
           }
         })
         .catch(function(e) { showError('Video settings change failed: ' + e); });

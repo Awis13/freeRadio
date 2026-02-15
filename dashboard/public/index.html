@@ -10,37 +10,12 @@
   <header>
     <div class="tag active">SYSTEM 23</div>
     <div class="tag" id="mode-tag">HLS</div>
-    <div class="quality-selector">
-      <label>Quality:</label>
-      <select id="quality-select">
-        <option value="godmode">God Mode (1440p VP9 Force)</option>
-        <option value="ultra">Ultra (1080p 12Mbps)</option>
-        <option value="standard">Standard (1080p 8Mbps)</option>
-        <option value="kick">Kick Safe (1080p 8Mbps)</option>
-        <option value="high">High (1080p)</option>
-        <option value="medium">Medium (720p)</option>
-        <option value="low">Low (480p)</option>
-      </select>
-    </div>
-    <div class="audio-selector">
-      <label class="checkbox-label">
-        <input type="checkbox" id="audio-enhance">
-        <span>Audio Boost</span>
-      </label>
-    </div>
-    <div class="video-selector">
-      <label class="checkbox-label">
-        <input type="checkbox" id="video-enhance">
-        <span>Video Enhance</span>
-      </label>
-    </div>
     <nav class="tabs">
       <button class="tab-btn active" data-tab="studio">Studio</button>
       <button class="tab-btn" data-tab="schedule">Schedule</button>
       <button class="tab-btn" data-tab="playlists">Playlists</button>
       <button class="tab-btn" data-tab="visuals">Visuals</button>
       <button class="tab-btn" data-tab="analytics">Analytics</button>
-      <button class="tab-btn" data-tab="management">Management</button>
     </nav>
     <div id="uptime"></div>
   </header>
@@ -51,10 +26,22 @@
   <div id="tab-studio" class="tab-content active">
     <div class="studio-layout">
       <div class="studio-main">
-        <!-- Large Player -->
+        <!-- Player -->
         <div class="studio-player">
           <div class="panel player-wrap">
             <video id="studio-player" controls autoplay playsinline muted></video>
+          </div>
+        </div>
+
+        <!-- Transport Bar -->
+        <div class="studio-transport">
+          <div class="transport-now-playing">
+            <span class="transport-track" id="studio-audio-track">--</span>
+            <span class="transport-bpm" id="studio-bpm"></span>
+          </div>
+          <div class="transport-controls">
+            <button class="btn-skip-main" id="skip-btn" title="Skip to next track (Space)">SKIP</button>
+            <button id="stream-toggle-btn" class="btn-toggle">Loading...</button>
           </div>
         </div>
 
@@ -64,7 +51,6 @@
             <div class="panel-head">
               <span>Queue</span>
               <button class="btn-small btn-danger" id="clear-queue-btn">Clear</button>
-              <button class="btn-skip" id="skip-btn">Skip</button>
             </div>
             <div class="panel-body">
               <div class="queue-list" id="queue-list">
@@ -82,15 +68,74 @@
             </div>
           </div>
         </div>
+
+        <!-- Music Library -->
+        <div class="studio-files">
+          <div class="panel">
+            <div class="panel-head">
+              <span>Music Library</span>
+              <span id="music-count" style="margin-left:auto"></span>
+            </div>
+            <div class="panel-body">
+              <div class="file-list" id="music-list"></div>
+            </div>
+            <div class="upload-row">
+              <input type="file" id="music-input" multiple accept=".wav,.mp3,.flac,.ogg,.aac,.m4a" style="display:none" />
+              <button class="upload-btn" onclick="document.getElementById('music-input').click()">Upload</button>
+              <span class="upload-status" id="music-upload-status"></span>
+            </div>
+          </div>
+
+          <!-- Visuals Library -->
+          <div class="panel">
+            <div class="panel-head">
+              <span>Visuals Library</span>
+              <span id="visuals-count" style="margin-left:auto"></span>
+            </div>
+            <div class="panel-body">
+              <div class="file-list" id="visuals-list"></div>
+            </div>
+            <div class="upload-row">
+              <input type="file" id="visuals-input" multiple accept=".mp4,.mov,.mkv" style="display:none" />
+              <button class="upload-btn" onclick="document.getElementById('visuals-input').click()">Upload</button>
+              <span class="upload-status" id="visuals-upload-status"></span>
+            </div>
+          </div>
+        </div>
       </div>
 
       <!-- Studio Sidebar -->
       <div class="studio-sidebar">
-        <!-- Now Playing -->
-        <div class="panel studio-now-playing">
+        <!-- Track History -->
+        <div class="panel">
+          <div class="panel-head"><span>Track History</span></div>
           <div class="panel-body">
-            <div class="studio-track-name" id="studio-audio-track">--</div>
-            <div class="studio-bpm" id="studio-bpm"></div>
+            <div id="track-history-list" class="track-history-list">
+              <div class="empty-state">Loading...</div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Restream Status -->
+        <div class="panel" id="restream-widget">
+          <div class="panel-head"><span>Restream</span></div>
+          <div class="panel-body">
+            <div id="restream-status-list" class="restream-status-list"></div>
+          </div>
+        </div>
+
+        <!-- Stream Stats -->
+        <div class="panel">
+          <div class="panel-head"><span>Stream Stats</span></div>
+          <div class="panel-body">
+            <div class="stats-grid">
+              <div><div class="stat-label">Listeners</div><div class="stat-value" id="stat-listeners">--</div></div>
+              <div><div class="stat-label">FPS</div><div class="stat-value" id="stat-fps">--</div></div>
+              <div><div class="stat-label">Video Bitrate</div><div class="stat-value" id="stat-video-br">--</div></div>
+              <div><div class="stat-label">Speed</div><div class="stat-value" id="stat-speed">--</div></div>
+              <div><div class="stat-label">Audio</div><div class="stat-value" id="stat-audio-br">--</div></div>
+              <div><div class="stat-label">Encode Time</div><div class="stat-value" id="stat-time">--</div></div>
+            </div>
           </div>
         </div>
 
@@ -105,22 +150,63 @@
           </div>
         </div>
 
-        <!-- Restream Status -->
-        <div class="panel" id="restream-widget">
-          <div class="panel-head"><span>Restream</span></div>
+        <!-- Settings (collapsible) -->
+        <div class="panel panel-collapsible collapsed">
+          <div class="panel-head panel-toggle"><span>Settings</span><span class="collapse-arrow"></span></div>
           <div class="panel-body">
-            <div id="restream-status-list" class="restream-status-list"></div>
+            <div class="settings-note">Restart streamer to apply changes</div>
+            <div class="form-group">
+              <label>Quality Preset</label>
+              <select id="quality-select">
+                <option value="godmode">God Mode (1440p VP9)</option>
+                <option value="ultra">Ultra (1080p 12Mbps)</option>
+                <option value="standard">Standard (1080p 8Mbps)</option>
+                <option value="kick">Kick Safe (1080p 8Mbps)</option>
+                <option value="high">High (1080p)</option>
+                <option value="medium">Medium (720p)</option>
+                <option value="low">Low (480p)</option>
+              </select>
+            </div>
+            <div class="form-group">
+              <label class="checkbox-label">
+                <input type="checkbox" id="audio-enhance">
+                <span>Audio Boost</span>
+              </label>
+            </div>
+            <div class="form-group">
+              <label class="checkbox-label">
+                <input type="checkbox" id="video-enhance">
+                <span>Video Enhance</span>
+              </label>
+            </div>
           </div>
         </div>
 
-        <!-- Compact Stats -->
-        <div class="panel">
+        <!-- Stream Platforms (collapsible) -->
+        <div class="panel panel-collapsible collapsed">
+          <div class="panel-head panel-toggle"><span>Stream Platforms</span><span class="collapse-arrow"></span></div>
           <div class="panel-body">
-            <div class="studio-stats">
-              <span><span class="stat-label">FPS</span> <span id="studio-fps">--</span></span>
-              <span><span class="stat-label">Bitrate</span> <span id="studio-bitrate">--</span></span>
-              <span><span class="stat-label">Listeners</span> <span id="studio-listeners">--</span></span>
+            <label class="checkbox-label platform-autostart">
+              <input type="checkbox" id="restream-autostart-checkbox">
+              Auto-start restream after restart
+            </label>
+            <div class="platform-list" id="platform-list"></div>
+            <button class="upload-btn" id="add-platform-btn" style="margin-top:8px;width:100%">+ Add Platform</button>
+          </div>
+        </div>
+
+        <!-- Debug Log (collapsible) -->
+        <div class="panel panel-collapsible collapsed">
+          <div class="panel-head panel-toggle">
+            <span>Debug</span>
+            <div class="dbg-actions">
+              <button class="dbg-btn" id="dbg-clear">Clear</button>
+              <button class="dbg-btn" id="dbg-pause">Pause</button>
             </div>
+            <span class="collapse-arrow"></span>
+          </div>
+          <div class="dbg-body">
+            <pre class="log" id="log"></pre>
           </div>
         </div>
       </div>
@@ -161,7 +247,30 @@
           <div class="panel-body">
             <div class="form-group">
               <label>Timezone</label>
-              <input type="text" id="schedule-timezone" value="Europe/Moscow" placeholder="e.g. Europe/Moscow">
+              <select id="schedule-timezone">
+                <option value="Pacific/Honolulu">Pacific/Honolulu (UTC-10)</option>
+                <option value="America/Anchorage">America/Anchorage (UTC-9)</option>
+                <option value="America/Los_Angeles">America/Los_Angeles (UTC-8)</option>
+                <option value="America/Denver">America/Denver (UTC-7)</option>
+                <option value="America/Chicago">America/Chicago (UTC-6)</option>
+                <option value="America/New_York">America/New_York (UTC-5)</option>
+                <option value="America/Sao_Paulo">America/Sao_Paulo (UTC-3)</option>
+                <option value="UTC">UTC (UTC+0)</option>
+                <option value="Europe/London">Europe/London (UTC+0)</option>
+                <option value="Europe/Paris">Europe/Paris (UTC+1)</option>
+                <option value="Europe/Berlin">Europe/Berlin (UTC+1)</option>
+                <option value="Europe/Berlin" selected>Europe/Berlin (UTC+1)</option>
+                <option value="Europe/Istanbul">Europe/Istanbul (UTC+3)</option>
+                <option value="Asia/Dubai">Asia/Dubai (UTC+4)</option>
+                <option value="Asia/Kolkata">Asia/Kolkata (UTC+5:30)</option>
+                <option value="Asia/Bangkok">Asia/Bangkok (UTC+7)</option>
+                <option value="Asia/Singapore">Asia/Singapore (UTC+8)</option>
+                <option value="Asia/Shanghai">Asia/Shanghai (UTC+8)</option>
+                <option value="Asia/Tokyo">Asia/Tokyo (UTC+9)</option>
+                <option value="Asia/Seoul">Asia/Seoul (UTC+9)</option>
+                <option value="Australia/Sydney">Australia/Sydney (UTC+11)</option>
+                <option value="Pacific/Auckland">Pacific/Auckland (UTC+13)</option>
+              </select>
             </div>
             <div class="form-group">
               <label>Default Playlist</label>
@@ -208,13 +317,29 @@
             <div id="playlists-list" class="playlists-list"></div>
           </div>
         </div>
+
+        <!-- Music Library -->
+        <div class="panel" style="margin-top:12px">
+          <div class="panel-head">
+            <span>Music Library</span>
+            <span id="music-count" style="margin-left:auto"></span>
+          </div>
+          <div class="panel-body">
+            <div class="file-list" id="music-list"></div>
+          </div>
+          <div class="upload-row">
+            <input type="file" id="music-input" multiple accept=".wav,.mp3,.flac,.ogg,.aac,.m4a" style="display:none" />
+            <button class="upload-btn" onclick="document.getElementById('music-input').click()">Upload</button>
+            <span class="upload-status" id="music-upload-status"></span>
+          </div>
+        </div>
       </div>
 
       <div class="playlist-detail-panel">
         <div class="panel" id="playlist-detail">
           <div class="panel-head">
             <span id="playlist-detail-title">Select a playlist</span>
-            <div id="playlist-detail-actions" style="display:none;margin-left:auto;display:flex;gap:6px">
+            <div id="playlist-detail-actions" style="display:none">
               <button class="btn-small btn-primary" id="playlist-load-queue-btn">Load to Queue</button>
               <button class="btn-small btn-danger" id="playlist-delete-btn">Delete</button>
             </div>
@@ -266,6 +391,22 @@
           </div>
           <div class="panel-body">
             <div id="vp-video-grid" class="video-grid"></div>
+          </div>
+        </div>
+
+        <!-- Visuals Library -->
+        <div class="panel">
+          <div class="panel-head">
+            <span>Visuals Library</span>
+            <span id="visuals-count" style="margin-left:auto"></span>
+          </div>
+          <div class="panel-body">
+            <div class="file-list" id="visuals-list"></div>
+          </div>
+          <div class="upload-row">
+            <input type="file" id="visuals-input" multiple accept=".mp4,.mov,.mkv" style="display:none" />
+            <button class="upload-btn" onclick="document.getElementById('visuals-input').click()">Upload</button>
+            <span class="upload-status" id="visuals-upload-status"></span>
           </div>
         </div>
       </div>
@@ -348,122 +489,6 @@
     </div>
   </div>
 
-  <!-- Management Tab -->
-  <div id="tab-management" class="tab-content">
-    <div class="grid">
-      <!-- Main column -->
-      <div class="main-col">
-        <!-- Player -->
-        <div class="panel player-wrap">
-          <video id="player" controls autoplay playsinline muted></video>
-        </div>
-
-        <!-- Music Library -->
-        <div class="panel">
-          <div class="panel-head">
-            <span>Music Library</span>
-            <span id="music-count" style="margin-left:auto"></span>
-          </div>
-          <div class="panel-body">
-            <div class="file-list" id="music-list"></div>
-          </div>
-          <div class="upload-row">
-            <input type="file" id="music-input" multiple accept=".wav,.mp3,.flac,.ogg,.aac,.m4a" style="display:none" />
-            <button class="upload-btn" onclick="document.getElementById('music-input').click()">Upload</button>
-            <span class="upload-status" id="music-upload-status"></span>
-          </div>
-        </div>
-
-        <!-- Visuals Library -->
-        <div class="panel">
-          <div class="panel-head">
-            <span>Visuals Library</span>
-            <span id="visuals-count" style="margin-left:auto"></span>
-          </div>
-          <div class="panel-body">
-            <div class="file-list" id="visuals-list"></div>
-          </div>
-          <div class="upload-row">
-            <input type="file" id="visuals-input" multiple accept=".mp4,.mov,.mkv" style="display:none" />
-            <button class="upload-btn" onclick="document.getElementById('visuals-input').click()">Upload</button>
-            <span class="upload-status" id="visuals-upload-status"></span>
-          </div>
-        </div>
-      </div>
-
-      <!-- Sidebar -->
-      <div class="sidebar">
-        <!-- Now Playing -->
-        <div class="panel now-playing">
-          <div class="panel-head"><span>Now Playing</span></div>
-          <div class="panel-body">
-            <div class="track-section">
-              <div class="track-label">Audio</div>
-              <div class="track-name" id="audio-track">--</div>
-            </div>
-            <div class="track-section">
-              <div class="track-label">Video</div>
-              <div class="track-name" id="video-track">--</div>
-            </div>
-            <div class="track-bpm" id="track-bpm"></div>
-          </div>
-        </div>
-
-        <!-- Stream Control -->
-        <div class="panel">
-          <div class="panel-head">
-            <span>Restream Control</span>
-            <button id="stream-toggle-btn" class="btn-toggle">Loading...</button>
-          </div>
-        </div>
-
-        <!-- Stream Stats -->
-        <div class="panel">
-          <div class="panel-head"><span>Stream Stats</span></div>
-          <div class="panel-body">
-            <div class="stats-grid">
-              <div><div class="stat-label">Listeners</div><div class="stat-value" id="stat-listeners">--</div></div>
-              <div><div class="stat-label">Audio</div><div class="stat-value" id="stat-audio-br">--</div></div>
-              <div><div class="stat-label">FPS</div><div class="stat-value" id="stat-fps">--</div></div>
-              <div><div class="stat-label">Speed</div><div class="stat-value" id="stat-speed">--</div></div>
-              <div><div class="stat-label">Video Bitrate</div><div class="stat-value" id="stat-video-br">--</div></div>
-              <div><div class="stat-label">Encode Time</div><div class="stat-value" id="stat-time">--</div></div>
-            </div>
-          </div>
-        </div>
-
-        <!-- Stream Platforms -->
-        <div class="panel">
-          <div class="panel-head"><span>Stream Platforms</span></div>
-          <div class="panel-body">
-            <div id="stream-platforms">
-              <label class="checkbox-label platform-autostart">
-                <input type="checkbox" id="restream-autostart-checkbox">
-                Auto-start restream after restart
-              </label>
-              <div class="platform-list" id="platform-list"></div>
-              <button class="upload-btn" id="add-platform-btn" style="margin-top:8px;width:100%">+ Add Platform</button>
-            </div>
-          </div>
-        </div>
-
-        <!-- Debug Log -->
-        <div class="panel">
-          <div class="panel-head">
-            <span>Debug</span>
-            <div class="dbg-actions">
-              <button class="dbg-btn" id="dbg-clear">Clear</button>
-              <button class="dbg-btn" id="dbg-pause">Pause</button>
-            </div>
-          </div>
-          <div class="dbg-body">
-            <pre class="log" id="log"></pre>
-          </div>
-        </div>
-      </div>
-    </div>
-  </div>
-
   <!-- Platform Modal -->
   <div id="platform-modal" class="modal" style="display:none">
     <div class="modal-content">
@@ -499,7 +524,7 @@
     </div>
   </div>
 
-  <!-- Generic Modal (for playlists, schedule, overlays) -->
+  <!-- Generic Modal -->
   <div id="generic-modal" class="modal" style="display:none">
     <div class="modal-content">
       <div class="modal-header">

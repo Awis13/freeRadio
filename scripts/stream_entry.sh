@@ -430,6 +430,14 @@ build_outputs() {
   echo "$base_args -f tee \"$outputs\" "
 }
 
+# Cleanup stale processes and FIFO
+cleanup_stream() {
+  pkill -9 -f "mbuffer.*$FIFO" 2>/dev/null || true
+  pkill -9 -f "ffmpeg.*$FIFO" 2>/dev/null || true
+  sleep 0.5
+  [ -p "$FIFO" ] && rm -f "$FIFO" && mkfifo "$FIFO"
+}
+
 # Main stream function
 stream() {
   local cmd stream_sig feeder_pid rc health_pid
@@ -437,6 +445,8 @@ stream() {
     echo "[!] Streaming disabled, skip stream start."
     return 0
   fi
+
+  cleanup_stream
 
   cmd=$(build_outputs)
   stream_sig=$(current_stream_sig)
@@ -466,7 +476,9 @@ stream() {
     sed -i 's/"status":"live"/"status":"offline"/g;s/"status":"error"/"status":"offline"/g' "$RTMP_STATUS_FILE" 2>/dev/null || true
   fi
 
-  kill "$feeder_pid" 2>/dev/null || true
+  # Force kill feeder and any stale mbuffer/ffmpeg
+  kill -9 "$feeder_pid" 2>/dev/null || true
+  pkill -9 -f "mbuffer.*$FIFO" 2>/dev/null || true
   wait "$feeder_pid" 2>/dev/null || true
 
   return $rc
