@@ -807,6 +807,37 @@ video {
 
 .restream-status-dot.on { background: var(--green); }
 .restream-status-dot.off { background: var(--border2); }
+.restream-status-dot.live {
+  background: var(--green);
+  box-shadow: 0 0 6px var(--green);
+  animation: pulse-live 2s ease-in-out infinite;
+}
+.restream-status-dot.error {
+  background: var(--red);
+  box-shadow: 0 0 6px var(--red);
+  animation: pulse-error 1.5s ease-in-out infinite;
+}
+
+.restream-status-text {
+  margin-left: auto;
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  font-weight: bold;
+}
+.restream-status-text.live { color: var(--green); }
+.restream-status-text.error { color: var(--red); }
+.restream-status-text.off { color: var(--text2); }
+
+@keyframes pulse-live {
+  0%, 100% { box-shadow: 0 0 4px var(--green); }
+  50% { box-shadow: 0 0 12px var(--green), 0 0 20px rgba(196, 255, 203, 0.3); }
+}
+
+@keyframes pulse-error {
+  0%, 100% { box-shadow: 0 0 4px var(--red); }
+  50% { box-shadow: 0 0 12px var(--red), 0 0 20px rgba(255, 179, 179, 0.3); }
+}
 
 /* Empty state */
 .empty-state {

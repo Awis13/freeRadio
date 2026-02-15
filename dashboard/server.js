@@ -7,6 +7,7 @@ const { createTrackPoller } = require('./lib/track');
 const { createVideoPoller } = require('./lib/video');
 const { createFfmpegPoller } = require('./lib/ffmpeg');
 const { createBpmMapPoller } = require('./lib/bpmMap');
+const { createRtmpHealthPoller } = require('./lib/rtmpHealth');
 const fileManager = require('./lib/fileManager');
 const streamKeys = require('./lib/streamKeys');
 const quality = require('./lib/quality');
@@ -41,7 +42,8 @@ const state = {
   track: { title: '', filename: '' },  // for compatibility
   icecast: { listeners: 0, bitrate: 0, serverStart: '' },
   ffmpeg: { fps: '', speed: '', bitrate: '', frame: '', time: '' },
-  bpm: {}
+  bpm: {},
+  rtmpHealth: {}
 };
 
 // BPM getter for playlist/track modules
@@ -83,6 +85,11 @@ const bpmPoller = createBpmMapPoller(path.join(MUSIC_DIR, '.bpm_map'), (data) =>
   broadcast('bpm', data);
 });
 
+const rtmpHealthPoller = createRtmpHealthPoller((data) => {
+  state.rtmpHealth = data;
+  broadcast('rtmp-health', data);
+});
+
 // --- WebSocket ---
 function broadcast(type, data) {
   const msg = JSON.stringify({ type, data });
@@ -94,7 +101,8 @@ function broadcast(type, data) {
 wss.on('connection', (ws) => {
   const initState = {
     ...state,
-    track: state.audio
+    track: state.audio,
+    rtmpHealth: state.rtmpHealth
   };
   ws.send(JSON.stringify({ type: 'init', data: initState }));
 });
@@ -180,6 +188,10 @@ app.delete('/api/stream-keys/:platform', (req, res) => {
 
 app.get('/api/rtmp-urls', (req, res) => {
   res.json(streamKeys.getEnabledRtmpUrls());
+});
+
+app.get('/api/rtmp-health', (req, res) => {
+  res.json(state.rtmpHealth);
 });
 
 // --- REST API: quality settings ---
@@ -270,6 +282,7 @@ trackPoller.start();
 videoPoller.start();
 ffmpegPoller.start();
 bpmPoller.start();
+rtmpHealthPoller.start();
 
 // Start schedule executor daemon
 startExecutor(getBpmMap);

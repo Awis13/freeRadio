@@ -11,6 +11,8 @@ DASHBOARD_API="${DASHBOARD_API:-http://dashboard:9090}"
 FIFO="/tmp/videofifo.ts"
 APPLIED_SIG_FILE="/tmp/applied_stream_sig.txt"
 MAIN_FFMPEG_MATCH="/tmp/videofifo.ts"
+FFMPEG_STDERR_LOG="/tmp/ffmpeg_stderr.log"
+RTMP_STATUS_FILE="/shared/rtmp_status.json"
 
 # Fetch RTMP URLs from dashboard API (for multi-streaming)
 fetch_rtmp_urls() {
@@ -408,7 +410,7 @@ build_outputs() {
   fi
   
   # Note: No -r flag, FPS is auto from source (no dup frames!)
-  local base_args="-hide_banner -loglevel error $PROGRESS_ARGS -fflags +genpts+igndts -thread_queue_size 10240 -i $FIFO -thread_queue_size 10240 -i $ICECAST_URL $logo_inputs -map 0:v -map 1:a -vf $vfilter -c:v libx264 -preset $speed -profile:v high $x264_extras -b:v $vbr -minrate $vbr -maxrate $vbr -bufsize $vb_buf -g $gop -keyint_min $gop -sc_threshold 0 $audio_args -c:a aac -b:a $abr -ar 48000"
+  local base_args="-hide_banner -loglevel error $PROGRESS_ARGS -fflags +genpts+igndts -thread_queue_size 10240 -i $FIFO -reconnect 1 -reconnect_streamed 1 -reconnect_delay_max 5 -thread_queue_size 10240 -i $ICECAST_URL $logo_inputs -map 0:v -map 1:a -vf $vfilter -c:v libx264 -preset $speed -profile:v high $x264_extras -b:v $vbr -minrate $vbr -maxrate $vbr -bufsize $vb_buf -g $gop -keyint_min $gop -sc_threshold 0 -flags +cgop $audio_args -c:a aac -b:a $abr -ar 48000"
   
   # Always build tee outputs (HLS + all RTMPs)
   local outputs="[f=hls:hls_time=2:hls_list_size=15:hls_flags=delete_segments+omit_endlist+split_by_time:hls_segment_filename=${HLS_DIR}/seg_%03d.ts]${HLS_PLAYLIST}"
@@ -419,7 +421,7 @@ build_outputs() {
     for url in $urls; do
       url=$(echo "$url" | sed 's/\\\//\//g')
       if [ -n "$url" ]; then
-        outputs="${outputs}|[f=flv]${url}"
+        outputs="${outputs}|[f=flv:onfail=ignore]${url}"
         echo "[+] Adding RTMP output: ${url}" >&2
       fi
     done
@@ -430,7 +432,7 @@ build_outputs() {
 
 # Main stream function
 stream() {
-  local cmd stream_sig feeder_pid rc
+  local cmd stream_sig feeder_pid rc health_pid
   if ! is_streaming_enabled; then
     echo "[!] Streaming disabled, skip stream start."
     return 0
@@ -440,18 +442,160 @@ stream() {
   stream_sig=$(current_stream_sig)
   echo "$stream_sig" > "$APPLIED_SIG_FILE"
 
+  # Clean up stderr log for fresh start
+  > "$FFMPEG_STDERR_LOG"
+
   feed_fifo | mbuffer -q -s 128k -m 1G > "$FIFO" &
   feeder_pid=$!
   echo "[+] Feeder started with 1G mbuffer (PID: $feeder_pid)"
 
+  # Start RTMP health monitor in background
+  monitor_rtmp_health &
+  health_pid=$!
+
   echo "[+] FFmpeg command: $cmd" >&2
   rc=0
-  eval "ffmpeg $cmd" || rc=$?
+  eval "ffmpeg $cmd 2>>$FFMPEG_STDERR_LOG" || rc=$?
+
+  # Stop health monitor
+  kill "$health_pid" 2>/dev/null || true
+  wait "$health_pid" 2>/dev/null || true
+
+  # Set all outputs to offline on exit
+  if [ -f "$RTMP_STATUS_FILE" ]; then
+    sed -i 's/"status":"live"/"status":"offline"/g;s/"status":"error"/"status":"offline"/g' "$RTMP_STATUS_FILE" 2>/dev/null || true
+  fi
 
   kill "$feeder_pid" 2>/dev/null || true
   wait "$feeder_pid" 2>/dev/null || true
 
   return $rc
+}
+
+# Fetch platform name mapping from dashboard API
+# Writes pairs to /tmp/rtmp_platform_map.txt: url<TAB>name
+fetch_platform_map() {
+  local rtmp_json
+  rtmp_json=$(curl -s "${DASHBOARD_API}/api/rtmp-urls" 2>/dev/null || echo "[]")
+  > /tmp/rtmp_platform_map.txt
+  # Parse {"name":"X","url":"Y"} pairs
+  echo "$rtmp_json" | grep -o '{"name":"[^"]*","url":"[^"]*"}' | while IFS= read -r entry; do
+    local pname purl
+    pname=$(echo "$entry" | grep -o '"name":"[^"]*"' | cut -d'"' -f4)
+    purl=$(echo "$entry" | grep -o '"url":"[^"]*"' | cut -d'"' -f4)
+    purl=$(echo "$purl" | sed 's/\\\//\//g')
+    if [ -n "$pname" ] && [ -n "$purl" ]; then
+      printf '%s\t%s\n' "$purl" "$pname" >> /tmp/rtmp_platform_map.txt
+    fi
+  done
+}
+
+# Look up platform name for a given URL
+lookup_platform_name() {
+  local url="$1"
+  local result=""
+  if [ -f /tmp/rtmp_platform_map.txt ]; then
+    result=$(grep -F "$url" /tmp/rtmp_platform_map.txt 2>/dev/null | head -1 | cut -f2)
+  fi
+  if [ -z "$result" ]; then
+    # Fallback: extract hostname prefix
+    result=$(echo "$url" | sed 's|.*://||;s|/.*||;s|\..*||' | head -c 20)
+  fi
+  echo "$result"
+}
+
+# Monitor RTMP health by watching FFmpeg stderr
+monitor_rtmp_health() {
+  local platform_map rtmp_urls
+  sleep 5  # Wait for FFmpeg to start
+
+  # Get platform name mapping
+  fetch_platform_map
+
+  # Get active RTMP URLs
+  rtmp_urls=$(fetch_rtmp_urls)
+  if [ "$rtmp_urls" = "[]" ] || [ -z "$rtmp_urls" ]; then
+    echo "[rtmp-health] No RTMP URLs configured, monitor idle"
+    return
+  fi
+
+  local urls
+  urls=$(echo "$rtmp_urls" | grep -o '"url":"[^"]*"' | sed 's/"url":"//;s/"$//')
+
+  echo "[rtmp-health] Monitoring started"
+
+  # Build reusable arrays of url->name mappings
+  local -a url_list name_list
+  local idx=0
+  for url in $urls; do
+    url=$(echo "$url" | sed 's/\\\//\//g')
+    url_list[$idx]="$url"
+    name_list[$idx]=$(lookup_platform_name "$url")
+    idx=$((idx + 1))
+  done
+
+  # Initialize status file with all platforms as live
+  local json i
+  json='{"outputs":{'
+  for ((i=0; i<${#url_list[@]}; i++)); do
+    [ $i -gt 0 ] && json="${json},"
+    json="${json}\"${name_list[$i]}\":{\"url\":\"${url_list[$i]}\",\"status\":\"live\",\"error\":null,\"ts\":$(date +%s)}"
+  done
+  json="${json}},\"ts\":$(date +%s)}"
+  echo "$json" > "$RTMP_STATUS_FILE"
+
+  # Monitor loop: check stderr for errors every 2 seconds
+  while true; do
+    sleep 2
+
+    # Check if main ffmpeg is running
+    if ! pgrep -f "$MAIN_FFMPEG_MATCH" >/dev/null 2>&1; then
+      json='{"outputs":{'
+      for ((i=0; i<${#url_list[@]}; i++)); do
+        [ $i -gt 0 ] && json="${json},"
+        json="${json}\"${name_list[$i]}\":{\"url\":\"${url_list[$i]}\",\"status\":\"offline\",\"error\":null,\"ts\":$(date +%s)}"
+      done
+      json="${json}},\"ts\":$(date +%s)}"
+      echo "$json" > "$RTMP_STATUS_FILE"
+      continue
+    fi
+
+    # Check stderr for recent errors
+    if [ ! -f "$FFMPEG_STDERR_LOG" ]; then
+      continue
+    fi
+
+    json='{"outputs":{'
+    for ((i=0; i<${#url_list[@]}; i++)); do
+      [ $i -gt 0 ] && json="${json},"
+
+      local url_host error_msg status recent_errors
+      url_host=$(echo "${url_list[$i]}" | sed 's|.*://||;s|/.*||')
+      recent_errors=$(tail -50 "$FFMPEG_STDERR_LOG" 2>/dev/null | grep -i "$url_host\|tee\|output" | grep -io "broken pipe\|connection refused\|connection reset\|failed to write\|error writing\|i/o error\|no route to host\|network is unreachable" | tail -1)
+
+      status="live"
+      error_msg=""
+      if [ -n "$recent_errors" ]; then
+        status="error"
+        error_msg="$recent_errors"
+      fi
+
+      if [ -n "$error_msg" ]; then
+        json="${json}\"${name_list[$i]}\":{\"url\":\"${url_list[$i]}\",\"status\":\"${status}\",\"error\":\"${error_msg}\",\"ts\":$(date +%s)}"
+      else
+        json="${json}\"${name_list[$i]}\":{\"url\":\"${url_list[$i]}\",\"status\":\"${status}\",\"error\":null,\"ts\":$(date +%s)}"
+      fi
+    done
+    json="${json}},\"ts\":$(date +%s)}"
+    echo "$json" > "$RTMP_STATUS_FILE"
+
+    # Truncate stderr log if it gets too large (keep last 200 lines)
+    local line_count
+    line_count=$(wc -l < "$FFMPEG_STDERR_LOG" 2>/dev/null || echo "0")
+    if [ "$line_count" -gt 500 ]; then
+      tail -200 "$FFMPEG_STDERR_LOG" > "${FFMPEG_STDERR_LOG}.tmp" && mv "${FFMPEG_STDERR_LOG}.tmp" "$FFMPEG_STDERR_LOG"
+    fi
+  done
 }
 
 watch_stream_config &

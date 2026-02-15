@@ -286,6 +286,7 @@
         updateIcecast(msg.data.icecast);
         updateFfmpeg(msg.data.ffmpeg);
         bpmMap = msg.data.bpm || {};
+        if (msg.data.rtmpHealth) updateRestreamStatus(msg.data.rtmpHealth);
         loadFileList('music');
         loadFileList('visuals');
         break;
@@ -304,6 +305,9 @@
       case 'bpm':
         bpmMap = msg.data || {};
         refreshBpmInList();
+        break;
+      case 'rtmp-health':
+        updateRestreamStatus(msg.data);
         break;
     }
   }
@@ -1651,7 +1655,63 @@
   // ============================
   // RESTREAM STATUS WIDGET (Studio sidebar)
   // ============================
-  function loadRestreamStatusWidget() {
+  var lastRtmpHealth = null;
+
+  function updateRestreamStatus(healthData) {
+    lastRtmpHealth = healthData;
+    var container = document.getElementById('restream-status-list');
+    container.innerHTML = '';
+
+    var outputs = (healthData && healthData.outputs) ? healthData.outputs : {};
+    var keys = Object.keys(outputs);
+
+    if (keys.length === 0) {
+      // Fallback: show config-based status
+      loadRestreamStatusFallback();
+      return;
+    }
+
+    keys.forEach(function(name) {
+      var info = outputs[name];
+      var status = info.status || 'offline';
+      var div = document.createElement('div');
+      div.className = 'restream-status-item';
+
+      var dotClass = 'restream-status-dot';
+      var statusText = 'OFF';
+      if (status === 'live') {
+        dotClass += ' live';
+        statusText = 'LIVE';
+      } else if (status === 'error') {
+        dotClass += ' error';
+        statusText = 'ERROR';
+      } else {
+        dotClass += ' off';
+        statusText = 'OFF';
+      }
+
+      var dot = document.createElement('span');
+      dot.className = dotClass;
+      div.appendChild(dot);
+
+      var nameEl = document.createElement('span');
+      nameEl.textContent = name;
+      div.appendChild(nameEl);
+
+      var statusEl = document.createElement('span');
+      statusEl.className = 'restream-status-text ' + status;
+      statusEl.textContent = statusText;
+      div.appendChild(statusEl);
+
+      if (status === 'error' && info.error) {
+        div.title = info.error;
+      }
+
+      container.appendChild(div);
+    });
+  }
+
+  function loadRestreamStatusFallback() {
     fetch('/api/stream-keys')
       .then(function(r) { return r.json(); })
       .then(function(platforms) {
@@ -1664,7 +1724,8 @@
           div.className = 'restream-status-item';
           div.innerHTML =
             '<span class="restream-status-dot ' + (config.enabled ? 'on' : 'off') + '"></span>' +
-            '<span>' + name + '</span>';
+            '<span>' + name + '</span>' +
+            '<span class="restream-status-text off">' + (config.enabled ? 'READY' : 'OFF') + '</span>';
           container.appendChild(div);
         });
         if (Object.keys(platforms).length === 0) {
@@ -1674,8 +1735,8 @@
       .catch(function() {});
   }
 
-  loadRestreamStatusWidget();
-  setInterval(loadRestreamStatusWidget, 15000);
+  // Initial load from config (will be replaced by WS data)
+  loadRestreamStatusFallback();
 
   // ============================
   // STREAM PLATFORMS (Management tab)
