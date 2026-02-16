@@ -211,7 +211,9 @@ get_video_list() {
     if [ -n "$files" ]; then
       local result=()
       while IFS= read -r f; do
-        if [ -f "/visuals/$f" ]; then
+        if [ -f "/visuals/.processed/$f" ]; then
+          result+=("/visuals/.processed/$f")
+        elif [ -f "/visuals/$f" ]; then
           result+=("/visuals/$f")
         fi
       done <<< "$files"
@@ -221,18 +223,17 @@ get_video_list() {
       fi
     fi
   fi
-  # Fallback: all videos
-  find /visuals -type f \( -name "*.mp4" -o -name "*.mov" -o -name "*.mkv" \) 2>/dev/null
+  # Fallback: all videos in .processed
+  find /visuals/.processed -type f \( -name "*.mp4" -o -name "*.mov" -o -name "*.mkv" \) 2>/dev/null
 }
 
 # Build video filter chain from overlay config
 build_video_filters() {
   local filter_file="/shared/overlay_filter_string.txt"
-  if [ -f "$filter_file" ]; then
+  if [ -f "$filter_file" ] && [ -s "$filter_file" ]; then
     cat "$filter_file"
-  else
-    echo "fps=30,format=yuv420p"
   fi
+  # Нет дефолтных фильтров — пре-транскодированный контент готов к отдаче
 }
 
 # Функция: честный shuffle — каждое видео играет ровно раз за раунд
@@ -262,15 +263,26 @@ feed_fifo() {
       echo "[+] Новый раунд видео: ${#SHUFFLED[@]} клипов"
     fi
 
+    # Check if main ffmpeg is still running
+    if ! pgrep -f "ffmpeg.*$FIFO" >/dev/null 2>&1; then
+      echo "[!] Main ffmpeg died, exiting feeder"
+      exit 0
+    fi
+
     # Берём следующий клип из перемешанного списка
     RANDOM_FILE="${SHUFFLED[0]}"
     SHUFFLED=("${SHUFFLED[@]:1}")
 
-    # Пишем в FIFO: mpeg2video в mpegts (лёгкий кодек, ~10x быстрее x264)
-    # mpegts обеспечивает правильный фрейминг на стыках клипов
-    ffmpeg -hide_banner -loglevel error -re -i "$RANDOM_FILE" \
-      -vf "scale=1920:1080:force_original_aspect_ratio=decrease,pad=1920:1080:(ow-iw)/2:(oh-ih)/2:black,fps=30,format=yuv420p" \
-      -c:v mpeg2video -q:v 2 -an -f mpegts - 2>/dev/null || true
+    # Пре-транскодированные файлы (.processed/) — просто ремукс в mpegts (нулевой CPU)
+    # Остальные файлы — полное перекодирование через mpeg2video
+    if [[ "$RANDOM_FILE" == /visuals/.processed/* ]]; then
+      ffmpeg -hide_banner -loglevel error -re -i "$RANDOM_FILE" \
+        -c:v copy -an -f mpegts - 2>/dev/null || true
+    else
+      ffmpeg -hide_banner -loglevel error -re -i "$RANDOM_FILE" \
+        -vf "scale=1920:1080:force_original_aspect_ratio=decrease,pad=1920:1080:(ow-iw)/2:(oh-ih)/2:black,fps=30,format=yuv420p" \
+        -c:v mpeg2video -q:v 2 -an -f mpegts - 2>/dev/null || true
+    fi
   done
 }
 
@@ -401,36 +413,39 @@ build_outputs() {
   local x264_extras
   x264_extras=$(get_x264_extras "$preset")
   
-  # Get hardware acceleration encoder
+  # Get extra x264 options
   local hw_accel="${HW_ACCEL:-}"
-  local video_encoder video_args
-  if [ "$hw_accel" = "qsv" ]; then
-    video_encoder="h264_qsv"
-    video_args="-load_plugin hevc_hw"
-    echo "[+] Using Intel QSV hardware encoding" >&2
-  elif [ "$hw_accel" = "vaapi" ]; then
-    video_encoder="h264_vaapi"
-    video_args="-hw_device /dev/dri/renderD128"
-    echo "[+] Using VAAPI hardware encoding" >&2
-  else
-    video_encoder="libx264"
-    video_args="-preset $speed -profile:v high $x264_extras"
-    echo "[+] Using software encoding (libx264)" >&2
+  local video_encoder video_args hwaccel_args vf_args
+  hwaccel_args=""
+  vf_args=""
+
+  # Определяем нужны ли софтварные фильтры (оверлеи, скейлинг, улучшения)
+  local needs_sw_filters=false
+  if [ -n "$vfilter" ] || [ -n "$logo_inputs" ]; then
+    needs_sw_filters=true
   fi
-  
-  # Get audio enhancement filter
-  local audio_filter audio_args
-  audio_filter=$(get_audio_filter)
-  if [ -n "$audio_filter" ]; then
-    audio_args="-af \"$audio_filter\""
-    echo "[+] Audio enhancement: ENABLED" >&2
+
+  local video_enc_args=""
+  if [ "$needs_sw_filters" = "true" ]; then
+    # Есть оверлеи/фильтры — нужен полный пайплайн
+    if [ "$hw_accel" = "qsv" ]; then
+      hwaccel_args="-hwaccel qsv -hwaccel_output_format nv12"
+      video_enc_args="$vf_args -c:v h264_qsv -load_plugin hevc_hw -b:v $vbr -minrate $vbr -maxrate $vbr -bufsize $vb_buf -g $gop -keyint_min $gop -sc_threshold 0 -flags +cgop"
+      echo "[+] QSV decode → filters → QSV encode ($vbr)" >&2
+    else
+      video_enc_args="$vf_args -c:v libx264 -preset $speed -profile:v high $x264_extras -b:v $vbr -minrate $vbr -maxrate $vbr -bufsize $vb_buf -g $gop -keyint_min $gop -sc_threshold 0 -flags +cgop"
+      echo "[+] Software encode with filters ($vbr)" >&2
+    fi
   else
-    audio_args=""
-    echo "[+] Audio enhancement: disabled" >&2
+    # COPY MODE: видео уже готово к стримингу (CBR, GOP, H.264 High)
+    # 0% CPU, 0% GPU — просто перекладываем байты
+    video_enc_args="-c:v copy"
+    echo "[+] VIDEO COPY MODE: 0% CPU, 0% GPU (pre-transcoded CBR stream-ready)" >&2
   fi
-  
-  # Note: No -r flag, FPS is auto from source (no dup frames!)
-  local base_args="-hide_banner -loglevel error $PROGRESS_ARGS -fflags +genpts+igndts -thread_queue_size 10240 -i $FIFO -reconnect 1 -reconnect_streamed 1 -reconnect_delay_max 5 -thread_queue_size 10240 -i $ICECAST_URL $logo_inputs -map 0:v -map 1:a -vf $vfilter -c:v $video_encoder $video_args -b:v $vbr -minrate $vbr -maxrate $vbr -bufsize $vb_buf -g $gop -keyint_min $gop -sc_threshold 0 -flags +cgop $audio_args -c:a aac -b:a $abr -ar 48000"
+
+  echo "[+] Audio: direct encode (no filters)" >&2
+
+  local base_args="-hide_banner -loglevel error $PROGRESS_ARGS -fflags +genpts+igndts $hwaccel_args -thread_queue_size 10240 -i $FIFO -reconnect 1 -reconnect_streamed 1 -reconnect_delay_max 5 -thread_queue_size 10240 -i $ICECAST_URL $logo_inputs -map 0:v -map 1:a $video_enc_args -c:a aac -b:a $abr -ar 48000"
   
   # Always build tee outputs (HLS + all RTMPs)
   local outputs="[f=hls:hls_time=2:hls_list_size=15:hls_flags=delete_segments+omit_endlist+split_by_time:hls_segment_filename=${HLS_DIR}/seg_%03d.ts]${HLS_PLAYLIST}"
@@ -452,9 +467,14 @@ build_outputs() {
 
 # Cleanup stale processes and FIFO
 cleanup_stream() {
+  # Kill by PID file first
+  if [ -f /tmp/feeder.pid ]; then
+    kill -9 $(cat /tmp/feeder.pid) 2>/dev/null || true
+    rm -f /tmp/feeder.pid
+  fi
   pkill -9 -f "mbuffer" 2>/dev/null || true
+  pkill -9 -f "ffmpeg.*-f mpegts" 2>/dev/null || true
   pkill -9 -f "ffmpeg.*$FIFO" 2>/dev/null || true
-  pkill -9 -f "ffmpeg.*mpeg2video" 2>/dev/null || true
   sleep 0.5
   [ -p "$FIFO" ] && rm -f "$FIFO" && mkfifo "$FIFO"
 }
@@ -478,6 +498,7 @@ stream() {
 
   feed_fifo | mbuffer -q -s 128k -m 256M > "$FIFO" &
   feeder_pid=$!
+  echo "$feeder_pid" > /tmp/feeder.pid
   echo "[+] Feeder started with 256M mbuffer (PID: $feeder_pid)"
   echo "[+] Main ffmpeg PID: $$"
 
@@ -499,8 +520,12 @@ stream() {
   fi
 
   # Force kill feeder and any stale mbuffer/ffmpeg
-  kill -9 "$feeder_pid" 2>/dev/null || true
-  pkill -9 -f "mbuffer.*$FIFO" 2>/dev/null || true
+  if [ -f /tmp/feeder.pid ]; then
+    kill -9 $(cat /tmp/feeder.pid) 2>/dev/null || true
+    rm -f /tmp/feeder.pid
+  fi
+  pkill -9 -f "mbuffer" 2>/dev/null || true
+  pkill -9 -f "ffmpeg.*-f mpegts" 2>/dev/null || true
   wait "$feeder_pid" 2>/dev/null || true
 
   return $rc

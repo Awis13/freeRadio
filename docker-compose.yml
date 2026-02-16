@@ -70,11 +70,26 @@ services:
       - ./scripts:/scripts:ro
       - hls-data:/hls
       - shared-data:/shared
+    mem_limit: 1536m
     networks:
       - rave-net
     depends_on:
       - icecast
       - dj
+    restart: unless-stopped
+
+  # 3.5 Transcoder — автоматическая конвертация видео из incoming в готовый формат
+  transcoder:
+    image: linuxserver/ffmpeg:latest
+    container_name: s23-transcoder
+    entrypoint: /scripts/transcoder.sh
+    volumes:
+      - /dev/dri:/dev/dri
+      - ./content/visuals:/visuals
+      - ./scripts:/scripts:ro
+    mem_limit: 512m
+    networks:
+      - rave-net
     restart: unless-stopped
 
   # 4. Dashboard (Node.js — preview + API + WebSocket)
