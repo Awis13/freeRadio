@@ -6,3 +6,4 @@ content/music/*
 !content/music/.gitkeep
 content/visuals/*
 !content/visuals/.gitkeep
+shared-data/
