@@ -15,7 +15,7 @@ services:
     image: infiniteproject/icecast
     container_name: s23-icecast
     ports:
-      - "100.110.164.51:8000:8000"
+      - "8000:8000"
     environment:
       - ICECAST_SOURCE_PASSWORD=hackme
       - ICECAST_ADMIN_PASSWORD=hackme
@@ -63,7 +63,9 @@ services:
       - STABLE_LOOP=1
       - FFMPEG_PROGRESS_FILE=/shared/ffmpeg_progress.txt
       - DASHBOARD_API=http://dashboard:9090
+      - HW_ACCEL=qsv
     volumes:
+      - /dev/dri:/dev/dri
       - ./content/visuals:/visuals:ro
       - ./scripts:/scripts:ro
       - hls-data:/hls
@@ -81,7 +83,7 @@ services:
     build: ./dashboard
     container_name: s23-dashboard
     ports:
-      - "100.110.164.51:80:9090"
+      - "80:9090"
     environment:
       - PORT=9090
       - HLS_DIR=/hls

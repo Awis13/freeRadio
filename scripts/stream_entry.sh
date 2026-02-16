@@ -278,6 +278,9 @@ mkdir -p "$HLS_DIR"
 rm -f "$HLS_DIR"/*
 rm -f "$APPLIED_SIG_FILE"
 
+# Reduce OOM score to prefer killing this process if memory runs out
+echo 1000 > /proc/self/oom_score_adj 2>/dev/null || true
+
 # Аргументы для ffmpeg progress (если задан файл)
 PROGRESS_ARGS=""
 if [ -n "$FFMPEG_PROGRESS_FILE" ]; then
@@ -398,6 +401,23 @@ build_outputs() {
   local x264_extras
   x264_extras=$(get_x264_extras "$preset")
   
+  # Get hardware acceleration encoder
+  local hw_accel="${HW_ACCEL:-}"
+  local video_encoder video_args
+  if [ "$hw_accel" = "qsv" ]; then
+    video_encoder="h264_qsv"
+    video_args="-load_plugin hevc_hw"
+    echo "[+] Using Intel QSV hardware encoding" >&2
+  elif [ "$hw_accel" = "vaapi" ]; then
+    video_encoder="h264_vaapi"
+    video_args="-hw_device /dev/dri/renderD128"
+    echo "[+] Using VAAPI hardware encoding" >&2
+  else
+    video_encoder="libx264"
+    video_args="-preset $speed -profile:v high $x264_extras"
+    echo "[+] Using software encoding (libx264)" >&2
+  fi
+  
   # Get audio enhancement filter
   local audio_filter audio_args
   audio_filter=$(get_audio_filter)
@@ -410,7 +430,7 @@ build_outputs() {
   fi
   
   # Note: No -r flag, FPS is auto from source (no dup frames!)
-  local base_args="-hide_banner -loglevel error $PROGRESS_ARGS -fflags +genpts+igndts -thread_queue_size 10240 -i $FIFO -reconnect 1 -reconnect_streamed 1 -reconnect_delay_max 5 -thread_queue_size 10240 -i $ICECAST_URL $logo_inputs -map 0:v -map 1:a -vf $vfilter -c:v libx264 -preset $speed -profile:v high $x264_extras -b:v $vbr -minrate $vbr -maxrate $vbr -bufsize $vb_buf -g $gop -keyint_min $gop -sc_threshold 0 -flags +cgop $audio_args -c:a aac -b:a $abr -ar 48000"
+  local base_args="-hide_banner -loglevel error $PROGRESS_ARGS -fflags +genpts+igndts -thread_queue_size 10240 -i $FIFO -reconnect 1 -reconnect_streamed 1 -reconnect_delay_max 5 -thread_queue_size 10240 -i $ICECAST_URL $logo_inputs -map 0:v -map 1:a -vf $vfilter -c:v $video_encoder $video_args -b:v $vbr -minrate $vbr -maxrate $vbr -bufsize $vb_buf -g $gop -keyint_min $gop -sc_threshold 0 -flags +cgop $audio_args -c:a aac -b:a $abr -ar 48000"
   
   # Always build tee outputs (HLS + all RTMPs)
   local outputs="[f=hls:hls_time=2:hls_list_size=15:hls_flags=delete_segments+omit_endlist+split_by_time:hls_segment_filename=${HLS_DIR}/seg_%03d.ts]${HLS_PLAYLIST}"
@@ -432,8 +452,9 @@ build_outputs() {
 
 # Cleanup stale processes and FIFO
 cleanup_stream() {
-  pkill -9 -f "mbuffer.*$FIFO" 2>/dev/null || true
+  pkill -9 -f "mbuffer" 2>/dev/null || true
   pkill -9 -f "ffmpeg.*$FIFO" 2>/dev/null || true
+  pkill -9 -f "ffmpeg.*mpeg2video" 2>/dev/null || true
   sleep 0.5
   [ -p "$FIFO" ] && rm -f "$FIFO" && mkfifo "$FIFO"
 }
@@ -455,9 +476,10 @@ stream() {
   # Clean up stderr log for fresh start
   > "$FFMPEG_STDERR_LOG"
 
-  feed_fifo | mbuffer -q -s 128k -m 1G > "$FIFO" &
+  feed_fifo | mbuffer -q -s 128k -m 256M > "$FIFO" &
   feeder_pid=$!
-  echo "[+] Feeder started with 1G mbuffer (PID: $feeder_pid)"
+  echo "[+] Feeder started with 256M mbuffer (PID: $feeder_pid)"
+  echo "[+] Main ffmpeg PID: $$"
 
   # Start RTMP health monitor in background
   monitor_rtmp_health &
