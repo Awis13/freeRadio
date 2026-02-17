@@ -439,7 +439,8 @@ build_outputs() {
   else
     # COPY MODE: видео уже готово к стримингу (CBR, GOP, H.264 High)
     # 0% CPU, 0% GPU — просто перекладываем байты
-    video_enc_args="-c:v copy"
+    # -tag:v 7 нужен т.к. MPEG-TS FIFO передаёт codec tag 0x1b, а FLV/RTMP ожидает 7 (H.264)
+    video_enc_args="-c:v copy -tag:v 7"
     echo "[+] VIDEO COPY MODE: 0% CPU, 0% GPU (pre-transcoded CBR stream-ready)" >&2
   fi
 
