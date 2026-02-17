@@ -37,8 +37,13 @@ function getControlState() {
 function setControlState(streaming, broadcast) {
   const current = getControlState();
   const ns = normalizeBool(streaming);
-  const nb = broadcast !== undefined ? !!broadcast : current.broadcast;
-  return writeControlState(ns !== null ? ns : current.streaming, nb);
+  const finalStreaming = ns !== null ? ns : current.streaming;
+  const finalBroadcast = broadcast !== undefined ? !!broadcast : current.broadcast;
+  // Skip write if values unchanged — avoids timestamp-only rewrites that trigger ffmpeg restart via sig change
+  if (finalStreaming === current.streaming && finalBroadcast === current.broadcast) {
+    return { streaming: current.streaming, broadcast: current.broadcast };
+  }
+  return writeControlState(finalStreaming, finalBroadcast);
 }
 
 function getModeState() {

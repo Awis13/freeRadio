@@ -30,6 +30,9 @@
         <div class="studio-player">
           <div class="panel player-wrap">
             <video id="studio-player" autoplay playsinline muted></video>
+            <canvas id="static-noise-canvas" class="static-noise-canvas"></canvas>
+            <div class="crt-scanlines" id="crt-scanlines"></div>
+            <div class="channel-flash" id="channel-flash"></div>
             <div class="player-overlay visible" id="player-overlay">
               <div class="player-overlay-spinner"></div>
               <div class="player-overlay-text" id="player-overlay-text">Loading stream...</div>
@@ -588,6 +591,6 @@
   </div>
 
   <script src="/js/hls.min.js"></script>
-  <script src="/app.js?v=2"></script>
+  <script src="/app.js?v=6"></script>
 </body>
 </html>

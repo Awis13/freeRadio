@@ -199,10 +199,12 @@
 
   // timeupdate = video is receiving frames → stream alive → hide overlay (if not locked)
   studioPlayer.addEventListener('timeupdate', function() {
+    if (noiseActive) return;
     if (aliveTimer) { clearTimeout(aliveTimer); aliveTimer = null; }
     hideLoading('timeupdate');
     aliveTimer = setTimeout(function() {
       aliveTimer = null;
+      if (noiseActive) return;
       showLoading('Buffering...', 'alive-timeout');
     }, 4000);
   });
@@ -220,7 +222,64 @@
     studioPlayer.muted = !studioPlayer.muted;
     playerMuteBtn.innerHTML = studioPlayer.muted ? '&#128263;' : '&#128266;';
     playerMuteBtn.title = studioPlayer.muted ? 'Unmute' : 'Mute';
+    if (!studioPlayer.muted) playerMuteBtn.classList.add('unmuted');
+    else playerMuteBtn.classList.remove('unmuted');
   };
+
+  // --- TV Static Noise Engine ---
+  var noiseCanvas = document.getElementById('static-noise-canvas');
+  var noiseCtx = noiseCanvas.getContext('2d');
+  var scanlines = document.getElementById('crt-scanlines');
+  var channelFlash = document.getElementById('channel-flash');
+  var noiseActive = false;
+  var noiseRafId = null;
+  var NOISE_W = 480, NOISE_H = 270;
+
+  noiseCanvas.width = NOISE_W;
+  noiseCanvas.height = NOISE_H;
+
+  function renderNoise() {
+    var imageData = noiseCtx.createImageData(NOISE_W, NOISE_H);
+    var data = new Uint32Array(imageData.data.buffer);
+    for (var i = 0; i < data.length; i++) {
+      var v = (Math.random() * 255) | 0;
+      data[i] = (255 << 24) | (v << 16) | (v << 8) | v;
+    }
+    noiseCtx.putImageData(imageData, 0, 0);
+    if (noiseActive) noiseRafId = requestAnimationFrame(renderNoise);
+  }
+
+  function startStaticNoise() {
+    noiseActive = true;
+    noiseCanvas.classList.add('active');
+    scanlines.classList.add('active');
+    renderNoise();
+    log('NOISE started');
+  }
+
+  function stopStaticNoise() {
+    noiseActive = false;
+    if (noiseRafId) { cancelAnimationFrame(noiseRafId); noiseRafId = null; }
+    noiseCanvas.classList.remove('active');
+    scanlines.classList.remove('active');
+    log('NOISE stopped');
+  }
+
+  function flashTransition() {
+    channelFlash.style.display = 'block';
+    channelFlash.style.opacity = '0.8';
+    var start = performance.now();
+    function fade(now) {
+      var elapsed = now - start;
+      if (elapsed >= 300) {
+        channelFlash.style.display = 'none';
+        return;
+      }
+      channelFlash.style.opacity = (0.8 * (1 - elapsed / 300)).toFixed(3);
+      requestAnimationFrame(fade);
+    }
+    requestAnimationFrame(fade);
+  }
 
   var hlsSrc = '/hls/stream.m3u8';
   var useNativeHls = false;
@@ -257,10 +316,10 @@
       backBufferLength: 0,
       enableWorker: true,
       liveSyncDurationCount: 1,
-      liveMaxLatencyDurationCount: 3,
+      liveMaxLatencyDurationCount: 2,
       liveDurationInfinity: true,
-      maxBufferLength: 8,
-      maxMaxBufferLength: 15
+      maxBufferLength: 4,
+      maxMaxBufferLength: 8
     });
 
     var errorCount = 0;
@@ -377,15 +436,15 @@
         break;
       case 'video':
         if (pendingModeSwitch) {
-          // New clip started in feed_fifo, but HLS player still has ~4s of buffered
-          // old content (hls_time=2 × liveSyncDurationCount=1 + segment pipeline).
+          // New clip started in feed_fifo, but HLS player still has ~2s of buffered
+          // old content (hls_time=1 × liveSyncDurationCount=1 + segment pipeline).
           // Wait for buffer to flush before hiding overlay.
           log('MODE new clip detected: ' + (msg.data && msg.data.filename || '?') + ', waiting for HLS buffer...');
           setTimeout(function() {
             pendingModeSwitch = false;
             hideLoading('mode-applied');
             log('MODE switch applied');
-          }, 4000);
+          }, 2500);
         }
         break;
       case 'icecast':
@@ -2127,20 +2186,20 @@
   var modeHint = document.getElementById('transport-mode-hint');
   var modePills = document.querySelectorAll('.bmode-pill');
 
-  // State: streaming=playing locally (HLS), broadcast=sending to RTMP platforms
-  var broadcastState = { streaming: false, broadcast: false, standbyVisual: null, visualMode: 'visual-radio' };
-  // Derived state: OFF (not streaming), PREVIEW (streaming, no broadcast), LIVE (streaming + broadcast)
+  // State: streaming=ffmpeg running (HLS alive), broadcast=sending to RTMP, streamMode=live|standby
+  var broadcastState = { streaming: false, broadcast: false, streamMode: 'standby', standbyVisual: null, visualMode: 'visual-radio' };
+  // Derived state: STANDBY (standby mode), PREVIEW (live, no broadcast), LIVE (live + broadcast)
   function getBroadcastPhase() {
-    if (!broadcastState.streaming) return 'off';
+    if (broadcastState.streamMode === 'standby') return 'standby';
     if (!broadcastState.broadcast) return 'preview';
     return 'live';
   }
 
   var MODE_HINTS = {
-    off: {
-      'radio': 'One video loops + DJ music. Press PLAY to preview.',
-      'visual-radio': 'Videos shuffle + DJ music. Press PLAY to preview.',
-      'video-playlist': 'Videos play with their own audio. Press PLAY to preview.'
+    standby: {
+      'radio': 'Standby. Press PLAY to start.',
+      'visual-radio': 'Standby. Press PLAY to start.',
+      'video-playlist': 'Standby. Press PLAY to start.'
     },
     preview: {
       'radio': 'Preview: DJ music + one looping video. Press GO LIVE to broadcast.',
@@ -2157,24 +2216,28 @@
   function updateBroadcastUI() {
     var phase = getBroadcastPhase();
     var s = broadcastState;
+    var isBroadcasting = s.broadcast;
 
-    if (phase === 'off') {
-      broadcastModeTag.textContent = 'OFF';
-      broadcastModeTag.className = 'mode-tag off';
+    if (phase === 'standby') {
+      broadcastModeTag.textContent = isBroadcasting ? 'STANDBY' : 'OFF';
+      broadcastModeTag.className = 'mode-tag ' + (isBroadcasting ? 'standby' : 'off');
       btnPlay.disabled = false;
-      btnGoLive.disabled = true;
+      btnGoLive.textContent = isBroadcasting ? 'END LIVE' : 'GO LIVE';
+      btnGoLive.disabled = !isBroadcasting;
       btnStop.disabled = true;
     } else if (phase === 'preview') {
       broadcastModeTag.textContent = 'PREVIEW';
       broadcastModeTag.className = 'mode-tag preview';
       btnPlay.disabled = true;
+      btnGoLive.textContent = 'GO LIVE';
       btnGoLive.disabled = false;
       btnStop.disabled = false;
     } else {
       broadcastModeTag.textContent = 'LIVE';
       broadcastModeTag.className = 'mode-tag live';
       btnPlay.disabled = true;
-      btnGoLive.disabled = true;
+      btnGoLive.textContent = 'END LIVE';
+      btnGoLive.disabled = false;
       btnStop.disabled = false;
     }
 
@@ -2238,7 +2301,8 @@
 
       // Show overlay until mode actually applies (next clip boundary via WS 'video' event).
       // Safety timer (20s) in showLoading prevents permanent stuck overlay.
-      if (broadcastState.streaming) {
+      // Only show when in live mode (not standby — static noise doesn't need transition overlay)
+      if (broadcastState.streamMode === 'live') {
         pendingModeSwitch = true;
         var modeName = pill.querySelector('.bmode-pill-label').textContent;
         showLoading('Switching to ' + modeName + '...', 'pill', 30000);
@@ -2260,75 +2324,76 @@
     });
   });
 
-  // PLAY: OFF → PREVIEW (cold start — no stream exists yet, show overlay)
+  // PLAY: STANDBY → PREVIEW/LIVE (flash + wait for HLS content)
   btnPlay.onclick = function() {
     btnPlay.disabled = true;
+    flashTransition();
     log('MODE PLAY clicked');
-    showLoading('Starting stream...', 'play-btn');
     fetch('/api/stream/mode', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ mode: 'live', standbyVisual: standbyVisualSelect.value || null })
     })
       .then(function() {
-        return fetch('/api/stream/control', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ streaming: true, broadcast: false })
-        });
-      })
-      .then(function(r) { return r.json(); })
-      .then(function() {
-        broadcastState.streaming = true;
-        broadcastState.broadcast = false;
+        broadcastState.streamMode = 'live';
         updateBroadcastUI();
-        log('MODE PLAY → PREVIEW, restart in 3s');
-        setTimeout(function() { restartPlayer('play'); }, 3000);
+        setTimeout(function() {
+          stopStaticNoise();
+          flashTransition();
+          studioPlayer.muted = !playerMuteBtn.classList.contains('unmuted');
+        }, 2000);
+        log('MODE PLAY → ' + getBroadcastPhase().toUpperCase());
       })
       .catch(function(e) { showError('Play failed: ' + e); btnPlay.disabled = false; });
   };
 
-  // GO LIVE: PREVIEW → LIVE (enable RTMP broadcast)
+  // GO LIVE / END LIVE: toggle RTMP broadcast (triggers ffmpeg restart to add/remove RTMP outputs)
   btnGoLive.onclick = function() {
+    var newBroadcast = !broadcastState.broadcast;
     btnGoLive.disabled = true;
-    showLoading('Going live...', 'go-live', 4000);
+    showLoading(newBroadcast ? 'Going live...' : 'Ending broadcast...', 'go-live', 4000);
     fetch('/api/stream/control', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ streaming: true, broadcast: true })
+      body: JSON.stringify({ streaming: true, broadcast: newBroadcast })
     })
       .then(function(r) { return r.json(); })
       .then(function() {
-        broadcastState.broadcast = true;
+        broadcastState.broadcast = newBroadcast;
         updateBroadcastUI();
-        log('MODE GO LIVE → LIVE, restart in 3s');
-        setTimeout(function() { restartPlayer('go-live'); }, 3000);
+        log('MODE ' + (newBroadcast ? 'GO LIVE → LIVE' : 'END LIVE → RTMP removed') + ', restart in 3s');
+        setTimeout(function() { restartPlayer(newBroadcast ? 'go-live' : 'end-live'); }, 3000);
       })
       .catch(function(e) {
-        showError('Go live failed: ' + e);
+        showError((newBroadcast ? 'Go live' : 'End live') + ' failed: ' + e);
         btnGoLive.disabled = false;
       });
   };
 
-  // STOP: any → OFF
+  // STOP: PREVIEW/LIVE → STANDBY (instant noise overlay masks HLS latency)
   btnStop.onclick = function() {
     btnStop.disabled = true;
-    log('MODE STOP clicked');
-    fetch('/api/stream/control', {
+    startStaticNoise();
+    flashTransition();
+    studioPlayer.muted = true;
+    log('MODE STOP clicked (broadcast=' + broadcastState.broadcast + ')');
+
+    // Only set mode to standby — broadcast stays untouched, RTMP keeps streaming static
+    fetch('/api/stream/mode', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ streaming: false, broadcast: false })
+      body: JSON.stringify({ mode: 'standby' })
     })
-      .then(function(r) { return r.json(); })
       .then(function() {
-        broadcastState.streaming = false;
-        broadcastState.broadcast = false;
+        broadcastState.streamMode = 'standby';
         updateBroadcastUI();
-        clearAllTimers('stop');
-        showLoading('Stream stopped', 'stop-btn');
-        log('MODE STOPPED');
+        log('MODE STOP → STANDBY');
       })
-      .catch(function(e) { showError('Stop failed: ' + e); btnStop.disabled = false; });
+      .catch(function(e) {
+        showError('Stop failed: ' + e);
+        stopStaticNoise();
+        btnStop.disabled = false;
+      });
   };
 
   // Radio visual selection change
@@ -2381,9 +2446,17 @@
       .then(function(results) {
         broadcastState.streaming = results[0].streaming;
         broadcastState.broadcast = !!results[0].broadcast;
+        broadcastState.streamMode = results[1].mode || 'standby';
         broadcastState.standbyVisual = results[1].standbyVisual;
         broadcastState.visualMode = results[2].mode || 'visual-radio';
         updateBroadcastUI();
+        if (broadcastState.streamMode === 'standby' && !noiseActive) {
+          startStaticNoise();
+          studioPlayer.muted = true;
+        } else if (broadcastState.streamMode === 'live' && noiseActive) {
+          stopStaticNoise();
+          studioPlayer.muted = !playerMuteBtn.classList.contains('unmuted');
+        }
       })
       .catch(function(e) { log('broadcast state: error: ' + e); });
   }

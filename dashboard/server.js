@@ -311,7 +311,7 @@ app.get('/api/visuals-processed', (req, res) => {
   const processedDir = path.join(VISUALS_DIR, '.processed');
   try {
     const files = fs.readdirSync(processedDir)
-      .filter(f => /\.(mp4|mov|mkv)$/i.test(f))
+      .filter(f => /\.(mp4|mov|mkv)$/i.test(f) && !f.startsWith('_standby_'))
       .map(f => {
         const stat = fs.statSync(path.join(processedDir, f));
         return { name: f, size: stat.size };
