@@ -57,6 +57,70 @@ is_streaming_enabled() {
   return 0
 }
 
+# Get stream mode (standby or live)
+get_stream_mode() {
+  local mode_file="/shared/stream_mode.json"
+  if [ -f "$mode_file" ]; then
+    local mode
+    mode=$(grep -o '"mode":"[^"]*"' "$mode_file" 2>/dev/null | cut -d'"' -f4)
+    if [ "$mode" = "live" ]; then
+      echo "live"
+    else
+      echo "standby"
+    fi
+  else
+    echo "standby"
+  fi
+}
+
+# Get standby visual file path
+get_standby_visual() {
+  local mode_file="/shared/stream_mode.json"
+  local visual_name=""
+  if [ -f "$mode_file" ]; then
+    visual_name=$(grep -o '"standbyVisual":"[^"]*"' "$mode_file" 2>/dev/null | cut -d'"' -f4)
+  fi
+  # Resolve to full path
+  if [ -n "$visual_name" ] && [ -f "/visuals/.processed/$visual_name" ]; then
+    echo "/visuals/.processed/$visual_name"
+    return
+  fi
+  # Fallback: first file in .processed/
+  local first
+  first=$(find /visuals/.processed -type f \( -name "*.mp4" -o -name "*.mov" -o -name "*.mkv" \) 2>/dev/null | head -1)
+  echo "$first"
+}
+
+# Get visual mode (radio, visual-radio, video-playlist)
+get_visual_mode() {
+  local mode_file="/shared/visual_mode.json"
+  if [ -f "$mode_file" ]; then
+    local mode
+    mode=$(grep -o '"mode":"[^"]*"' "$mode_file" 2>/dev/null | cut -d'"' -f4)
+    case "$mode" in
+      radio|video-playlist) echo "$mode" ;;
+      *) echo "visual-radio" ;;
+    esac
+  else
+    echo "visual-radio"
+  fi
+}
+
+# Get radio visual file path (for radio mode — single looping visual)
+get_radio_visual() {
+  local mode_file="/shared/visual_mode.json"
+  local visual_name=""
+  if [ -f "$mode_file" ]; then
+    visual_name=$(grep -o '"radioVisual":"[^"]*"' "$mode_file" 2>/dev/null | cut -d'"' -f4)
+  fi
+  if [ -n "$visual_name" ] && [ -f "/visuals/.processed/$visual_name" ]; then
+    echo "/visuals/.processed/$visual_name"
+    return
+  fi
+  # Fallback: first file in .processed/
+  find /visuals/.processed -type f \( -name "*.mp4" -o -name "*.mov" -o -name "*.mkv" \) 2>/dev/null | head -1
+}
+
 # Fetch quality settings from file
 get_quality_settings() {
   local quality_file="/shared/stream_quality.json"
@@ -237,47 +301,137 @@ build_video_filters() {
 }
 
 # Функция: честный shuffle — каждое видео играет ровно раз за раунд
+# Mode-aware: standby/radio/visual-radio/video-playlist.
+# standby → one visual (no audio). radio → one visual (video only, audio from Icecast).
+# visual-radio → shuffle (video only, audio from Icecast). video-playlist → shuffle (video+audio from file).
+# Переключение бесшовное на границе клипов, без разрыва MPEG-TS потока.
 feed_fifo() {
   declare -a SHUFFLED
   SHUFFLED=()
+  local prev_mode="" prev_vmode=""
 
   while true; do
-    # Раунд закончился или первый запуск — пересканировать и перемешать
-    if [ ${#SHUFFLED[@]} -eq 0 ]; then
-      mapfile -t ALL_VIDEOS < <(get_video_list)
-
-      if [ ${#ALL_VIDEOS[@]} -eq 0 ]; then
-        sleep 2
-        continue
-      fi
-
-      # Fisher-Yates shuffle
-      SHUFFLED=("${ALL_VIDEOS[@]}")
-      for ((i=${#SHUFFLED[@]}-1; i>0; i--)); do
-        j=$((RANDOM % (i+1)))
-        tmp="${SHUFFLED[$i]}"
-        SHUFFLED[$i]="${SHUFFLED[$j]}"
-        SHUFFLED[$j]="$tmp"
-      done
-
-      echo "[+] Новый раунд видео: ${#SHUFFLED[@]} клипов"
-    fi
-
     # Check if main ffmpeg is still running
     if ! pgrep -f "ffmpeg.*$FIFO" >/dev/null 2>&1; then
       echo "[!] Main ffmpeg died, exiting feeder"
       exit 0
     fi
 
-    # Берём следующий клип из перемешанного списка
-    RANDOM_FILE="${SHUFFLED[0]}"
-    SHUFFLED=("${SHUFFLED[@]:1}")
+    local current_mode visual_mode
+    current_mode=$(get_stream_mode)
+    visual_mode=$(get_visual_mode)
 
-    # Пре-транскодированные файлы (.processed/) — просто ремукс в mpegts (нулевой CPU)
-    # Остальные файлы — полное перекодирование через mpeg2video
+    # Логируем смену режима
+    if [ "$current_mode" != "$prev_mode" ] || [ "$visual_mode" != "$prev_vmode" ]; then
+      echo "[+] Mode: ${prev_mode:-init}/${prev_vmode:-init} → $current_mode/$visual_mode"
+      if [ "$current_mode" = "live" ] && [ "$prev_mode" = "standby" ]; then
+        SHUFFLED=()
+        echo "[+] Shuffle reset for fresh start"
+      fi
+      prev_mode="$current_mode"
+      prev_vmode="$visual_mode"
+    fi
+
+    # Определяем следующий файл
+    local RANDOM_FILE=""
+
+    if [ "$current_mode" = "standby" ]; then
+      # Standby: тот же файл каждую итерацию (все visual modes)
+      RANDOM_FILE=$(get_standby_visual)
+      if [ -z "$RANDOM_FILE" ] || [ ! -f "$RANDOM_FILE" ]; then
+        echo "[!] No standby visual found, waiting..."
+        sleep 2
+        continue
+      fi
+    elif [ "$visual_mode" = "radio" ]; then
+      # Radio: один визуал в цикле (как standby, но в live)
+      RANDOM_FILE=$(get_radio_visual)
+      if [ -z "$RANDOM_FILE" ] || [ ! -f "$RANDOM_FILE" ]; then
+        echo "[!] No radio visual found, waiting..."
+        sleep 2
+        continue
+      fi
+    else
+      # Visual Radio / Video Playlist: ротация из shuffle
+      # В video-playlist режиме сначала проверяем очередь
+      local queued_file=""
+      if [ "$visual_mode" = "video-playlist" ] && [ -f /shared/video_queue.txt ]; then
+        queued_file=$(head -1 /shared/video_queue.txt 2>/dev/null | tr -d '\r')
+        if [ -n "$queued_file" ]; then
+          # Удаляем первую строку из очереди (atomic: sed + tmp)
+          sed -i '1d' /shared/video_queue.txt 2>/dev/null || true
+          if [ -f "/visuals/.processed/$queued_file" ]; then
+            RANDOM_FILE="/visuals/.processed/$queued_file"
+            echo "[+] Queue: $queued_file"
+          else
+            echo "[!] Queue file not found: $queued_file"
+            queued_file=""
+          fi
+        fi
+      fi
+
+      # Если не из очереди — shuffle
+      if [ -z "$queued_file" ]; then
+        if [ ${#SHUFFLED[@]} -eq 0 ]; then
+          mapfile -t ALL_VIDEOS < <(get_video_list)
+
+          if [ ${#ALL_VIDEOS[@]} -eq 0 ]; then
+            sleep 2
+            continue
+          fi
+
+          # Fisher-Yates shuffle
+          SHUFFLED=("${ALL_VIDEOS[@]}")
+          for ((i=${#SHUFFLED[@]}-1; i>0; i--)); do
+            j=$((RANDOM % (i+1)))
+            tmp="${SHUFFLED[$i]}"
+            SHUFFLED[$i]="${SHUFFLED[$j]}"
+            SHUFFLED[$j]="$tmp"
+          done
+
+          echo "[+] Новый раунд видео: ${#SHUFFLED[@]} клипов"
+        fi
+
+        RANDOM_FILE="${SHUFFLED[0]}"
+        SHUFFLED=("${SHUFFLED[@]:1}")
+      fi
+    fi
+
+    # Записываем текущее видео для дашборда
+    echo "${RANDOM_FILE##*/}" > /shared/current_video.txt 2>/dev/null || true
+
+    # Воспроизведение: mode-aware аудио
     if [[ "$RANDOM_FILE" == /visuals/.processed/* ]]; then
-      ffmpeg -hide_banner -loglevel error -re -i "$RANDOM_FILE" \
-        -c:v copy -an -f mpegts - 2>/dev/null || true
+      if [ "$visual_mode" = "video-playlist" ] && [ "$current_mode" = "live" ]; then
+        # Video Playlist: пробрасываем аудио из файла + поддержка skip
+        local has_audio
+        has_audio=$(ffprobe -v error -select_streams a:0 -show_entries stream=codec_type -of csv=p=0 "$RANDOM_FILE" 2>/dev/null)
+        if [ -n "$has_audio" ]; then
+          ffmpeg -hide_banner -loglevel error -re -i "$RANDOM_FILE" \
+            -c:v copy -c:a copy -f mpegts - 2>/dev/null &
+        else
+          ffmpeg -hide_banner -loglevel error -re -i "$RANDOM_FILE" \
+            -f lavfi -i anullsrc=r=48000:cl=stereo \
+            -c:v copy -c:a aac -b:a 128k -shortest -f mpegts - 2>/dev/null &
+        fi
+        local ffpid=$!
+        # Поллим skip-сигнал пока ffmpeg работает
+        while kill -0 $ffpid 2>/dev/null; do
+          if [ -f /shared/video_skip ]; then
+            rm -f /shared/video_skip
+            kill $ffpid 2>/dev/null
+            wait $ffpid 2>/dev/null
+            echo "[+] Video skipped"
+            break
+          fi
+          sleep 0.5
+        done
+        wait $ffpid 2>/dev/null || true
+      else
+        # Radio / Visual Radio / Standby: только видео (аудио из Icecast)
+        ffmpeg -hide_banner -loglevel error -re -i "$RANDOM_FILE" \
+          -c:v copy -an -f mpegts - 2>/dev/null || true
+      fi
     else
       ffmpeg -hide_banner -loglevel error -re -i "$RANDOM_FILE" \
         -vf "scale=1920:1080:force_original_aspect_ratio=decrease,pad=1920:1080:(ow-iw)/2:(oh-ih)/2:black,fps=30,format=yuv420p" \
@@ -309,7 +463,7 @@ file_sig() {
 }
 
 current_stream_sig() {
-  echo "keys=$(file_sig /shared/stream_keys.enc);quality=$(file_sig /shared/stream_quality.json);audio=$(file_sig /shared/stream_audio.json);video=$(file_sig /shared/stream_video.json);control=$(file_sig /shared/stream_control.json);overlay=$(file_sig /shared/overlay_config.json);visual=$(file_sig /shared/active_visual_profile.json);filter=$(file_sig /shared/overlay_filter_string.txt)"
+  echo "keys=$(file_sig /shared/stream_keys.enc);quality=$(file_sig /shared/stream_quality.json);audio=$(file_sig /shared/stream_audio.json);video=$(file_sig /shared/stream_video.json);control=$(file_sig /shared/stream_control.json);overlay=$(file_sig /shared/overlay_config.json);visual=$(file_sig /shared/active_visual_profile.json);filter=$(file_sig /shared/overlay_filter_string.txt);vmode=$(file_sig /shared/visual_mode.json)"
 }
 
 watch_stream_config() {
@@ -444,9 +598,25 @@ build_outputs() {
     echo "[+] VIDEO COPY MODE: 0% CPU, 0% GPU (pre-transcoded CBR stream-ready)" >&2
   fi
 
-  echo "[+] Audio: direct encode (no filters)" >&2
+  # Определяем visual mode для выбора аудио-источника
+  local visual_mode stream_mode is_video_playlist
+  visual_mode=$(get_visual_mode)
+  stream_mode=$(get_stream_mode)
+  is_video_playlist=false
+  if [ "$visual_mode" = "video-playlist" ] && [ "$stream_mode" = "live" ]; then
+    is_video_playlist=true
+  fi
 
-  local base_args="-hide_banner -loglevel error $PROGRESS_ARGS -fflags +genpts+igndts $hwaccel_args -thread_queue_size 10240 -i $FIFO -reconnect 1 -reconnect_streamed 1 -reconnect_delay_max 5 -thread_queue_size 10240 -i $ICECAST_URL $logo_inputs -map 0:v -map 1:a $video_enc_args -c:a aac -b:a $abr -ar 48000"
+  local base_args
+  if [ "$is_video_playlist" = "true" ]; then
+    # Video Playlist: аудио из FIFO (предварительно закодировано в AAC), без Icecast
+    echo "[+] Audio: from video files (copy, no Icecast)" >&2
+    base_args="-hide_banner -loglevel error $PROGRESS_ARGS -fflags +genpts+igndts $hwaccel_args -thread_queue_size 10240 -i $FIFO $logo_inputs -map 0:v -map 0:a $video_enc_args -c:a copy"
+  else
+    # Radio / Visual Radio: аудио из Icecast (Liquidsoap)
+    echo "[+] Audio: Icecast → AAC encode" >&2
+    base_args="-hide_banner -loglevel error $PROGRESS_ARGS -fflags +genpts+igndts $hwaccel_args -thread_queue_size 10240 -i $FIFO -reconnect 1 -reconnect_streamed 1 -reconnect_delay_max 5 -thread_queue_size 10240 -i $ICECAST_URL $logo_inputs -map 0:v -map 1:a $video_enc_args -c:a aac -b:a $abr -ar 48000"
+  fi
   
   # Always build tee outputs (HLS + all RTMPs)
   local outputs="[f=hls:hls_time=2:hls_list_size=15:hls_flags=delete_segments+omit_endlist+split_by_time:hls_segment_filename=${HLS_DIR}/seg_%03d.ts]${HLS_PLAYLIST}"

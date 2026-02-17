@@ -14,7 +14,7 @@
       <button class="tab-btn active" data-tab="studio">Studio</button>
       <button class="tab-btn" data-tab="schedule">Schedule</button>
       <button class="tab-btn" data-tab="playlists">Playlists</button>
-      <button class="tab-btn" data-tab="visuals">Visuals</button>
+      <button class="tab-btn" data-tab="visuals">Video</button>
       <button class="tab-btn" data-tab="analytics">Analytics</button>
     </nav>
     <div id="uptime"></div>
@@ -30,6 +30,10 @@
         <div class="studio-player">
           <div class="panel player-wrap">
             <video id="studio-player" controls autoplay playsinline muted></video>
+            <div class="player-overlay" id="player-overlay">
+              <div class="player-overlay-spinner"></div>
+              <div class="player-overlay-text" id="player-overlay-text">Switching mode...</div>
+            </div>
           </div>
         </div>
 
@@ -40,16 +44,49 @@
             <span class="transport-bpm" id="studio-bpm"></span>
           </div>
           <div class="transport-controls">
+            <span class="mode-tag off" id="broadcast-mode-tag">OFF</span>
+            <button class="btn-broadcast btn-play" id="btn-play">PLAY</button>
+            <button class="btn-broadcast btn-golive" id="btn-golive" disabled>GO LIVE</button>
+            <button class="btn-broadcast btn-stop" id="btn-stop" disabled>STOP</button>
             <button class="btn-skip-main" id="skip-btn" title="Skip to next track (Space)">SKIP</button>
-            <button id="stream-toggle-btn" class="btn-toggle">Loading...</button>
           </div>
+        </div>
+
+        <!-- Broadcast Mode Selector -->
+        <div class="broadcast-mode-bar">
+          <div class="broadcast-mode-pills">
+            <button class="bmode-pill active" data-vmode="visual-radio" id="pill-visual-radio">
+              <span class="bmode-pill-icon">&#9654;&#9654;</span>
+              <span class="bmode-pill-label">Visual Radio</span>
+              <span class="bmode-pill-desc">Shuffled videos + DJ music</span>
+            </button>
+            <button class="bmode-pill" data-vmode="radio" id="pill-radio">
+              <span class="bmode-pill-icon">&#9654;</span>
+              <span class="bmode-pill-label">Radio</span>
+              <span class="bmode-pill-desc">One video on loop + DJ music</span>
+            </button>
+            <button class="bmode-pill" data-vmode="video-playlist" id="pill-video-playlist">
+              <span class="bmode-pill-icon">&#9199;</span>
+              <span class="bmode-pill-label">Video Playlist</span>
+              <span class="bmode-pill-desc">Videos with own audio, no DJ</span>
+            </button>
+          </div>
+          <div class="broadcast-mode-options" id="broadcast-mode-options">
+            <div class="bmode-option-row" id="standby-visual-wrapper">
+              <label>Video:</label>
+              <select id="standby-visual-select">
+                <option value="">-- select video --</option>
+              </select>
+            </div>
+          </div>
+          <div class="broadcast-mode-hint" id="transport-mode-hint"></div>
         </div>
 
         <!-- Queue + Track Selector -->
         <div class="studio-queue-area">
           <div class="panel">
             <div class="panel-head">
-              <span>Queue</span>
+              <span id="queue-panel-title">Queue</span>
               <button class="btn-small btn-danger" id="clear-queue-btn">Clear</button>
             </div>
             <div class="panel-body">
@@ -60,7 +97,7 @@
           </div>
           <div class="panel">
             <div class="panel-head">
-              <span>Add to Queue</span>
+              <span id="queue-selector-title">Add to Queue</span>
               <input type="text" class="queue-search" id="queue-search" placeholder="Search tracks...">
             </div>
             <div class="panel-body">
@@ -86,10 +123,10 @@
             </div>
           </div>
 
-          <!-- Visuals Library -->
+          <!-- Video Library -->
           <div class="panel">
             <div class="panel-head">
-              <span>Visuals Library</span>
+              <span>Video Library</span>
               <span id="visuals-count" style="margin-left:auto"></span>
             </div>
             <div class="panel-body">
@@ -365,14 +402,14 @@
     </div>
   </div>
 
-  <!-- Visuals Tab -->
+  <!-- Video Tab -->
   <div id="tab-visuals" class="tab-content">
     <div class="visuals-layout">
       <div class="visuals-main">
-        <!-- Visual Profiles -->
+        <!-- Video Profiles -->
         <div class="panel">
           <div class="panel-head">
-            <span>Visual Profiles</span>
+            <span>Video Profiles</span>
             <button class="btn-small btn-primary" id="create-visual-profile-btn">+ Create</button>
           </div>
           <div class="panel-body">
@@ -394,10 +431,10 @@
           </div>
         </div>
 
-        <!-- Visuals Library -->
+        <!-- Video Library -->
         <div class="panel">
           <div class="panel-head">
-            <span>Visuals Library</span>
+            <span>Video Library</span>
             <span id="visuals-count" style="margin-left:auto"></span>
           </div>
           <div class="panel-body">

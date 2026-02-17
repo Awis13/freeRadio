@@ -1,3 +1,4 @@
+const fs = require('fs');
 const express = require('express');
 const http = require('http');
 const path = require('path');
@@ -15,6 +16,8 @@ const audioSettings = require('./lib/audioSettings');
 const videoSettings = require('./lib/videoSettings');
 const streamControl = require('./lib/streamControl');
 const restreamSettings = require('./lib/restreamSettings');
+const visualMode = require('./lib/visualMode');
+const videoQueue = require('./lib/videoQueue');
 const createQueueRouter = require('./lib/queue');
 const { createPlaylistRouter } = require('./lib/playlist');
 const { createTrackRouter } = require('./lib/trackMeta');
@@ -135,6 +138,25 @@ app.use('/api/visuals', fileManager(VISUALS_DIR));
 // --- REST API: queue control ---
 app.use('/api/queue', createQueueRouter(MUSIC_DIR, getBpmMap));
 
+// --- REST API: video queue ---
+app.get('/api/video-queue', (req, res) => {
+  res.json(videoQueue.getQueue());
+});
+app.post('/api/video-queue/push', express.text({ type: '*/*' }), (req, res) => {
+  const filename = (typeof req.body === 'string' ? req.body : '').trim();
+  if (!filename) return res.status(400).json({ error: 'no filename' });
+  videoQueue.push(filename);
+  res.json({ ok: true });
+});
+app.post('/api/video-queue/skip', (req, res) => {
+  videoQueue.skip();
+  res.json({ ok: true });
+});
+app.post('/api/video-queue/clear', (req, res) => {
+  videoQueue.clear();
+  res.json({ ok: true });
+});
+
 // --- REST API: playlists ---
 app.use('/api/playlists', createPlaylistRouter(MUSIC_DIR, getBpmMap));
 
@@ -194,6 +216,8 @@ app.delete('/api/stream-keys/:platform', (req, res) => {
 });
 
 app.get('/api/rtmp-urls', (req, res) => {
+  const { broadcast } = streamControl.getControlState();
+  if (!broadcast) return res.json([]);
   res.json(streamKeys.getEnabledRtmpUrls());
 });
 
@@ -255,9 +279,47 @@ app.get('/api/stream/control', (req, res) => {
 });
 
 app.post('/api/stream/control', (req, res) => {
-  const { streaming } = req.body;
-  const result = streamControl.setControlState(streaming);
+  const { streaming, broadcast } = req.body;
+  const result = streamControl.setControlState(streaming, broadcast);
   res.json({ success: true, ...result });
+});
+
+// --- REST API: stream mode (standby/live) ---
+app.get('/api/stream/mode', (req, res) => {
+  res.json(streamControl.getModeState());
+});
+
+app.post('/api/stream/mode', (req, res) => {
+  const { mode, standbyVisual } = req.body;
+  const result = streamControl.setModeState(mode, standbyVisual);
+  res.json({ success: true, ...result });
+});
+
+// --- REST API: visual mode ---
+app.get('/api/visual-mode', (req, res) => {
+  res.json(visualMode.getVisualMode());
+});
+
+app.post('/api/visual-mode', (req, res) => {
+  const { mode, radioVisual } = req.body;
+  const result = visualMode.setVisualMode(mode, radioVisual);
+  res.json({ success: true, ...result });
+});
+
+// --- REST API: processed visuals list ---
+app.get('/api/visuals-processed', (req, res) => {
+  const processedDir = path.join(VISUALS_DIR, '.processed');
+  try {
+    const files = fs.readdirSync(processedDir)
+      .filter(f => /\.(mp4|mov|mkv)$/i.test(f))
+      .map(f => {
+        const stat = fs.statSync(path.join(processedDir, f));
+        return { name: f, size: stat.size };
+      });
+    res.json(files);
+  } catch (e) {
+    res.json([]);
+  }
 });
 
 // --- REST API: restream settings ---
@@ -278,11 +340,12 @@ app.post('/api/restream/settings', (req, res) => {
 app.use('/overlay-assets', express.static('/shared/overlay_assets'));
 
 // --- Start ---
-// Local HLS streaming always starts on boot.
-// autoStart only controls whether RTMP restream URLs are active on boot.
-streamControl.setControlState(true);
+// Local HLS streaming always starts on boot (preview mode).
+// autoStart controls whether RTMP broadcast is active on boot.
 const restreamCfg = restreamSettings.getSettings();
-console.log(`[restream] streaming=true (always), rtmp autostart=${restreamCfg.autoStart}`);
+streamControl.setControlState(true, !!restreamCfg.autoStart);
+streamControl.setModeState('live');
+console.log(`[boot] streaming=true, broadcast=${!!restreamCfg.autoStart}, mode=live`);
 
 icecastPoller.start();
 trackPoller.start();

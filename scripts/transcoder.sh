@@ -34,6 +34,19 @@ transcode_video() {
     local gop_size=$((fps_num * 2))
     log "  Source: ${fps_num}fps, GOP: ${gop_size} (2s keyframes)"
 
+    # Определяем наличие аудио в исходнике
+    local has_audio audio_args audio_label
+    has_audio=$(ffprobe -v error -select_streams a:0 -show_entries stream=codec_type -of csv=p=0 "$input_file" 2>/dev/null)
+    if [ -n "$has_audio" ]; then
+        audio_args="-c:a aac -b:a 256k -ar 48000"
+        audio_label="+audio"
+        log "  Audio: preserving (AAC 256k)"
+    else
+        audio_args="-an"
+        audio_label=""
+        log "  Audio: none in source"
+    fi
+
     # Streaming-ready: нативный FPS, CBR 6Mbps, H.264 High
     # Выход готов к -c:v copy в стримере (0% CPU/GPU на вещание)
     if ffmpeg -y -hide_banner -loglevel error \
@@ -43,11 +56,11 @@ transcode_video() {
         -c:v h264_qsv -profile:v high -bf 0 \
         -b:v 6000k -maxrate 6000k -minrate 6000k -bufsize 12000k \
         -g $gop_size -keyint_min $gop_size -sc_threshold 0 -flags +cgop \
-        -an \
+        $audio_args \
         -movflags +faststart \
         "$tmp_file" 2>> "$LOG_FILE"; then
         mv "$tmp_file" "$output_file"
-        log "  Done (QSV CBR 6M ${fps_num}fps): $output_file"
+        log "  Done (QSV CBR 6M ${fps_num}fps${audio_label}): $output_file"
     # Fallback: software encode
     elif ffmpeg -y -hide_banner -loglevel error \
         -i "$input_file" \
@@ -55,11 +68,11 @@ transcode_video() {
         -c:v libx264 -profile:v high -preset veryfast -bf 0 \
         -b:v 6000k -maxrate 6000k -minrate 6000k -bufsize 12000k \
         -g $gop_size -keyint_min $gop_size -sc_threshold 0 -flags +cgop \
-        -an \
+        $audio_args \
         -movflags +faststart \
         "$tmp_file" 2>> "$LOG_FILE"; then
         mv "$tmp_file" "$output_file"
-        log "  Done (software CBR 6M ${fps_num}fps): $output_file"
+        log "  Done (software CBR 6M ${fps_num}fps${audio_label}): $output_file"
     else
         log "  ERROR: Failed to transcode $filename"
         rm -f "$tmp_file"

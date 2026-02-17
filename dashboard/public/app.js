@@ -33,6 +33,8 @@
   var clearQueueBtn = document.getElementById('clear-queue-btn');
   var trackSelector = document.getElementById('track-selector');
   var queueSearch = document.getElementById('queue-search');
+  var queuePanelTitle = document.getElementById('queue-panel-title');
+  var queueSelectorTitle = document.getElementById('queue-selector-title');
 
   // --- State ---
   var bpmMap = {};
@@ -41,6 +43,7 @@
   var startTime = Date.now();
   var musicFiles = [];
   var visualFiles = [];
+  var processedVisualFiles = [];
   var activeTab = 'studio';
   var playlists = [];
   var selectedPlaylistId = null;
@@ -207,6 +210,10 @@
     hlsInstance.on(Hls.Events.MANIFEST_PARSED, function () {
       log('hls: manifest parsed, starting playback');
       studioPlayer.play().catch(function () {});
+      // Clear restart overlay when stream recovers
+      if (playerOverlay && playerOverlay.classList.contains('visible')) {
+        hidePlayerOverlay();
+      }
     });
 
     hlsInstance.on(Hls.Events.FRAG_LOADED, function (_, data) {
@@ -219,6 +226,14 @@
   }
 
   initPlayer();
+
+  // Clear restart overlay when video recovers (Safari/native HLS)
+  studioPlayer.addEventListener('playing', function() {
+    var overlay = document.getElementById('player-overlay');
+    if (overlay && overlay.classList.contains('visible')) {
+      overlay.classList.remove('visible');
+    }
+  });
 
   // Load file lists immediately
   loadFileList('music');
@@ -522,11 +537,66 @@
       .catch(function(e) { showError('Clear queue failed: ' + e); });
   };
 
+  // --- Video Queue Control ---
+  function loadVideoQueue() {
+    fetch('/api/video-queue')
+      .then(function(r) { return r.json(); })
+      .then(function(items) { renderQueue(items); })
+      .catch(function() { renderQueue([]); });
+  }
+
+  function addToVideoQueue(filename) {
+    fetch('/api/video-queue/push', {
+      method: 'POST',
+      headers: { 'Content-Type': 'text/plain' },
+      body: filename
+    })
+      .then(function(r) { return r.json(); })
+      .then(function(data) {
+        if (data.ok) {
+          log('video queue: added ' + filename);
+          loadVideoQueue();
+        }
+      })
+      .catch(function(e) { showError('Video queue push failed: ' + e); });
+  }
+
+  function skipVideo() {
+    fetch('/api/video-queue/skip', { method: 'POST' })
+      .then(function(r) { return r.json(); })
+      .then(function(data) {
+        if (data.ok) {
+          log('video: skipped');
+          setTimeout(loadVideoQueue, 1000);
+        }
+      })
+      .catch(function(e) { showError('Video skip failed: ' + e); });
+  }
+
+  function clearVideoQueue() {
+    fetch('/api/video-queue/clear', { method: 'POST' })
+      .then(function(r) { return r.json(); })
+      .then(function(data) {
+        if (data.ok) {
+          log('video queue: cleared');
+          loadVideoQueue();
+        }
+      })
+      .catch(function(e) { showError('Clear video queue failed: ' + e); });
+  }
+
+  function loadActiveQueue() {
+    if (broadcastState.visualMode === 'video-playlist') loadVideoQueue();
+    else loadQueue();
+  }
+
   // --- Track Selector ---
   function renderTrackSelector(filter) {
     trackSelector.innerHTML = '';
+    var isVideoMode = broadcastState.visualMode === 'video-playlist';
+    var sourceFiles = isVideoMode ? processedVisualFiles : musicFiles;
     var search = (filter || '').toLowerCase();
-    var filtered = musicFiles.filter(function(f) {
+    var filtered = sourceFiles.filter(function(f) {
       return !search || f.name.toLowerCase().indexOf(search) !== -1;
     });
     filtered.forEach(function(f) {
@@ -539,19 +609,23 @@
       name.title = f.name;
       div.appendChild(name);
 
-      var bpm = bpmMap[f.name];
-      if (bpm) {
-        var bpmEl = document.createElement('span');
-        bpmEl.className = 'selector-bpm';
-        bpmEl.textContent = Math.round(bpm) + ' BPM';
-        div.appendChild(bpmEl);
+      if (!isVideoMode) {
+        var bpm = bpmMap[f.name];
+        if (bpm) {
+          var bpmEl = document.createElement('span');
+          bpmEl.className = 'selector-bpm';
+          bpmEl.textContent = Math.round(bpm) + ' BPM';
+          div.appendChild(bpmEl);
+        }
       }
 
       var addBtn = document.createElement('button');
       addBtn.className = 'btn-add-queue';
       addBtn.textContent = '+';
-      addBtn.title = 'Add to queue';
-      addBtn.onclick = function() { addToQueue(f.name); };
+      addBtn.title = isVideoMode ? 'Add to video queue' : 'Add to queue';
+      addBtn.onclick = isVideoMode
+        ? (function(n) { return function() { addToVideoQueue(n); }; })(f.name)
+        : (function(n) { return function() { addToQueue(n); }; })(f.name);
       div.appendChild(addBtn);
 
       trackSelector.appendChild(div);
@@ -563,7 +637,7 @@
   };
 
   loadQueue();
-  setInterval(loadQueue, 5000);
+  setInterval(loadActiveQueue, 5000);
 
   // ============================
   // TRACK HISTORY (Studio sidebar)
@@ -1740,7 +1814,7 @@
   // ============================
   var PLATFORM_PRESETS = {
     youtube:  { name: 'YouTube',  rtmpUrl: 'rtmp://a.rtmp.youtube.com/live2' },
-    kick:     { name: 'Kick',     rtmpUrl: 'rtmps://fa723fc1b171.global-contribute.live-video.net/app' },
+    kick:     { name: 'Kick',     rtmpUrl: '' },
     twitch:   { name: 'Twitch',   rtmpUrl: 'rtmp://live.twitch.tv/app' },
     facebook: { name: 'Facebook', rtmpUrl: 'rtmps://live-api-s.facebook.com:443/rtmp/' },
     custom:   { name: '',         rtmpUrl: '' }
@@ -1758,16 +1832,26 @@
   var presetSelect = document.getElementById('platform-preset-select');
   var restreamAutoStartCheckbox = document.getElementById('restream-autostart-checkbox');
 
+  function uniquePlatformName(base) {
+    if (currentPlatformNames.indexOf(base) === -1) return base;
+    for (var i = 2; i <= 99; i++) {
+      var candidate = base + ' ' + i;
+      if (currentPlatformNames.indexOf(candidate) === -1) return candidate;
+    }
+    return base + ' ' + Date.now();
+  }
+
   function applyPreset(key) {
     var preset = PLATFORM_PRESETS[key];
     if (!preset) return;
     var isCustom = key === 'custom';
-    platformNameInput.value = preset.name;
+    var urlEditable = isCustom || !preset.rtmpUrl;
+    platformNameInput.value = isCustom ? '' : uniquePlatformName(preset.name);
     rtmpUrlInput.value = preset.rtmpUrl;
     platformNameInput.readOnly = !isCustom;
-    rtmpUrlInput.readOnly = !isCustom;
+    rtmpUrlInput.readOnly = !urlEditable;
     platformNameInput.style.opacity = isCustom ? '' : '.7';
-    rtmpUrlInput.style.opacity = isCustom ? '' : '.7';
+    rtmpUrlInput.style.opacity = urlEditable ? '' : '.7';
     syncPlatformHints();
   }
 
@@ -1785,12 +1869,14 @@
   }
 
   var maxPlatforms = 3;
+  var currentPlatformNames = [];
 
   function loadPlatforms() {
     fetch('/api/stream-keys')
       .then(function(r) { return r.json(); })
       .then(function(data) {
         maxPlatforms = data.maxPlatforms || 3;
+        currentPlatformNames = Object.keys(data.platforms);
         renderPlatforms(data.platforms);
       })
       .catch(function(e) { log('platforms: error loading: ' + e); });
@@ -1930,47 +2016,297 @@
   loadRestreamSettings();
   setInterval(loadPlatforms, 30000);
 
-  // --- Stream Control ---
-  var streamToggleBtn = document.getElementById('stream-toggle-btn');
+  // --- Broadcast Control (OFF → PREVIEW → LIVE) ---
+  var broadcastModeTag = document.getElementById('broadcast-mode-tag');
+  var btnGoLive = document.getElementById('btn-golive');
+  var btnPlay = document.getElementById('btn-play');
+  var btnStop = document.getElementById('btn-stop');
+  var standbyVisualSelect = document.getElementById('standby-visual-select');
+  var standbyVisualWrapper = document.getElementById('standby-visual-wrapper');
+  var playerOverlay = document.getElementById('player-overlay');
+  var playerOverlayText = document.getElementById('player-overlay-text');
+  var modeHint = document.getElementById('transport-mode-hint');
+  var modePills = document.querySelectorAll('.bmode-pill');
 
-  function loadStreamControl() {
-    fetch('/api/stream/control')
-      .then(function(r) { return r.json(); })
-      .then(function(data) {
-        updateStreamToggle(data.streaming);
-      })
-      .catch(function(e) { log('stream control: error loading: ' + e); });
+  // State: streaming=playing locally (HLS), broadcast=sending to RTMP platforms
+  var broadcastState = { streaming: false, broadcast: false, standbyVisual: null, visualMode: 'visual-radio' };
+  var overlayTimeout = null;
+
+  // Derived state: OFF (not streaming), PREVIEW (streaming, no broadcast), LIVE (streaming + broadcast)
+  function getBroadcastPhase() {
+    if (!broadcastState.streaming) return 'off';
+    if (!broadcastState.broadcast) return 'preview';
+    return 'live';
   }
 
-  function updateStreamToggle(streaming) {
-    if (streaming) {
-      streamToggleBtn.textContent = 'STOP';
-      streamToggleBtn.className = 'btn-toggle streaming';
-    } else {
-      streamToggleBtn.textContent = 'GO LIVE';
-      streamToggleBtn.className = 'btn-toggle stopped';
+  var MODE_HINTS = {
+    off: {
+      'radio': 'One video loops + DJ music. Press PLAY to preview.',
+      'visual-radio': 'Videos shuffle + DJ music. Press PLAY to preview.',
+      'video-playlist': 'Videos play with their own audio. Press PLAY to preview.'
+    },
+    preview: {
+      'radio': 'Preview: DJ music + one looping video. Press GO LIVE to broadcast.',
+      'visual-radio': 'Preview: DJ music + shuffled videos. Press GO LIVE to broadcast.',
+      'video-playlist': 'Preview: videos with own audio, no DJ. Press GO LIVE to broadcast.'
+    },
+    live: {
+      'radio': 'Broadcasting: DJ music + one looping video.',
+      'visual-radio': 'Broadcasting: DJ music + shuffled videos.',
+      'video-playlist': 'Broadcasting: videos with own audio, no DJ.'
+    }
+  };
+
+  function showPlayerOverlay(text, duration) {
+    playerOverlayText.textContent = text;
+    playerOverlay.classList.add('visible');
+    if (overlayTimeout) clearTimeout(overlayTimeout);
+    if (duration) {
+      overlayTimeout = setTimeout(function() {
+        playerOverlay.classList.remove('visible');
+        overlayTimeout = null;
+      }, duration);
     }
   }
 
-  streamToggleBtn.onclick = function() {
-    var currentlyStreaming = streamToggleBtn.classList.contains('streaming');
-    var newState = !currentlyStreaming;
+  function hidePlayerOverlay() {
+    playerOverlay.classList.remove('visible');
+    if (overlayTimeout) { clearTimeout(overlayTimeout); overlayTimeout = null; }
+  }
 
+  function updateBroadcastUI() {
+    var phase = getBroadcastPhase();
+    var s = broadcastState;
+
+    if (phase === 'off') {
+      broadcastModeTag.textContent = 'OFF';
+      broadcastModeTag.className = 'mode-tag off';
+      btnPlay.disabled = false;
+      btnGoLive.disabled = true;
+      btnStop.disabled = true;
+    } else if (phase === 'preview') {
+      broadcastModeTag.textContent = 'PREVIEW';
+      broadcastModeTag.className = 'mode-tag preview';
+      btnPlay.disabled = true;
+      btnGoLive.disabled = false;
+      btnStop.disabled = false;
+    } else {
+      broadcastModeTag.textContent = 'LIVE';
+      broadcastModeTag.className = 'mode-tag live';
+      btnPlay.disabled = true;
+      btnGoLive.disabled = true;
+      btnStop.disabled = false;
+    }
+
+    // Update pill buttons
+    modePills.forEach(function(pill) {
+      pill.classList.toggle('active', pill.dataset.vmode === s.visualMode);
+    });
+
+    // Show video picker in Radio mode (to pick the looping video) or when OFF
+    var showVisualPicker = s.visualMode === 'radio';
+    standbyVisualWrapper.style.display = showVisualPicker ? '' : 'none';
+
+    // Mode-aware queue: rebind skip/clear, update titles
+    var isVideoMode = s.visualMode === 'video-playlist';
+    queuePanelTitle.textContent = isVideoMode ? 'Video Queue' : 'Queue';
+    queueSelectorTitle.textContent = isVideoMode ? 'Add Video' : 'Add to Queue';
+    queueSearch.placeholder = isVideoMode ? 'Search videos...' : 'Search tracks...';
+    skipBtn.style.opacity = '';
+    skipBtn.onclick = isVideoMode ? skipVideo : function() {
+      fetch('/api/queue/skip', { method: 'POST' })
+        .then(function(r) { return r.json(); })
+        .then(function(data) {
+          if (data.ok) {
+            log('queue: skipped track');
+            setTimeout(loadQueue, 1000);
+            setTimeout(loadTrackHistory, 2000);
+          }
+        })
+        .catch(function(e) { showError('Skip failed: ' + e); });
+    };
+    clearQueueBtn.onclick = isVideoMode ? clearVideoQueue : function() {
+      fetch('/api/queue/clear', { method: 'POST' })
+        .then(function(r) { return r.json(); })
+        .then(function(data) {
+          if (data.ok) {
+            log('queue: cleared');
+            loadQueue();
+          }
+        })
+        .catch(function(e) { showError('Clear queue failed: ' + e); });
+    };
+
+    if (standbyVisualSelect.value !== (s.standbyVisual || '')) {
+      standbyVisualSelect.value = s.standbyVisual || '';
+    }
+
+    // Mode hint
+    var hints = MODE_HINTS[phase] || {};
+    modeHint.textContent = hints[s.visualMode] || '';
+  }
+
+  // Pill button clicks
+  modePills.forEach(function(pill) {
+    pill.addEventListener('click', function() {
+      var newMode = pill.dataset.vmode;
+      var oldMode = broadcastState.visualMode;
+      if (newMode === oldMode) return;
+      broadcastState.visualMode = newMode;
+
+      // Switching to/from video-playlist restarts ffmpeg (~5-10s)
+      var needsRestart = broadcastState.streaming &&
+        ((oldMode === 'video-playlist') !== (newMode === 'video-playlist'));
+
+      if (needsRestart) {
+        showPlayerOverlay('Switching to ' + pill.querySelector('.bmode-pill-label').textContent + '...\nStream is restarting, wait ~10 seconds.', 15000);
+      }
+
+      fetch('/api/visual-mode', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ mode: newMode })
+      })
+        .then(function() {
+          updateBroadcastUI();
+          loadActiveQueue();
+          renderTrackSelector(queueSearch.value);
+          log('broadcast: mode → ' + newMode + (needsRestart ? ' (restarting stream)' : ''));
+        })
+        .catch(function(e) {
+          showError('Mode change failed: ' + e);
+          hidePlayerOverlay();
+        });
+    });
+  });
+
+  // PLAY: OFF → PREVIEW (start local HLS, no RTMP)
+  btnPlay.onclick = function() {
+    btnPlay.disabled = true;
+    // Set mode to live (skip standby) and start streaming
+    fetch('/api/stream/mode', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ mode: 'live', standbyVisual: standbyVisualSelect.value || null })
+    })
+      .then(function() {
+        return fetch('/api/stream/control', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ streaming: true, broadcast: false })
+        });
+      })
+      .then(function(r) { return r.json(); })
+      .then(function() {
+        broadcastState.streaming = true;
+        broadcastState.broadcast = false;
+        updateBroadcastUI();
+        log('broadcast: PLAY → PREVIEW');
+      })
+      .catch(function(e) { showError('Play failed: ' + e); btnPlay.disabled = false; });
+  };
+
+  // GO LIVE: PREVIEW → LIVE (enable RTMP broadcast)
+  btnGoLive.onclick = function() {
+    btnGoLive.disabled = true;
+    showPlayerOverlay('Going live...\nStream is restarting with RTMP outputs.', 15000);
     fetch('/api/stream/control', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ streaming: newState })
+      body: JSON.stringify({ streaming: true, broadcast: true })
     })
       .then(function(r) { return r.json(); })
-      .then(function(data) {
-        updateStreamToggle(data.streaming);
-        log('restream: ' + (data.streaming ? 'STARTED' : 'STOPPED'));
+      .then(function() {
+        broadcastState.broadcast = true;
+        updateBroadcastUI();
+        log('broadcast: GO LIVE → LIVE');
       })
-      .catch(function(e) { showError('Restream toggle failed: ' + e); });
+      .catch(function(e) {
+        showError('Go live failed: ' + e);
+        btnGoLive.disabled = false;
+        hidePlayerOverlay();
+      });
   };
 
-  loadStreamControl();
-  setInterval(loadStreamControl, 5000);
+  // STOP: any → OFF
+  btnStop.onclick = function() {
+    btnStop.disabled = true;
+    fetch('/api/stream/control', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ streaming: false, broadcast: false })
+    })
+      .then(function(r) { return r.json(); })
+      .then(function() {
+        broadcastState.streaming = false;
+        broadcastState.broadcast = false;
+        updateBroadcastUI();
+        log('broadcast: STOPPED');
+      })
+      .catch(function(e) { showError('Stop failed: ' + e); btnStop.disabled = false; });
+  };
+
+  // Radio visual selection change
+  standbyVisualSelect.onchange = function() {
+    var visual = standbyVisualSelect.value || null;
+    broadcastState.standbyVisual = visual;
+    // Write to stream mode (standby visual)
+    fetch('/api/stream/mode', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ standbyVisual: visual })
+    }).catch(function(e) { showError('Set visual failed: ' + e); });
+    // Also write to visual mode (radio visual) if in radio mode
+    if (broadcastState.visualMode === 'radio') {
+      fetch('/api/visual-mode', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ radioVisual: visual })
+      }).catch(function() {});
+    }
+    log('broadcast: visual → ' + (visual || 'default'));
+  };
+
+  // Load processed visuals for dropdown
+  function loadProcessedVisuals() {
+    fetch('/api/visuals-processed')
+      .then(function(r) { return r.json(); })
+      .then(function(files) {
+        processedVisualFiles = files;
+        var current = standbyVisualSelect.value;
+        standbyVisualSelect.innerHTML = '<option value="">-- select video --</option>';
+        files.forEach(function(f) {
+          var opt = document.createElement('option');
+          opt.value = f.name;
+          opt.textContent = f.name;
+          standbyVisualSelect.appendChild(opt);
+        });
+        standbyVisualSelect.value = current || broadcastState.standbyVisual || '';
+      })
+      .catch(function(e) { log('visuals-processed: error: ' + e); });
+  }
+
+  // Poll broadcast state + visual mode
+  function loadBroadcastState() {
+    Promise.all([
+      fetch('/api/stream/control').then(function(r) { return r.json(); }),
+      fetch('/api/stream/mode').then(function(r) { return r.json(); }),
+      fetch('/api/visual-mode').then(function(r) { return r.json(); })
+    ])
+      .then(function(results) {
+        broadcastState.streaming = results[0].streaming;
+        broadcastState.broadcast = !!results[0].broadcast;
+        broadcastState.standbyVisual = results[1].standbyVisual;
+        broadcastState.visualMode = results[2].mode || 'visual-radio';
+        updateBroadcastUI();
+      })
+      .catch(function(e) { log('broadcast state: error: ' + e); });
+  }
+
+  loadProcessedVisuals();
+  loadBroadcastState();
+  setInterval(loadBroadcastState, 5000);
+  setInterval(loadProcessedVisuals, 30000);
 
   // --- Quality Settings ---
   function loadQuality() {
