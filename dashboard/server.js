@@ -157,12 +157,19 @@ app.use('/api/overlays', createOverlayRouter());
 app.use(express.json());
 
 app.get('/api/stream-keys', (req, res) => {
-  res.json(streamKeys.getPlatforms());
+  const platforms = streamKeys.getPlatforms();
+  const maxPlatforms = parseInt(process.env.MAX_PLATFORMS) || 3;
+  res.json({ platforms, maxPlatforms });
 });
 
 app.post('/api/stream-keys/:platform', (req, res) => {
   const { platform } = req.params;
   const { enabled, streamKey, rtmpUrl } = req.body;
+  const maxPlatforms = parseInt(process.env.MAX_PLATFORMS) || 3;
+  const existing = streamKeys.getPlatforms();
+  if (!existing[platform] && Object.keys(existing).length >= maxPlatforms) {
+    return res.status(400).json({ error: `Platform limit reached (max ${maxPlatforms})` });
+  }
   streamKeys.setPlatform(platform, { enabled, streamKey, rtmpUrl });
   res.json({ success: true });
 });

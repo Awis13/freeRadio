@@ -684,7 +684,8 @@
   function loadRestreamStatusFallback() {
     fetch('/api/stream-keys')
       .then(function(r) { return r.json(); })
-      .then(function(platforms) {
+      .then(function(data) {
+        var platforms = data.platforms || data;
         var container = document.getElementById('restream-status-list');
         container.innerHTML = '';
         Object.entries(platforms).forEach(function(entry) {
@@ -1737,6 +1738,14 @@
   // ============================
   // STREAM PLATFORMS (Studio sidebar)
   // ============================
+  var PLATFORM_PRESETS = {
+    youtube:  { name: 'YouTube',  rtmpUrl: 'rtmp://a.rtmp.youtube.com/live2' },
+    kick:     { name: 'Kick',     rtmpUrl: 'rtmps://fa723fc1b171.global-contribute.live-video.net/app' },
+    twitch:   { name: 'Twitch',   rtmpUrl: 'rtmp://live.twitch.tv/app' },
+    facebook: { name: 'Facebook', rtmpUrl: 'rtmps://live-api-s.facebook.com:443/rtmp/' },
+    custom:   { name: '',         rtmpUrl: '' }
+  };
+
   var platformList = document.getElementById('platform-list');
   var addPlatformBtn = document.getElementById('add-platform-btn');
   var platformModal = document.getElementById('platform-modal');
@@ -1745,7 +1754,24 @@
   var rtmpUrlInput = document.getElementById('rtmp-url-input');
   var rtmpHelp = document.getElementById('rtmp-help');
   var platformEnabled = document.getElementById('platform-enabled');
+  var presetGroup = document.getElementById('preset-group');
+  var presetSelect = document.getElementById('platform-preset-select');
   var restreamAutoStartCheckbox = document.getElementById('restream-autostart-checkbox');
+
+  function applyPreset(key) {
+    var preset = PLATFORM_PRESETS[key];
+    if (!preset) return;
+    var isCustom = key === 'custom';
+    platformNameInput.value = preset.name;
+    rtmpUrlInput.value = preset.rtmpUrl;
+    platformNameInput.readOnly = !isCustom;
+    rtmpUrlInput.readOnly = !isCustom;
+    platformNameInput.style.opacity = isCustom ? '' : '.7';
+    rtmpUrlInput.style.opacity = isCustom ? '' : '.7';
+    syncPlatformHints();
+  }
+
+  presetSelect.onchange = function() { applyPreset(presetSelect.value); };
 
   function syncPlatformHints() {
     var name = (platformNameInput.value || '').trim().toLowerCase();
@@ -1758,16 +1784,22 @@
     if (rtmpHelp) rtmpHelp.textContent = 'Use server URL; stream key is stored separately.';
   }
 
+  var maxPlatforms = 3;
+
   function loadPlatforms() {
     fetch('/api/stream-keys')
       .then(function(r) { return r.json(); })
-      .then(function(platforms) { renderPlatforms(platforms); })
+      .then(function(data) {
+        maxPlatforms = data.maxPlatforms || 3;
+        renderPlatforms(data.platforms);
+      })
       .catch(function(e) { log('platforms: error loading: ' + e); });
   }
 
   function renderPlatforms(platforms) {
     platformList.innerHTML = '';
-    Object.entries(platforms).forEach(function(entry) {
+    var entries = Object.entries(platforms);
+    entries.forEach(function(entry) {
       var name = entry[0];
       var config = entry[1];
       var div = document.createElement('div');
@@ -1797,6 +1829,10 @@
 
       platformList.appendChild(div);
     });
+
+    var atLimit = entries.length >= maxPlatforms;
+    addPlatformBtn.disabled = atLimit;
+    addPlatformBtn.title = atLimit ? 'Limit: max ' + maxPlatforms + ' platforms' : '';
   }
 
   function deletePlatform(name) {
@@ -1825,11 +1861,11 @@
   }
 
   addPlatformBtn.onclick = function() {
-    platformNameInput.value = '';
-    rtmpUrlInput.value = '';
     streamKeyInput.value = '';
     platformEnabled.checked = true;
-    syncPlatformHints();
+    presetGroup.style.display = '';
+    presetSelect.value = 'youtube';
+    applyPreset('youtube');
     platformModal.style.display = 'flex';
   };
 
@@ -1854,12 +1890,13 @@
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ enabled: enabled, streamKey: key, rtmpUrl: rtmpUrl })
     })
-      .then(function() {
+      .then(function(r) {
+        if (!r.ok) return r.json().then(function(d) { throw new Error(d.error || 'save failed'); });
         log('platform saved: ' + name);
         closePlatformModal();
         loadPlatforms();
       })
-      .catch(function(e) { showError('Save failed: ' + e); });
+      .catch(function(e) { showError('Save failed: ' + e.message); });
   };
 
   platformModal.onclick = function(e) {
