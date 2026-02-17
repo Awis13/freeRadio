@@ -259,9 +259,35 @@ get_video_filter_with_scale() {
   esac
 }
 
+# Generate a 10s standby slate (black screen + "SYSTEM 23" text + silent AAC audio)
+# Used as fallback when no content available or per-clip ffmpeg fails
+generate_standby_slate() {
+  local SLATE="/tmp/standby_slate.ts"
+  [ -f "$SLATE" ] && return
+  echo "[+] Generating standby slate..."
+  ffmpeg -hide_banner -loglevel error \
+    -f lavfi -i "color=c=black:s=1920x1080:r=24:d=10,format=yuv420p,drawtext=text='SYSTEM 23':fontsize=48:fontcolor=white:x=(w-tw)/2:y=(h-th)/2" \
+    -f lavfi -i "anullsrc=r=48000:cl=stereo" \
+    -c:v libx264 -preset ultrafast -tune stillimage -b:v 8000k -g 48 -bf 0 \
+    -c:a aac -b:a 128k \
+    -t 10 -f mpegts "$SLATE" 2>/dev/null
+  echo "[+] Standby slate ready: $SLATE"
+}
+
+# Get current audio bitrate from quality preset (for feed_fifo per-clip encoding)
+get_current_audio_bitrate() {
+  local quality_json preset
+  quality_json=$(get_quality_settings)
+  preset=$(echo "$quality_json" | grep -o '"preset":"[^"]*"' | cut -d'"' -f4)
+  get_audio_bitrate "${preset:-high}"
+}
+
 echo "[*] Waiting for icecast..."
 sleep 2
 echo "[+] Go!"
+
+# Generate standby slate at startup
+generate_standby_slate
 
 # Создаем FIFO
 [ -p "$FIFO" ] || mkfifo "$FIFO"
@@ -302,9 +328,11 @@ build_video_filters() {
 
 # Функция: честный shuffle — каждое видео играет ровно раз за раунд
 # Mode-aware: standby/radio/visual-radio/video-playlist.
-# standby → one visual (no audio). radio → one visual (video only, audio from Icecast).
-# visual-radio → shuffle (video only, audio from Icecast). video-playlist → shuffle (video+audio from file).
+# ALL modes output unified video+audio MPEG-TS to the FIFO.
+# Radio/Visual Radio/Standby: per-clip ffmpeg muxes video file + Icecast audio.
+# Video Playlist: per-clip ffmpeg muxes video+audio from file.
 # Переключение бесшовное на границе клипов, без разрыва MPEG-TS потока.
+# Main ffmpeg never restarts on mode switches — always reads FIFO with -map 0:v -map 0:a.
 feed_fifo() {
   declare -a SHUFFLED
   SHUFFLED=()
@@ -339,16 +367,16 @@ feed_fifo() {
       # Standby: тот же файл каждую итерацию (все visual modes)
       RANDOM_FILE=$(get_standby_visual)
       if [ -z "$RANDOM_FILE" ] || [ ! -f "$RANDOM_FILE" ]; then
-        echo "[!] No standby visual found, waiting..."
-        sleep 2
+        echo "[!] No standby visual found, playing standby slate"
+        cat /tmp/standby_slate.ts 2>/dev/null || sleep 2
         continue
       fi
     elif [ "$visual_mode" = "radio" ]; then
       # Radio: один визуал в цикле (как standby, но в live)
       RANDOM_FILE=$(get_radio_visual)
       if [ -z "$RANDOM_FILE" ] || [ ! -f "$RANDOM_FILE" ]; then
-        echo "[!] No radio visual found, waiting..."
-        sleep 2
+        echo "[!] No radio visual found, playing standby slate"
+        cat /tmp/standby_slate.ts 2>/dev/null || sleep 2
         continue
       fi
     else
@@ -376,7 +404,8 @@ feed_fifo() {
           mapfile -t ALL_VIDEOS < <(get_video_list)
 
           if [ ${#ALL_VIDEOS[@]} -eq 0 ]; then
-            sleep 2
+            echo "[!] No video files found, playing standby slate"
+            cat /tmp/standby_slate.ts 2>/dev/null || sleep 2
             continue
           fi
 
@@ -400,15 +429,18 @@ feed_fifo() {
     # Записываем текущее видео для дашборда
     echo "${RANDOM_FILE##*/}" > /shared/current_video.txt 2>/dev/null || true
 
-    # Воспроизведение: mode-aware аудио
+    # Воспроизведение: все режимы выдают video+audio MPEG-TS
+    local abr
+    abr=$(get_current_audio_bitrate)
+
     if [[ "$RANDOM_FILE" == /visuals/.processed/* ]]; then
       if [ "$visual_mode" = "video-playlist" ] && [ "$current_mode" = "live" ]; then
-        # Video Playlist: пробрасываем аудио из файла + поддержка skip
+        # Video Playlist: аудио из файла + поддержка skip
         local has_audio
         has_audio=$(ffprobe -v error -select_streams a:0 -show_entries stream=codec_type -of csv=p=0 "$RANDOM_FILE" 2>/dev/null)
         if [ -n "$has_audio" ]; then
           ffmpeg -hide_banner -loglevel error -re -i "$RANDOM_FILE" \
-            -c:v copy -c:a copy -f mpegts - 2>/dev/null &
+            -c:v copy -c:a aac -b:a "$abr" -ar 48000 -f mpegts - 2>/dev/null &
         else
           ffmpeg -hide_banner -loglevel error -re -i "$RANDOM_FILE" \
             -f lavfi -i anullsrc=r=48000:cl=stereo \
@@ -428,14 +460,30 @@ feed_fifo() {
         done
         wait $ffpid 2>/dev/null || true
       else
-        # Radio / Visual Radio / Standby: только видео (аудио из Icecast)
-        ffmpeg -hide_banner -loglevel error -re -i "$RANDOM_FILE" \
-          -c:v copy -an -f mpegts - 2>/dev/null || true
+        # Radio / Visual Radio / Standby: видео из файла + аудио из Icecast
+        ffmpeg -hide_banner -loglevel error -re \
+          -i "$RANDOM_FILE" \
+          -reconnect 1 -reconnect_streamed 1 -reconnect_delay_max 2 \
+          -i "$ICECAST_URL" \
+          -map 0:v -map 1:a -c:v copy -c:a aac -b:a "$abr" -ar 48000 \
+          -shortest -f mpegts - 2>/dev/null || {
+            echo "[!] Clip failed, inserting standby slate"
+            cat /tmp/standby_slate.ts
+          }
       fi
     else
-      ffmpeg -hide_banner -loglevel error -re -i "$RANDOM_FILE" \
+      # Non-processed file: transcode video + Icecast audio
+      ffmpeg -hide_banner -loglevel error -re \
+        -i "$RANDOM_FILE" \
+        -reconnect 1 -reconnect_streamed 1 -reconnect_delay_max 2 \
+        -i "$ICECAST_URL" \
+        -map 0:v -map 1:a \
         -vf "scale=1920:1080:force_original_aspect_ratio=decrease,pad=1920:1080:(ow-iw)/2:(oh-ih)/2:black,fps=30,format=yuv420p" \
-        -c:v mpeg2video -q:v 2 -an -f mpegts - 2>/dev/null || true
+        -c:v mpeg2video -q:v 2 -c:a aac -b:a "$abr" -ar 48000 \
+        -shortest -f mpegts - 2>/dev/null || {
+          echo "[!] Clip failed, inserting standby slate"
+          cat /tmp/standby_slate.ts
+        }
     fi
   done
 }
@@ -463,15 +511,9 @@ file_sig() {
 }
 
 current_stream_sig() {
-  # Audio source mode: video-playlist uses file audio, others use Icecast.
-  # Only this distinction needs an ffmpeg restart, not every visual mode switch.
-  local amode="icecast"
-  local vm=$(get_visual_mode)
-  local sm=$(get_stream_mode)
-  if [ "$vm" = "video-playlist" ] && [ "$sm" = "live" ]; then
-    amode="file"
-  fi
-  echo "keys=$(file_sig /shared/stream_keys.enc);quality=$(file_sig /shared/stream_quality.json);audio=$(file_sig /shared/stream_audio.json);video=$(file_sig /shared/stream_video.json);control=$(file_sig /shared/stream_control.json);overlay=$(file_sig /shared/overlay_config.json);visual=$(file_sig /shared/active_visual_profile.json);filter=$(file_sig /shared/overlay_filter_string.txt);amode=$amode"
+  # Visual mode switches no longer restart main ffmpeg — feed_fifo handles all modes.
+  # Only overlay/quality/key/control changes trigger restart.
+  echo "keys=$(file_sig /shared/stream_keys.enc);quality=$(file_sig /shared/stream_quality.json);audio=$(file_sig /shared/stream_audio.json);video=$(file_sig /shared/stream_video.json);control=$(file_sig /shared/stream_control.json);overlay=$(file_sig /shared/overlay_config.json);visual=$(file_sig /shared/active_visual_profile.json);filter=$(file_sig /shared/overlay_filter_string.txt)"
 }
 
 watch_stream_config() {
@@ -551,7 +593,7 @@ build_outputs() {
     logo_count=$(grep -c '"asset"' /shared/overlay_compiled.json 2>/dev/null | tr -d '[:space:]' || echo "0")
     [ -z "$logo_count" ] && logo_count=0
     if [ "$logo_count" -gt 0 ]; then
-      local idx=2  # input 0=video, 1=audio, logos start at 2
+      local idx=1  # input 0=FIFO (video+audio), logos start at 1
       while IFS= read -r asset_path; do
         if [ -f "$asset_path" ]; then
           logo_inputs="$logo_inputs -i $asset_path"
@@ -606,25 +648,10 @@ build_outputs() {
     echo "[+] VIDEO COPY MODE: 0% CPU, 0% GPU (pre-transcoded CBR stream-ready)" >&2
   fi
 
-  # Определяем visual mode для выбора аудио-источника
-  local visual_mode stream_mode is_video_playlist
-  visual_mode=$(get_visual_mode)
-  stream_mode=$(get_stream_mode)
-  is_video_playlist=false
-  if [ "$visual_mode" = "video-playlist" ] && [ "$stream_mode" = "live" ]; then
-    is_video_playlist=true
-  fi
-
+  # Unified: FIFO always contains both video+audio (feed_fifo handles all modes)
+  echo "[+] Audio: from FIFO (unified — feed_fifo encodes per-clip)" >&2
   local base_args
-  if [ "$is_video_playlist" = "true" ]; then
-    # Video Playlist: аудио из FIFO (предварительно закодировано в AAC), без Icecast
-    echo "[+] Audio: from video files (copy, no Icecast)" >&2
-    base_args="-hide_banner -loglevel error $PROGRESS_ARGS -fflags +genpts+igndts $hwaccel_args -thread_queue_size 10240 -i $FIFO $logo_inputs -map 0:v -map 0:a $video_enc_args -c:a copy"
-  else
-    # Radio / Visual Radio: аудио из Icecast (Liquidsoap)
-    echo "[+] Audio: Icecast → AAC encode" >&2
-    base_args="-hide_banner -loglevel error $PROGRESS_ARGS -fflags +genpts+igndts $hwaccel_args -thread_queue_size 10240 -i $FIFO -reconnect 1 -reconnect_streamed 1 -reconnect_delay_max 5 -thread_queue_size 10240 -i $ICECAST_URL $logo_inputs -map 0:v -map 1:a $video_enc_args -c:a aac -b:a $abr -ar 48000"
-  fi
+  base_args="-hide_banner -loglevel error $PROGRESS_ARGS -fflags +genpts+igndts $hwaccel_args -thread_queue_size 10240 -i $FIFO $logo_inputs -map 0:v -map 0:a $video_enc_args -c:a copy"
   
   # Always build tee outputs (HLS + all RTMPs)
   local outputs="[f=hls:hls_time=2:hls_list_size=15:hls_flags=delete_segments+omit_endlist+split_by_time:hls_segment_filename=${HLS_DIR}/seg_%03d.ts]${HLS_PLAYLIST}"

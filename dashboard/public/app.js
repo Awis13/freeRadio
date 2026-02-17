@@ -159,6 +159,7 @@
   var safetyTimer = null;   // 20s max overlay duration
   var hlsRetryTimer = null;
   var overlayLockedUntil = 0;  // timestamp — auto-hide blocked until this time
+  var pendingModeSwitch = false;  // hard block: overlay stays until mode actually applies
 
   function showLoading(text, source, lockMs) {
     var overlay = document.getElementById('player-overlay');
@@ -178,11 +179,14 @@
   }
 
   function hideLoading(source) {
-    // Auto-sources (timeupdate, canplay) respect the lock
+    // pendingModeSwitch: hard block — only mode-applied and safety can hide
+    if (pendingModeSwitch && source !== 'mode-applied' && source !== 'safety') return;
+    // Timestamp lock: block auto-sources (timeupdate, canplay) for brief overlays
     if ((source === 'timeupdate' || source === 'canplay') && Date.now() < overlayLockedUntil) return;
     var overlay = document.getElementById('player-overlay');
     var wasVisible = overlay.classList.contains('visible');
     overlay.classList.remove('visible');
+    overlayLockedUntil = 0;
     if (wasVisible) log('OVR HIDE src=' + (source || '?'));
     if (safetyTimer) { clearTimeout(safetyTimer); safetyTimer = null; }
   }
@@ -372,6 +376,17 @@
         updateAudio(msg.data);
         break;
       case 'video':
+        if (pendingModeSwitch) {
+          // New clip started in feed_fifo, but HLS player still has ~4s of buffered
+          // old content (hls_time=2 × liveSyncDurationCount=1 + segment pipeline).
+          // Wait for buffer to flush before hiding overlay.
+          log('MODE new clip detected: ' + (msg.data && msg.data.filename || '?') + ', waiting for HLS buffer...');
+          setTimeout(function() {
+            pendingModeSwitch = false;
+            hideLoading('mode-applied');
+            log('MODE switch applied');
+          }, 4000);
+        }
         break;
       case 'icecast':
         updateIcecast(msg.data);
@@ -2211,8 +2226,7 @@
     modeHint.textContent = hints[s.visualMode] || '';
   }
 
-  // Pill button clicks
-  var modeRestartTimer = null;
+  // Pill button clicks — seamless mode switch (no player restart needed)
   modePills.forEach(function(pill) {
     pill.addEventListener('click', function() {
       var newMode = pill.dataset.vmode;
@@ -2220,18 +2234,14 @@
       if (newMode === oldMode) return;
       broadcastState.visualMode = newMode;
 
-      var audioChanged = (oldMode === 'video-playlist') !== (newMode === 'video-playlist');
-      log('MODE pill ' + oldMode + ' → ' + newMode + ' audioChanged=' + audioChanged);
+      log('MODE pill ' + oldMode + ' → ' + newMode);
 
-      // Cancel any pending restart from previous mode switch
-      if (modeRestartTimer) { clearTimeout(modeRestartTimer); modeRestartTimer = null; }
-
-      // Show overlay for mode switches that restart ffmpeg (to/from video-playlist)
-      // Lock for 4s — covers the 3s wait + HLS reconnect time.
-      // MANIFEST_PARSED always bypasses the lock to hide overlay when stream is ready.
-      if (audioChanged && broadcastState.streaming) {
+      // Show overlay until mode actually applies (next clip boundary via WS 'video' event).
+      // Safety timer (20s) in showLoading prevents permanent stuck overlay.
+      if (broadcastState.streaming) {
+        pendingModeSwitch = true;
         var modeName = pill.querySelector('.bmode-pill-label').textContent;
-        showLoading('Switching to ' + modeName + '...', 'pill', 4000);
+        showLoading('Switching to ' + modeName + '...', 'pill', 30000);
       }
 
       fetch('/api/visual-mode', {
@@ -2243,12 +2253,6 @@
           updateBroadcastUI();
           loadActiveQueue();
           renderTrackSelector(queueSearch.value);
-          if (audioChanged && broadcastState.streaming) {
-            modeRestartTimer = setTimeout(function() {
-              modeRestartTimer = null;
-              restartPlayer('mode-switch');
-            }, 3000);
-          }
         })
         .catch(function(e) {
           showError('Mode change failed: ' + e);
