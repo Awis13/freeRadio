@@ -50,6 +50,8 @@ services:
     image: s23-streamer
     container_name: s23-streamer
     entrypoint: /scripts/stream_entry.sh
+    group_add:
+      - "105"
     environment:
       - OUTPUT_MODE=${OUTPUT_MODE:-hls}
       - RTMP_URL=${RTMP_URL:-}
@@ -83,6 +85,8 @@ services:
     image: linuxserver/ffmpeg:latest
     container_name: s23-transcoder
     entrypoint: /scripts/transcoder.sh
+    group_add:
+      - "105"
     volumes:
       - /dev/dri:/dev/dri
       - ./content/visuals:/visuals

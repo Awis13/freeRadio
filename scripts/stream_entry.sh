@@ -116,10 +116,10 @@ get_video_bitrate() {
   case "$preset" in
     low) echo "2000k" ;;
     medium) echo "4000k" ;;
-    kick) echo "8000k" ;;  # kick safe bitrate
-    standard) echo "8000k" ;;  # multi-platform standard
-    ultra|godmode) echo "12000k" ;;  # ultra/godmode super quality
-    *) echo "8000k" ;;  # high default
+    kick) echo "6000k" ;;  # kick safe bitrate
+    standard) echo "6000k" ;;  # multi-platform standard
+    ultra|godmode) echo "12000k" ;;  # ultra/godmode super quality (YouTube-only)
+    *) echo "6000k" ;;  # high default
   esac
 }
 

@@ -21,22 +21,22 @@ const PRESETS = {
     scale: '1920:1080'
   },
   standard: {
-    name: 'Standard (1080p 8Mbps)',
-    videoBitrate: '8000k',
+    name: 'Standard (1080p 6Mbps)',
+    videoBitrate: '6000k',
     audioBitrate: '192k',
     preset: 'veryfast',
     scale: '1920:1080'
   },
   kick: {
-    name: 'Kick Safe (1080p 8Mbps)',
-    videoBitrate: '8000k',
+    name: 'Kick Safe (1080p 6Mbps)',
+    videoBitrate: '6000k',
     audioBitrate: '192k',
     preset: 'veryfast',
     scale: '1920:1080'
   },
   high: {
-    name: 'High (1080p 8Mbps)',
-    videoBitrate: '8000k',
+    name: 'High (1080p 6Mbps)',
+    videoBitrate: '6000k',
     audioBitrate: '256k',
     preset: 'veryfast',
     scale: '1920:1080'

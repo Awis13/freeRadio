@@ -34,32 +34,32 @@ transcode_video() {
     local gop_size=$((fps_num * 2))
     log "  Source: ${fps_num}fps, GOP: ${gop_size} (2s keyframes)"
 
-    # Streaming-ready: нативный FPS, CBR 8Mbps, H.264 High
+    # Streaming-ready: нативный FPS, CBR 6Mbps, H.264 High
     # Выход готов к -c:v copy в стримере (0% CPU/GPU на вещание)
     if ffmpeg -y -hide_banner -loglevel error \
         -hwaccel qsv -hwaccel_output_format nv12 \
         -i "$input_file" \
         -vf "scale=1920:1080:force_original_aspect_ratio=decrease,pad=1920:1080:(ow-iw)/2:(oh-ih)/2:black,format=nv12" \
         -c:v h264_qsv -profile:v high -bf 0 \
-        -b:v 8000k -maxrate 8000k -minrate 8000k -bufsize 16000k \
+        -b:v 6000k -maxrate 6000k -minrate 6000k -bufsize 12000k \
         -g $gop_size -keyint_min $gop_size -sc_threshold 0 -flags +cgop \
         -an \
         -movflags +faststart \
         "$tmp_file" 2>> "$LOG_FILE"; then
         mv "$tmp_file" "$output_file"
-        log "  Done (QSV CBR 8M ${fps_num}fps): $output_file"
+        log "  Done (QSV CBR 6M ${fps_num}fps): $output_file"
     # Fallback: software encode
     elif ffmpeg -y -hide_banner -loglevel error \
         -i "$input_file" \
         -vf "scale=1920:1080:force_original_aspect_ratio=decrease,pad=1920:1080:(ow-iw)/2:(oh-ih)/2:black,format=yuv420p" \
         -c:v libx264 -profile:v high -preset veryfast -bf 0 \
-        -b:v 8000k -maxrate 8000k -minrate 8000k -bufsize 16000k \
+        -b:v 6000k -maxrate 6000k -minrate 6000k -bufsize 12000k \
         -g $gop_size -keyint_min $gop_size -sc_threshold 0 -flags +cgop \
         -an \
         -movflags +faststart \
         "$tmp_file" 2>> "$LOG_FILE"; then
         mv "$tmp_file" "$output_file"
-        log "  Done (software CBR 8M ${fps_num}fps): $output_file"
+        log "  Done (software CBR 6M ${fps_num}fps): $output_file"
     else
         log "  ERROR: Failed to transcode $filename"
         rm -f "$tmp_file"
