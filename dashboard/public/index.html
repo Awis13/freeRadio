@@ -29,11 +29,12 @@
         <!-- Player -->
         <div class="studio-player">
           <div class="panel player-wrap">
-            <video id="studio-player" controls autoplay playsinline muted></video>
-            <div class="player-overlay" id="player-overlay">
+            <video id="studio-player" autoplay playsinline muted></video>
+            <div class="player-overlay visible" id="player-overlay">
               <div class="player-overlay-spinner"></div>
-              <div class="player-overlay-text" id="player-overlay-text">Switching mode...</div>
+              <div class="player-overlay-text" id="player-overlay-text">Loading stream...</div>
             </div>
+            <button class="player-mute-btn" id="player-mute-btn" title="Unmute">&#128263;</button>
           </div>
         </div>
 

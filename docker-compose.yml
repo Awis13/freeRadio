@@ -125,6 +125,11 @@ services:
 
 volumes:
   hls-data:
+    driver: local
+    driver_opts:
+      type: tmpfs
+      device: tmpfs
+      o: size=256m
   shared-data:
 
 networks:

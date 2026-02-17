@@ -146,13 +146,83 @@
     return Math.floor(diff / 86400) + 'd ago';
   }
 
-  // --- HLS Player (single instance) ---
+  // --- HLS Player (live-only, no scrubbing) ---
   var hlsInstance = null;
+  var playerMuteBtn = document.getElementById('player-mute-btn');
+
+  // --- Overlay state machine ---
+  // showLoading(text, source, lockMs) — show overlay.
+  //   lockMs: minimum display time. During lock, only 'manifest' and 'safety' can hide.
+  //           timeupdate/canplay from old stream are blocked until lock expires.
+  // hideLoading(source) — hide overlay (respects lock for auto-sources).
+  var aliveTimer = null;    // 4s no-timeupdate → show "Loading stream..."
+  var safetyTimer = null;   // 20s max overlay duration
+  var hlsRetryTimer = null;
+  var overlayLockedUntil = 0;  // timestamp — auto-hide blocked until this time
+
+  function showLoading(text, source, lockMs) {
+    var overlay = document.getElementById('player-overlay');
+    var overlayText = document.getElementById('player-overlay-text');
+    if (text) overlayText.textContent = text;
+    overlay.classList.add('visible');
+    if (lockMs) overlayLockedUntil = Date.now() + lockMs;
+    log('OVR SHOW "' + text + '" src=' + (source || '?') + (lockMs ? ' lock=' + lockMs + 'ms' : ''));
+    // Safety net: never stuck > 20s
+    if (safetyTimer) clearTimeout(safetyTimer);
+    safetyTimer = setTimeout(function() {
+      safetyTimer = null;
+      log('OVR safety 20s expired');
+      overlayLockedUntil = 0;
+      hideLoading('safety');
+    }, 20000);
+  }
+
+  function hideLoading(source) {
+    // Auto-sources (timeupdate, canplay) respect the lock
+    if ((source === 'timeupdate' || source === 'canplay') && Date.now() < overlayLockedUntil) return;
+    var overlay = document.getElementById('player-overlay');
+    var wasVisible = overlay.classList.contains('visible');
+    overlay.classList.remove('visible');
+    if (wasVisible) log('OVR HIDE src=' + (source || '?'));
+    if (safetyTimer) { clearTimeout(safetyTimer); safetyTimer = null; }
+  }
+
+  function clearAllTimers(source) {
+    if (aliveTimer) { clearTimeout(aliveTimer); aliveTimer = null; }
+    if (safetyTimer) { clearTimeout(safetyTimer); safetyTimer = null; }
+    if (hlsRetryTimer) { clearTimeout(hlsRetryTimer); hlsRetryTimer = null; }
+  }
+
+  // timeupdate = video is receiving frames → stream alive → hide overlay (if not locked)
+  studioPlayer.addEventListener('timeupdate', function() {
+    if (aliveTimer) { clearTimeout(aliveTimer); aliveTimer = null; }
+    hideLoading('timeupdate');
+    aliveTimer = setTimeout(function() {
+      aliveTimer = null;
+      showLoading('Buffering...', 'alive-timeout');
+    }, 4000);
+  });
+
+  studioPlayer.addEventListener('canplay', function() {
+    hideLoading('canplay');
+  });
+
+  // No seeking handler needed — controls are disabled (pointer-events: none)
+  // Previously had a snap-to-live handler here, but it fought with HLS.js
+  // gap recovery (bufferSeekOverHole), creating an infinite loop every 100ms.
+
+  // Mute/unmute
+  playerMuteBtn.onclick = function() {
+    studioPlayer.muted = !studioPlayer.muted;
+    playerMuteBtn.innerHTML = studioPlayer.muted ? '&#128263;' : '&#128266;';
+    playerMuteBtn.title = studioPlayer.muted ? 'Unmute' : 'Mute';
+  };
+
+  var hlsSrc = '/hls/stream.m3u8';
+  var useNativeHls = false;
 
   function initPlayer() {
-    var src = '/hls/stream.m3u8';
-    log('init player src=' + src);
-
+    log('PLR init src=' + hlsSrc);
     var ua = navigator.userAgent || '';
     var vendor = navigator.vendor || '';
     var isIOS = /iPad|iPhone|iPod/.test(ua);
@@ -160,80 +230,94 @@
       /Safari\//.test(ua) &&
       !/Chrome\/|Chromium\/|Edg\/|OPR\//.test(ua);
 
-    if (isIOS || isSafari) {
-      log('mode=native-hls');
-      studioPlayer.src = src;
+    if (isIOS || isSafari || typeof Hls === 'undefined' || !Hls.isSupported()) {
+      log('PLR mode=native-hls');
+      useNativeHls = true;
+      studioPlayer.src = hlsSrc;
       studioPlayer.play().catch(function () {});
       return;
     }
+    log('PLR mode=hls.js v' + (Hls.version || '?'));
+    startHls('init');
+  }
 
-    if (typeof Hls === 'undefined') {
-      log('hls.js not loaded, falling back to native');
-      studioPlayer.src = src;
-      studioPlayer.play().catch(function () {});
-      return;
+  function startHls(source) {
+    log('HLS startHls src=' + (source || '?'));
+    if (hlsInstance) {
+      hlsInstance.destroy();
+      hlsInstance = null;
     }
-
-    if (!Hls.isSupported()) {
-      log('MSE not supported');
-      studioPlayer.src = src;
-      return;
-    }
-
-    log('mode=hls.js v' + (Hls.version || '?'));
 
     hlsInstance = new Hls({
       lowLatencyMode: false,
-      backBufferLength: 30,
+      backBufferLength: 0,
       enableWorker: true,
-      liveSyncDurationCount: 3,
-      liveMaxLatencyDurationCount: 10,
+      liveSyncDurationCount: 1,
+      liveMaxLatencyDurationCount: 3,
       liveDurationInfinity: true,
-      maxBufferLength: 20,
-      maxMaxBufferLength: 40
+      maxBufferLength: 8,
+      maxMaxBufferLength: 15
     });
 
+    var errorCount = 0;
+    var errorResetTimer = null;
+
     hlsInstance.on(Hls.Events.ERROR, function (_, data) {
-      var msg = 'hls:error ' + data.type + '/' + data.details + ' fatal=' + data.fatal;
-      log(msg);
       if (data.fatal) {
-        if (data.type === Hls.ErrorTypes.NETWORK_ERROR) {
-          log('hls: network error, retrying in 3s...');
-          setTimeout(function () { hlsInstance.startLoad(); }, 3000);
-        } else if (data.type === Hls.ErrorTypes.MEDIA_ERROR) {
-          log('hls: media error, recovering...');
-          hlsInstance.recoverMediaError();
-        }
+        log('HLS FATAL ' + data.details);
+        showLoading('Reconnecting...', 'hls-fatal');
+        hlsInstance.destroy();
+        hlsInstance = null;
+        if (hlsRetryTimer) clearTimeout(hlsRetryTimer);
+        hlsRetryTimer = setTimeout(function() {
+          hlsRetryTimer = null;
+          startHls('retry');
+        }, 1500);
+        return;
+      }
+      // Non-fatal errors: if too many in a short window, force restart
+      errorCount++;
+      if (!errorResetTimer) {
+        errorResetTimer = setTimeout(function() {
+          errorResetTimer = null;
+          if (errorCount > 15) {
+            log('HLS too many errors (' + errorCount + '), restarting');
+            restartPlayer('error-flood');
+          }
+          errorCount = 0;
+        }, 3000);
       }
     });
 
     hlsInstance.on(Hls.Events.MANIFEST_PARSED, function () {
-      log('hls: manifest parsed, starting playback');
-      studioPlayer.play().catch(function () {});
-      // Clear restart overlay when stream recovers
-      if (playerOverlay && playerOverlay.classList.contains('visible')) {
-        hidePlayerOverlay();
-      }
+      log('HLS MANIFEST_PARSED → play()');
+      hideLoading('manifest');
+      studioPlayer.play().catch(function (e) {
+        log('HLS play() rejected: ' + e + ', retry in 1s');
+        setTimeout(function() { studioPlayer.play().catch(function() {}); }, 1000);
+      });
     });
 
-    hlsInstance.on(Hls.Events.FRAG_LOADED, function (_, data) {
-      var sn = data.frag ? data.frag.sn : '?';
-      log('hls:frag sn=' + sn);
-    });
-
-    hlsInstance.loadSource(src);
+    hlsInstance.loadSource(hlsSrc);
     hlsInstance.attachMedia(studioPlayer);
   }
 
-  initPlayer();
-
-  // Clear restart overlay when video recovers (Safari/native HLS)
-  studioPlayer.addEventListener('playing', function() {
-    var overlay = document.getElementById('player-overlay');
-    if (overlay && overlay.classList.contains('visible')) {
-      overlay.classList.remove('visible');
+  // restartPlayer: clean restart — clears ALL timers, shows overlay during reconnect
+  function restartPlayer(source) {
+    log('PLR restart src=' + (source || '?'));
+    clearAllTimers('restart-' + (source || '?'));
+    // Show overlay during reconnection — locked so stale timeupdate can't hide it.
+    // 'manifest' source (MANIFEST_PARSED) always bypasses the lock.
+    showLoading('Loading stream...', 'restart', 3000);
+    if (useNativeHls) {
+      studioPlayer.src = hlsSrc;
+      studioPlayer.play().catch(function () {});
+    } else {
+      startHls('restart-' + (source || '?'));
     }
-  });
+  }
+
+  initPlayer();
 
   // Load file lists immediately
   loadFileList('music');
@@ -2030,8 +2114,6 @@
 
   // State: streaming=playing locally (HLS), broadcast=sending to RTMP platforms
   var broadcastState = { streaming: false, broadcast: false, standbyVisual: null, visualMode: 'visual-radio' };
-  var overlayTimeout = null;
-
   // Derived state: OFF (not streaming), PREVIEW (streaming, no broadcast), LIVE (streaming + broadcast)
   function getBroadcastPhase() {
     if (!broadcastState.streaming) return 'off';
@@ -2056,23 +2138,6 @@
       'video-playlist': 'Broadcasting: videos with own audio, no DJ.'
     }
   };
-
-  function showPlayerOverlay(text, duration) {
-    playerOverlayText.textContent = text;
-    playerOverlay.classList.add('visible');
-    if (overlayTimeout) clearTimeout(overlayTimeout);
-    if (duration) {
-      overlayTimeout = setTimeout(function() {
-        playerOverlay.classList.remove('visible');
-        overlayTimeout = null;
-      }, duration);
-    }
-  }
-
-  function hidePlayerOverlay() {
-    playerOverlay.classList.remove('visible');
-    if (overlayTimeout) { clearTimeout(overlayTimeout); overlayTimeout = null; }
-  }
 
   function updateBroadcastUI() {
     var phase = getBroadcastPhase();
@@ -2147,6 +2212,7 @@
   }
 
   // Pill button clicks
+  var modeRestartTimer = null;
   modePills.forEach(function(pill) {
     pill.addEventListener('click', function() {
       var newMode = pill.dataset.vmode;
@@ -2154,12 +2220,18 @@
       if (newMode === oldMode) return;
       broadcastState.visualMode = newMode;
 
-      // Switching to/from video-playlist restarts ffmpeg (~5-10s)
-      var needsRestart = broadcastState.streaming &&
-        ((oldMode === 'video-playlist') !== (newMode === 'video-playlist'));
+      var audioChanged = (oldMode === 'video-playlist') !== (newMode === 'video-playlist');
+      log('MODE pill ' + oldMode + ' → ' + newMode + ' audioChanged=' + audioChanged);
 
-      if (needsRestart) {
-        showPlayerOverlay('Switching to ' + pill.querySelector('.bmode-pill-label').textContent + '...\nStream is restarting, wait ~10 seconds.', 15000);
+      // Cancel any pending restart from previous mode switch
+      if (modeRestartTimer) { clearTimeout(modeRestartTimer); modeRestartTimer = null; }
+
+      // Show overlay for mode switches that restart ffmpeg (to/from video-playlist)
+      // Lock for 4s — covers the 3s wait + HLS reconnect time.
+      // MANIFEST_PARSED always bypasses the lock to hide overlay when stream is ready.
+      if (audioChanged && broadcastState.streaming) {
+        var modeName = pill.querySelector('.bmode-pill-label').textContent;
+        showLoading('Switching to ' + modeName + '...', 'pill', 4000);
       }
 
       fetch('/api/visual-mode', {
@@ -2171,19 +2243,24 @@
           updateBroadcastUI();
           loadActiveQueue();
           renderTrackSelector(queueSearch.value);
-          log('broadcast: mode → ' + newMode + (needsRestart ? ' (restarting stream)' : ''));
+          if (audioChanged && broadcastState.streaming) {
+            modeRestartTimer = setTimeout(function() {
+              modeRestartTimer = null;
+              restartPlayer('mode-switch');
+            }, 3000);
+          }
         })
         .catch(function(e) {
           showError('Mode change failed: ' + e);
-          hidePlayerOverlay();
         });
     });
   });
 
-  // PLAY: OFF → PREVIEW (start local HLS, no RTMP)
+  // PLAY: OFF → PREVIEW (cold start — no stream exists yet, show overlay)
   btnPlay.onclick = function() {
     btnPlay.disabled = true;
-    // Set mode to live (skip standby) and start streaming
+    log('MODE PLAY clicked');
+    showLoading('Starting stream...', 'play-btn');
     fetch('/api/stream/mode', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -2201,7 +2278,8 @@
         broadcastState.streaming = true;
         broadcastState.broadcast = false;
         updateBroadcastUI();
-        log('broadcast: PLAY → PREVIEW');
+        log('MODE PLAY → PREVIEW, restart in 3s');
+        setTimeout(function() { restartPlayer('play'); }, 3000);
       })
       .catch(function(e) { showError('Play failed: ' + e); btnPlay.disabled = false; });
   };
@@ -2209,7 +2287,7 @@
   // GO LIVE: PREVIEW → LIVE (enable RTMP broadcast)
   btnGoLive.onclick = function() {
     btnGoLive.disabled = true;
-    showPlayerOverlay('Going live...\nStream is restarting with RTMP outputs.', 15000);
+    showLoading('Going live...', 'go-live', 4000);
     fetch('/api/stream/control', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -2219,18 +2297,19 @@
       .then(function() {
         broadcastState.broadcast = true;
         updateBroadcastUI();
-        log('broadcast: GO LIVE → LIVE');
+        log('MODE GO LIVE → LIVE, restart in 3s');
+        setTimeout(function() { restartPlayer('go-live'); }, 3000);
       })
       .catch(function(e) {
         showError('Go live failed: ' + e);
         btnGoLive.disabled = false;
-        hidePlayerOverlay();
       });
   };
 
   // STOP: any → OFF
   btnStop.onclick = function() {
     btnStop.disabled = true;
+    log('MODE STOP clicked');
     fetch('/api/stream/control', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -2241,7 +2320,9 @@
         broadcastState.streaming = false;
         broadcastState.broadcast = false;
         updateBroadcastUI();
-        log('broadcast: STOPPED');
+        clearAllTimers('stop');
+        showLoading('Stream stopped', 'stop-btn');
+        log('MODE STOPPED');
       })
       .catch(function(e) { showError('Stop failed: ' + e); btnStop.disabled = false; });
   };

@@ -260,7 +260,7 @@ get_video_filter_with_scale() {
 }
 
 echo "[*] Waiting for icecast..."
-sleep 5
+sleep 2
 echo "[+] Go!"
 
 # Создаем FIFO
@@ -463,12 +463,20 @@ file_sig() {
 }
 
 current_stream_sig() {
-  echo "keys=$(file_sig /shared/stream_keys.enc);quality=$(file_sig /shared/stream_quality.json);audio=$(file_sig /shared/stream_audio.json);video=$(file_sig /shared/stream_video.json);control=$(file_sig /shared/stream_control.json);overlay=$(file_sig /shared/overlay_config.json);visual=$(file_sig /shared/active_visual_profile.json);filter=$(file_sig /shared/overlay_filter_string.txt);vmode=$(file_sig /shared/visual_mode.json)"
+  # Audio source mode: video-playlist uses file audio, others use Icecast.
+  # Only this distinction needs an ffmpeg restart, not every visual mode switch.
+  local amode="icecast"
+  local vm=$(get_visual_mode)
+  local sm=$(get_stream_mode)
+  if [ "$vm" = "video-playlist" ] && [ "$sm" = "live" ]; then
+    amode="file"
+  fi
+  echo "keys=$(file_sig /shared/stream_keys.enc);quality=$(file_sig /shared/stream_quality.json);audio=$(file_sig /shared/stream_audio.json);video=$(file_sig /shared/stream_video.json);control=$(file_sig /shared/stream_control.json);overlay=$(file_sig /shared/overlay_config.json);visual=$(file_sig /shared/active_visual_profile.json);filter=$(file_sig /shared/overlay_filter_string.txt);amode=$amode"
 }
 
 watch_stream_config() {
   while true; do
-    sleep 2
+    sleep 1
     [ -f "$APPLIED_SIG_FILE" ] || continue
 
     if pgrep -f "$MAIN_FFMPEG_MATCH" >/dev/null 2>&1 && ! is_streaming_enabled; then
