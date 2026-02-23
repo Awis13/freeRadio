@@ -62,7 +62,7 @@ harbor.http.register(port=7000, method="GET", "/metadata",
     resp.content_type("application/json")
     resp.header("access-control-allow-origin", "*")
     if dj_playing() then
-      resp.data('{"title": "#{current_title()}", "filename": "#{current_track()}"}')
+      resp.data('{"title": "#{json_str(current_title())}", "filename": "#{json_str(current_track())}"}')
     else
       resp.data('{"title": "", "filename": ""}')
     end
@@ -80,7 +80,7 @@ harbor.http.register(port=7000, method="POST", "/queue/push",
       queue_list := list.append(queue_list(), [path])
       resp.content_type("application/json")
       resp.header("access-control-allow-origin", "*")
-      resp.data('{"ok": true, "path": "#{path}"}')
+      resp.data('{"ok": true, "path": "#{json_str(path)}"}')
     else
       resp.content_type("application/json")
       resp.header("access-control-allow-origin", "*")
@@ -102,11 +102,11 @@ harbor.http.register(port=7000, method="POST", "/skip",
 harbor.http.register(port=7000, method="GET", "/queue",
   fun(_, resp) -> begin
     items = queue_list()
-    json_items = list.map(fun(p) -> '"#{p}"', items)
-    json_str = string.concat(separator=",", json_items)
+    json_items = list.map(fun(p) -> '"#{json_str(p)}"', items)
+    json_joined = string.concat(separator=",", json_items)
     resp.content_type("application/json")
     resp.header("access-control-allow-origin", "*")
-    resp.data("[#{json_str}]")
+    resp.data("[#{json_joined}]")
   end
 )
 
@@ -140,6 +140,18 @@ end
 def strip_ext(name) =
   string.replace(pattern = "\\.[^.]*$", fun(_) -> "", name)
 end
+# Produce JSON-safe escaped string (without outer quotes).
+# json.stringify wraps: test -> "test", he"llo -> "he\"llo"
+# string.sub strips the outer quotes.
+def json_str(s) =
+  j = json.stringify(s)
+  if string.length(j) >= 2 then
+    string.sub(j, start=1, length=string.length(j) - 2)
+  else
+    s
+  end
+end
+
 
 # ---- ANALYSIS DATA ----
 # Формат .analysis_map:
@@ -628,7 +640,7 @@ harbor.http.register(port=7000, method="POST", "/voice/push",
       voice_queue.push(request.create(path))
       resp.content_type("application/json")
       resp.header("access-control-allow-origin", "*")
-      resp.data('{"ok": true, "path": "#{path}"}')
+      resp.data('{"ok": true, "path": "#{json_str(path)}"}')
     else
       resp.content_type("application/json")
       resp.header("access-control-allow-origin", "*")
@@ -690,12 +702,12 @@ harbor.http.register(port=7000, method="POST", "/mixing/config",
       log("MIXING: mode changed to #{mode_str}")
       resp.content_type("application/json")
       resp.header("access-control-allow-origin", "*")
-      resp.data('{"ok": true, "mode": "#{mix_mode()}"}')
+      resp.data('{"ok": true, "mode": "#{json_str(mix_mode())}"}')
     else
       resp.content_type("application/json")
       resp.header("access-control-allow-origin", "*")
       resp.status_code(400)
-      resp.data('{"error": "invalid mode: #{mode_str}"}')
+      resp.data('{"error": "invalid mode: #{json_str(mode_str)}"}')
     end
   end
 )
