@@ -736,7 +736,8 @@
         deriveUiMode();
         updateBroadcastUI();
         updateMode(msg.data.outputMode);
-        lastAudioMsg = msg.data.audio; updateAudio(msg.data.audio);
+        lastAudioMsg = msg.data.audio;
+        updateAudio(msg.data.audio);
         updateIcecast(msg.data.icecast);
         updateFfmpeg(msg.data.ffmpeg);
         if (msg.data.rtmpHealth) updateRestreamStatus(msg.data.rtmpHealth);
@@ -3447,6 +3448,7 @@
       .then(function() {
         broadcastState.streamMode = 'standby';
         broadcastState.broadcast = false;
+        lastAudioMsg = null;
         studioAudioTrack.textContent = '--';
         studioBpm.textContent = '';
         trackStartedAt = 0;
