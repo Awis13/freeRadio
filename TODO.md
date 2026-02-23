@@ -2,6 +2,7 @@
 
 > Last reviewed: 2026-02-23
 > Tests: 231/231 green (65 pytest + 175 vitest), bats: 124
+> Phase: Dashboard ✅ complete
 
 ## In Progress
 
@@ -9,25 +10,7 @@
 
 ## Up Next
 
-### Бэкенд: рефакторинг server.js
-- 767 строк, 60+ endpoints в одном файле
-- Разбить на маршруты: auth, stream, dj, video-queue, settings
-- Покрыть тестами по мере рефакторинга
-
-## Backlog
-
-### Video playlist — smart rules: duration filter
-- Нужен `duration_map` (аналог `.bpm_map`) для видео файлов
-- Формат: `filename.mp4=23.5` (секунды)
-
-### Channel Strip DSP (Phase 2/3)
-- Gate, EQ, Compressor, Limiter — код написан в `radio_bpm.liq`
-- `strip_bypass = ref(true)` — нужно протестировать и снять bypass
-- **Файлы:** `configs/liquidsoap/radio_bpm.liq`, `dashboard/lib/channelStrip.js`
-
-### Talkover / Takeover modes
-- Radio mode работает, talkover/takeover нет
-- Нужно: talkover с ducking, takeover (OBS) с RTMP ingest
+<!-- Фаза дашборда закрыта. Следующая фаза определяется отдельно. -->
 
 ## Known Issues
 
