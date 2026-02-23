@@ -62,6 +62,7 @@
 
 ## Done
 
+- [x] Auto-play on boot: Liquidsoap autoplay (8с) + dashboard always-restore (fallback cue+resume). Boot 9с вместо 50-100с — PR #6, `b56a0c3` (2026-02-23)
 - [x] GUI плеера не обновляется после ARM→PLAY: lastAudioMsg cache+replay — PR #5, `68c1395` (2026-02-23)
 - [x] Cleanup batch: Object.assign whitelist, CSP header, VISUALS_DIR param, video playlist deactivation — `c47022e` (2026-02-23)
 - [x] XSS sanitization: escapeHtml() для 24 innerHTML injection points — PR #4, `4fdb312` (2026-02-23)
