@@ -81,11 +81,12 @@ function getNowInTimezone(timezone) {
 
 function getCurrentSlot() {
   const data = loadSchedule();
-  if (!data.settings || data.settings.enabled === false) {
+  const settings = data.settings || {};
+  if (!data.settings || settings.enabled === false) {
     return {
       slotId: null,
-      playlistId: data.settings.defaultPlaylistId || null,
-      videoPlaylistId: data.settings.defaultVideoPlaylistId || null,
+      playlistId: settings.defaultPlaylistId || null,
+      videoPlaylistId: settings.defaultVideoPlaylistId || null,
       label: null,
       source: 'disabled'
     };
@@ -95,8 +96,15 @@ function getCurrentSlot() {
   const { weekday, timeStr, dateStr } = getNowInTimezone(tz);
 
   // One-time events first (higher priority), sorted by priority (lower = higher)
+  // Для overnight events (end <= start) проверяем также вчерашнюю дату
+  const yesterday = prevDate(dateStr);
   const events = Object.values(data.events || {})
-    .filter(ev => ev.date === dateStr && isTimeInRange(timeStr, ev.startTime, ev.endTime))
+    .filter(ev => {
+      if (ev.date === dateStr && isTimeInRange(timeStr, ev.startTime, ev.endTime)) return true;
+      // Overnight event начавшийся вчера: end <= start, текущее время < end
+      if (ev.endTime <= ev.startTime && ev.date === yesterday && timeStr < ev.endTime) return true;
+      return false;
+    })
     .sort((a, b) => (a.priority || 10) - (b.priority || 10));
 
   if (events.length > 0) {
@@ -110,9 +118,12 @@ function getCurrentSlot() {
     };
   }
 
-  // Weekly slots
+  // Weekly slots (с учётом overnight: слот day=1 22:00-06:00 активен в day=2 03:00)
   for (const ws of Object.values(data.weekly || {})) {
-    if (ws.day === weekday && isTimeInRange(timeStr, ws.startTime, ws.endTime)) {
+    const isOvernight = ws.endTime <= ws.startTime;
+    const matchSameDay = ws.day === weekday && isTimeInRange(timeStr, ws.startTime, ws.endTime);
+    const matchNextDay = isOvernight && (ws.day + 1) % 7 === weekday && timeStr < ws.endTime;
+    if (matchSameDay || matchNextDay) {
       return {
         slotId: ws.id,
         playlistId: ws.playlistId,
@@ -191,6 +202,13 @@ function getNextSlot() {
       slotId: nearest.slot.id
     };
   }
+}
+
+// Предыдущая дата (YYYY-MM-DD) — для overnight event matching
+function prevDate(dateStr) {
+  const d = new Date(dateStr + 'T12:00:00');
+  d.setDate(d.getDate() - 1);
+  return d.toISOString().slice(0, 10);
 }
 
 function isTimeInRange(current, start, end) {
@@ -530,3 +548,9 @@ function createScheduleRouter() {
 }
 
 module.exports = { createScheduleRouter, startExecutor, onTrackChange, getCurrentSlot };
+
+// Экспорт внутренних функций для юнит-тестов
+module.exports._test = {
+  isTimeInRange, slotsOverlap, getNowInTimezone, getCurrentSlot,
+  getNextSlot, cleanupPastEvents, prevDate, loadSchedule, saveSchedule
+};
