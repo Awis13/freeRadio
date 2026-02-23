@@ -35,25 +35,38 @@ function saveSchedule(data) {
   fs.writeFileSync(SCHEDULE_FILE, JSON.stringify(data, null, 2));
 }
 
-// Получить текущее время в настроенной таймзоне
+// Получить текущее время в настроенной таймзоне (через Intl.DateTimeFormat)
 function getNowInTimezone(timezone) {
   try {
     const now = new Date();
-    const str = now.toLocaleString('en-US', { timeZone: timezone, hour12: false });
-    // Формат: "M/D/YYYY, HH:MM:SS"
-    const parts = str.split(', ');
-    const dateParts = parts[0].split('/');
-    const timeParts = parts[1].split(':');
-    const month = parseInt(dateParts[0]);
-    const day = parseInt(dateParts[1]);
-    const year = parseInt(dateParts[2]);
-    const hours = parseInt(timeParts[0]) % 24; // 24:00:00 → 0
-    const minutes = parseInt(timeParts[1]);
-    // День недели: нужен из оригинального now, но скорректированный по таймзоне
-    const tzDate = new Date(year, month - 1, day, hours, minutes);
+    const fmt = new Intl.DateTimeFormat('en-US', {
+      timeZone: timezone,
+      year: 'numeric', month: '2-digit', day: '2-digit',
+      hour: '2-digit', minute: '2-digit', hour12: false
+    });
+    const parts = {};
+    for (const p of fmt.formatToParts(now)) {
+      parts[p.type] = p.value;
+    }
+    const year = parseInt(parts.year);
+    const month = parseInt(parts.month);
+    const day = parseInt(parts.day);
+    // formatToParts возвращает '24' для полуночи — корректируем дату
+    let hours = parseInt(parts.hour);
+    const minutes = parseInt(parts.minute);
+    let correctedDay = day, correctedMonth = month, correctedYear = year;
+    if (hours === 24) {
+      // Полночь: дата в parts — предыдущий день, нужен следующий
+      const next = new Date(year, month - 1, day + 1);
+      correctedYear = next.getFullYear();
+      correctedMonth = next.getMonth() + 1;
+      correctedDay = next.getDate();
+      hours = 0;
+    }
+    const tzDate = new Date(correctedYear, correctedMonth - 1, correctedDay, hours, minutes);
     const weekday = (tzDate.getDay() + 6) % 7; // 0=Mon
     const timeStr = String(hours).padStart(2, '0') + ':' + String(minutes).padStart(2, '0');
-    const dateStr = year + '-' + String(month).padStart(2, '0') + '-' + String(day).padStart(2, '0');
+    const dateStr = correctedYear + '-' + String(correctedMonth).padStart(2, '0') + '-' + String(correctedDay).padStart(2, '0');
     return { weekday, timeStr, dateStr };
   } catch (e) {
     // Fallback на серверное время если таймзона невалидна
@@ -188,27 +201,48 @@ function isTimeInRange(current, start, end) {
   return current >= start && current < end;
 }
 
-// Проверка перекрытия слотов
+// Проверка перекрытия слотов (с учётом overnight cross-day)
 function slotsOverlap(a, b) {
-  if (a.day !== b.day) return false;
-
-  // Нормализуем overnight в минуты
-  function toRange(start, end) {
-    const s = parseInt(start.split(':')[0]) * 60 + parseInt(start.split(':')[1]);
-    let e = parseInt(end.split(':')[0]) * 60 + parseInt(end.split(':')[1]);
-    if (e <= s) e += 1440; // overnight
-    return { s, e };
+  function toMinutes(t) {
+    const p = t.split(':');
+    return parseInt(p[0]) * 60 + parseInt(p[1]);
+  }
+  function isOvernight(slot) {
+    return toMinutes(slot.endTime) <= toMinutes(slot.startTime);
+  }
+  function rangesOverlap(s1, e1, s2, e2) {
+    return s1 < e2 && s2 < e1;
   }
 
-  const ra = toRange(a.startTime, a.endTime);
-  const rb = toRange(b.startTime, b.endTime);
+  const as = toMinutes(a.startTime), ae = toMinutes(a.endTime);
+  const bs = toMinutes(b.startTime), be = toMinutes(b.endTime);
 
-  return ra.s < rb.e && rb.s < ra.e;
+  // Тот же день: оба слота начинаются в этот день
+  if (a.day === b.day) {
+    const aEnd = isOvernight(a) ? ae + 1440 : ae;
+    const bEnd = isOvernight(b) ? be + 1440 : be;
+    if (rangesOverlap(as, aEnd, bs, bEnd)) return true;
+  }
+
+  // A overnight и B на следующий день (утренняя часть A перекрывает B)
+  if (isOvernight(a) && (a.day + 1) % 7 === b.day) {
+    const bEnd = isOvernight(b) ? be + 1440 : be;
+    if (rangesOverlap(0, ae, bs, bEnd)) return true;
+  }
+
+  // B overnight и A на следующий день (утренняя часть B перекрывает A)
+  if (isOvernight(b) && (b.day + 1) % 7 === a.day) {
+    const aEnd = isOvernight(a) ? ae + 1440 : ae;
+    if (rangesOverlap(as, aEnd, 0, be)) return true;
+  }
+
+  return false;
 }
 
-// Очистка прошедших one-time events
+// Очистка прошедших one-time events (timezone-aware)
 function cleanupPastEvents(data) {
-  const today = new Date().toISOString().slice(0, 10);
+  const tz = (data.settings && data.settings.timezone) || 'Europe/Moscow';
+  const today = getNowInTimezone(tz).dateStr;
   let cleaned = 0;
   for (const [id, ev] of Object.entries(data.events || {})) {
     if (ev.date < today) {
@@ -357,11 +391,14 @@ function createScheduleRouter() {
     res.json(loadSchedule());
   });
 
-  // PUT /api/schedule — update settings
+  // PUT /api/schedule — update settings (whitelist)
   router.put('/', express.json(), (req, res) => {
     const data = loadSchedule();
     if (req.body.settings) {
-      data.settings = { ...data.settings, ...req.body.settings };
+      const ALLOWED_SETTINGS = ['timezone', 'defaultPlaylistId', 'defaultVideoPlaylistId', 'enabled'];
+      for (const key of ALLOWED_SETTINGS) {
+        if (req.body.settings[key] !== undefined) data.settings[key] = req.body.settings[key];
+      }
     }
     saveSchedule(data);
     res.json(data);
