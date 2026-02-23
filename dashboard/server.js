@@ -26,6 +26,7 @@ const { createPlaylistRouter } = require('./lib/playlist');
 const { createTrackRouter } = require('./lib/trackMeta');
 const { createVisualProfileRouter } = require('./lib/visualProfile');
 const { createOverlayRouter } = require('./lib/overlay');
+const { createVideoPlaylistRouter } = require('./lib/videoPlaylist');
 const { createScheduleRouter, startExecutor, onTrackChange } = require('./lib/schedule');
 const { createHistoryRouter } = require('./lib/history');
 const createVoiceRouter = require('./lib/voice');
@@ -272,6 +273,7 @@ app.use('/api/history', createHistoryRouter());
 
 // --- REST API: visual profiles ---
 app.use('/api/visual-profiles', createVisualProfileRouter(VISUALS_DIR));
+app.use('/api/video-playlists', createVideoPlaylistRouter(VISUALS_DIR));
 
 // --- REST API: overlays ---
 app.use('/api/overlays', createOverlayRouter());
