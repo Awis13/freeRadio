@@ -9,23 +9,16 @@
 
 ## Up Next
 
-### Path traversal sanitization (project-wide)
-- `videoPlaylist.js` уже защищён (`path.basename()` на все входные filenames)
-- Аналогичную защиту добавить в `playlist.js` (manual tracks) и `visualProfile.js` (video names из API body)
-- Паттерн: `const safe = path.basename(t); if (safe !== t) reject;`
-- Приоритет: Medium — auth защищает все endpoints, но defense-in-depth нужен
-- **Файлы:** `dashboard/lib/playlist.js:48`, `dashboard/lib/visualProfile.js:65`
+### XSS sanitization в innerHTML (app.js)
+- Playlist/profile names интерполируются в `innerHTML` без экранирования
+- За авторизацией, low risk, но defense-in-depth нужен
+- Добавить escape-функцию или использовать `textContent` вместо `innerHTML`
+- **Файл:** `dashboard/public/app.js` (модалки schedule, overlay layers)
 
-### Video playlist — schedule integration
-- Добавить поле `videoPlaylistId` в schedule slots (weekly + events) рядом с существующим `playlistId`
-- При смене слота в `executeScheduleTick()`: если `videoPlaylistId` задан, загрузить видео-плейлист как профиль или в очередь
-- Нужно: добавить поле в `schedule.js` (POST /weekly, POST /events), обновить executor, обновить UI schedule таба
-- **Файлы:** `dashboard/lib/schedule.js`, `dashboard/public/app.js` (schedule section ~line 1800)
-
-### `readdirSync` в async handler
-- `fs.readdirSync(/music/processed)` блокирует event loop
-- Заменить на `fs.promises.readdir` при рефакторе
-- **Файл:** `dashboard/server.js` ~line 314 (`/api/dj/cue`)
+### Object.assign whitelist в PUT /events/:id
+- `Object.assign(ev, req.body)` мержит произвольные ключи из request body в объект event
+- Нужен property whitelist: `{ date, startTime, endTime, playlistId, videoPlaylistId, label, priority }`
+- **Файл:** `dashboard/lib/schedule.js` ~line 288
 
 ## Backlog
 
@@ -34,6 +27,17 @@
 - Можно генерировать через `ffprobe -show_entries format=duration` при транскодировании в `transcoder.sh`
 - Формат: `filename.mp4=23.5` (секунды)
 - Пока smart playlists фильтруют по `namePattern` + `tags`, duration отложен
+
+### Video playlist deactivation при смене слота
+- Когда schedule slot заканчивается и следующий слот без `videoPlaylistId`, визуальный профиль остаётся
+- Консистентно с `visualProfile.js`, но можно добавить reset к дефолту
+- **Файл:** `dashboard/lib/schedule.js`, `executeScheduleTick()`
+
+### Hardcoded VISUALS_DIR в schedule.js
+- `/visuals` захардкожен в executor (`schedule.js` line 147)
+- `server.js` читает из `process.env.VISUALS_DIR`
+- Передать как параметр в `startExecutor()` для консистентности
+- **Файл:** `dashboard/lib/schedule.js`
 
 ### Channel Strip DSP (Phase 2/3)
 - Gate, EQ (3-band), Compressor, Limiter — код написан в `radio_bpm.liq`
@@ -71,6 +75,7 @@
 
 ## Done
 
+- [x] Up Next cleanup: path traversal, schedule video playlists, async readdir — PR #2, `226cc15` (2026-02-23)
 - [x] Видео-плейлисты (manual + smart) для визуалов — PR #1, `830a4ae` (2026-02-23)
 - [x] Cleanup: .bak/.broken файлы + .gitignore — `d75bc53`
 - [x] Boot auto-restore retry (dedicated HTTP agent, phase split) — `bad35e8`, `3277209`
