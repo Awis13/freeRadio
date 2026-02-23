@@ -22,6 +22,7 @@
 
 ## Done
 
+- [x] Pipeline audit: -bf 0 encode path + JSON injection protection — PR #10 (2026-02-23)
 - [x] Inline handlers → addEventListener, CSP compliance — PR #9 (2026-02-23)
 - [x] Overnight slot matching + 56 тестов schedule.js — PR #8 (2026-02-23)
 - [x] Schedule audit: timezone, overlap, priority, WS — PR #7 (2026-02-23)
