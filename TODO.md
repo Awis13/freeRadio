@@ -1,7 +1,7 @@
 # STUDIO 23 — TODO
 
 > Last reviewed: 2026-02-23
-> Tests: 172/172 green (65 pytest + 107 vitest), bats: 117 (not verified on server)
+> Tests: 172/172 green (65 pytest + 107 vitest), bats: 124 (verified locally)
 
 ## In Progress
 
@@ -55,12 +55,19 @@
 - **Файлы:** `dashboard/lib/visualMode.js`, `dashboard/lib/liveMode.js`, `dashboard/public/app.js` (~line 2600)
 
 ### Bash tests — проверить на сервере
-- 117 тестов для `stream_entry.sh` написаны (bats)
+- 124 теста для `stream_entry.sh` (bats) — PR #3 добавил 7 поведенческих тестов
 - `npx bats` может не работать в production контейнере
 - Нужно проверить и добавить в CI
 - **Файлы:** `tests/bash/`, `package.json`
 
 ## Known Issues
+
+### .env отсутствовал на сервере (решено)
+- .env удалён в коммите e727703, не восстановлен
+- Все ICECAST_*_PASSWORD были пустые → Liquidsoap 401 auth loop → нет аудио
+- **Решено:** .env создан с новыми паролями, .env.example добавлен
+- **Осталось:** STREAM_KEYS_SECRET заменён → сохранённые RTMP ключи нечитаемы, нужно ввести заново в дашборде
+- **Файлы:** .env, .env.example, .gitignore
 
 ### FFT Analyzer для Safari (WebKit bug 180696)
 - Server-side FFT в `dashboard/lib/fftAnalyzer.js` — disabled (`0a0760b`), скрыт на iOS
@@ -75,6 +82,8 @@
 
 ## Done
 
+- [x] Audio feeder: deadlock fix + Icecast retry backoff — PR #3, `691340d` (2026-02-23)
+- [x] Восстановлен .env, создан .env.example — Icecast auth починен (2026-02-23)
 - [x] Up Next cleanup: path traversal, schedule video playlists, async readdir — PR #2, `226cc15` (2026-02-23)
 - [x] Видео-плейлисты (manual + smart) для визуалов — PR #1, `830a4ae` (2026-02-23)
 - [x] Cleanup: .bak/.broken файлы + .gitignore — `d75bc53`
