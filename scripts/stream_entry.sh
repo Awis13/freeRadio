@@ -781,7 +781,7 @@ feed_audio() {
       audio_pid=$!
     else
       # Проверяем доступность Icecast /live перед подключением (избегаем retry-спам)
-      if ! curl -s -o /dev/null -w "%{http_code}" "$ICECAST_URL" 2>/dev/null | grep -q "200"; then
+      if ! curl -s --connect-timeout 2 --max-time 3 -o /dev/null -w "%{http_code}" "$ICECAST_URL" 2>/dev/null | grep -q "200"; then
         echo "[audio] Icecast not ready, retry in 2s"
         sleep 2
         continue
@@ -1070,9 +1070,6 @@ cleanup_stream() {
   pkill -9 -f "ffmpeg.*-f mpegts" 2>/dev/null || true
   pkill -9 -f "ffmpeg.*$FIFO" 2>/dev/null || true
   pkill -9 -f "ffmpeg.*-f flv" 2>/dev/null || true
-  # Убиваем дочерние ffmpeg, пишущие в AUDIO_FIFO (могут блокироваться на FIFO write)
-  pkill -9 -f "ffmpeg.*audiofifo" 2>/dev/null || true
-  pkill -9 -f "ffmpeg.*$AUDIO_FIFO" 2>/dev/null || true
   if [ -f /tmp/restream_manager.pid ]; then
     kill -9 $(cat /tmp/restream_manager.pid) 2>/dev/null || true
     rm -f /tmp/restream_manager.pid
@@ -1146,9 +1143,6 @@ stream() {
   fi
   pkill -9 -f "mbuffer" 2>/dev/null || true
   pkill -9 -f "ffmpeg.*-f mpegts" 2>/dev/null || true
-  # Убиваем дочерние ffmpeg audio feeder (могут блокироваться на FIFO write)
-  pkill -9 -f "ffmpeg.*audiofifo" 2>/dev/null || true
-  pkill -9 -f "ffmpeg.*$AUDIO_FIFO" 2>/dev/null || true
 
   # Ждём feeder с таймаутом (3с), чтобы не зависнуть на wait навечно
   local _t
@@ -1157,6 +1151,7 @@ stream() {
     sleep 0.5
   done
   kill -9 "$feeder_pid" 2>/dev/null || true
+  wait "$feeder_pid" 2>/dev/null || true
 
   # Ждём audio feeder с таймаутом (3с)
   for _t in $(seq 1 6); do
@@ -1164,6 +1159,7 @@ stream() {
     sleep 0.5
   done
   kill -9 "$audio_feeder_pid" 2>/dev/null || true
+  wait "$audio_feeder_pid" 2>/dev/null || true
 
   # Пересоздаём FIFO — разблокирует зависшие write
   rm -f "$FIFO" "$AUDIO_FIFO"
