@@ -1,7 +1,7 @@
 # STUDIO 23 — TODO
 
 > Last reviewed: 2026-02-23
-> Tests: 143/143 green (65 pytest + 78 vitest), bats: 117 (not verified on server)
+> Tests: 172/172 green (65 pytest + 107 vitest), bats: 117 (not verified on server)
 
 ## Active
 
@@ -41,12 +41,29 @@
 - Маловероятный сценарий (stop = полная остановка стрима)
 - Если проявится: добавить задержку как в ARMED path
 
+### Path traversal sanitization (project-wide)
+-  уже защищён ()
+- Аналогичную защиту добавить в  и 
+- Приоритет: Medium (auth защищает, но defense-in-depth)
+
+### Video playlist — schedule integration
+- Добавить  в schedule slots (weekly + events)
+- При смене слота: активировать видео-плейлист как профиль или загрузить в очередь
+- Приоритет: Medium
+
+### Video playlist — smart rules: duration filter
+- Нужен duration_map (аналог bpm_map) для видео
+- Можно генерировать через ffprobe при транскодировании
+- Пока smart playlists фильтруют по namePattern + tags
+
 ### Bash tests — проверить на сервере
 - 117 тестов для `stream_entry.sh` написаны (bats)
 - `npx bats` может не работать в production контейнере
 - Нужно проверить и добавить в CI
 
 ## Done (recent)
+
+- [x] Видео-плейлисты (manual + smart) для визуалов — PR #1, 
 
 - [x] Boot auto-restore retry (dedicated HTTP agent, phase split) — `bad35e8`, `3277209`
 - [x] ARMED→PLAY race conditions (btn disable, state in .then, rollback) — `3277209`
