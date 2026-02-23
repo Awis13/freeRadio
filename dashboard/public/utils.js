@@ -162,3 +162,22 @@ export function uniquePlatformName(base, existingNames) {
   }
   return base + ' ' + Date.now();
 }
+
+// ---------------------------------------------------------------------------
+// XSS-защита
+// ---------------------------------------------------------------------------
+
+/**
+ * Экранирование HTML-спецсимволов для безопасной вставки в innerHTML.
+ * @param {*} str
+ * @returns {*} — экранированная строка, либо исходное значение если не строка
+ */
+export function escapeHtml(str) {
+  if (typeof str !== 'string') return str;
+  return str
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#039;');
+}
