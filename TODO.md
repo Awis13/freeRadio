@@ -5,29 +5,13 @@
 
 ## In Progress
 
-### Schedule audit — баги и улучшения
-- Аудит выявил 5 багов и 7 недоработок в планировщике
-- **Баги:**
-  1. Timezone сохраняется, но не используется — слоты работают по серверному UTC
-  2. Executor пушит `/music/track` вместо `/music/processed/track` (неправильные пути)
-  3. `Europe/Moscow` — дефолт в коде, но нет в HTML-селекторе; `Europe/Berlin` задублирован
-  4. Нет валидации перекрытия weekly-слотов (непредсказуемый результат)
-  5. `priority` у events хранится, но не используется при выборе
-- **Недоработки:**
-  6. Нет PUT для weekly-слотов (только create+delete)
-  7. `getNextSlot()` игнорирует one-time events
-  8. Past events никогда не чистятся
-  9. Нет WebSocket notification при смене слота
-  10. Refill рандомный без дедупликации (может повторить трек)
-  11. Резкий переход при смене слота (clearQueue+skip)
-  12. Нет default video playlist
-- **Файлы:** `dashboard/lib/schedule.js`, `dashboard/public/app.js:1700-1950`, `dashboard/public/index.html:525-700`
+<!-- Nothing currently in progress -->
 
 ## Up Next
 
 ### Schedule — тесты
 - Ноль тестов на schedule.js
-- Нужны юнит-тесты: isTimeInRange, getCurrentSlot, getNextSlot, executeScheduleTick
+- Нужны юнит-тесты: isTimeInRange, getCurrentSlot, getNextSlot, slotsOverlap, getNowInTimezone
 - **Файлы:** `dashboard/lib/schedule.js`, `tests/`
 
 ## Backlog
@@ -48,11 +32,16 @@
 - Нужно: полная реализация talkover с ducking, takeover (OBS) с RTMP ingest
 - **Файлы:** `dashboard/lib/visualMode.js`, `dashboard/lib/liveMode.js`, `dashboard/public/app.js`
 
+### Schedule — overnight slot matching (known limitation)
+- Weekly slot day=1 22:00-06:00 не матчится на day=2 в 03:00 (getCurrentSlot)
+- isTimeInRange работает, но `ws.day === weekday` фейлит на следующий календарный день
+- Аналогично для overnight events: `ev.date === dateStr` фейлит
+- Нужно: проверять (day+1)%7 для overnight слотов
+
 ## Known Issues
 
 ### FFT Analyzer для Safari (WebKit bug 180696)
 - Server-side FFT disabled, скрыт на iOS
-- Safari не поддерживает `createMediaElementSource()` с HLS
 - Ждём фикса от Apple
 
 ### stop → cue → resume: теоретический race condition
@@ -64,6 +53,7 @@
 
 ## Done
 
+- [x] Schedule audit: timezone, processed paths, overlap validation, event priority, WS broadcast, Fisher-Yates refill, settings whitelist, midnight fix, cross-day overnight overlap — PR #7, `5b01a91` (2026-02-23)
 - [x] Auto-play on boot — PR #6 (2026-02-23)
 - [x] GUI плеера после ARM→PLAY — PR #5 (2026-02-23)
 - [x] Cleanup batch: whitelist, CSP, VISUALS_DIR, deactivation — `c47022e` (2026-02-23)
