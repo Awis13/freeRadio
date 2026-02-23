@@ -3,12 +3,12 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>SYSTEM 23</title>
-  <link rel="stylesheet" href="/style.css" />
+  <title>STUDIO 23</title>
+  <link rel="stylesheet" href="/style.css?v=71" />
 </head>
 <body>
   <header>
-    <div class="tag active">SYSTEM 23</div>
+    <div class="tag active">STUDIO 23</div>
     <div class="tag" id="mode-tag">HLS</div>
     <nav class="tabs">
       <button class="tab-btn active" data-tab="studio">Studio</button>
@@ -17,6 +17,7 @@
       <button class="tab-btn" data-tab="visuals">Video</button>
       <button class="tab-btn" data-tab="analytics">Analytics</button>
     </nav>
+    <button class="header-theme-btn" id="ui-theme-btn" title="Change color theme">GRN</button>
     <div id="uptime"></div>
   </header>
 
@@ -26,12 +27,61 @@
   <div id="tab-studio" class="tab-content active">
     <div class="studio-layout">
       <div class="studio-main">
+        <!-- Mode Selector Bar -->
+        <div class="mode-selector-bar" id="mode-selector-bar">
+          <div class="mode-card mode-radio active" data-mode="radio">
+            <div class="mode-card-header">
+              <span class="mode-card-icon">&#9654;</span>
+              <div>
+                <span class="mode-card-title">RADIO ONLY</span>
+                <span class="mode-card-desc">24/7 music stream</span>
+              </div>
+            </div>
+            <div class="mode-sub-pills">
+              <button class="mode-sub-pill active" data-submode="visual-radio">Visual Radio</button>
+              <button class="mode-sub-pill" data-submode="video-playlist">Video Playlist</button>
+            </div>
+          </div>
+          <!-- PHASE 2: Talk Over (voice + music) — скрыто до Phase 2
+          <div class="mode-card mode-talkover" data-mode="talkover">
+            <div class="mode-card-header">
+              <span class="mode-card-icon">&#127908;</span>
+              <div>
+                <span class="mode-card-title">TALK OVER</span>
+                <span class="mode-card-desc">Voice + music</span>
+              </div>
+            </div>
+            <div class="mode-sub-pills">
+              <button class="mode-sub-pill active" data-submode="browser-mic">Mic</button>
+              <button class="mode-sub-pill" data-submode="obs">OBS</button>
+            </div>
+          </div>
+          -->
+          <!-- PHASE 3: Full Takeover (OBS replaces everything) — скрыто до Phase 3
+          <div class="mode-card mode-takeover" data-mode="takeover">
+            <div class="mode-card-header">
+              <span class="mode-card-icon">&#127909;</span>
+              <div>
+                <span class="mode-card-title">FULL TAKEOVER</span>
+                <span class="mode-card-desc">OBS replaces everything</span>
+              </div>
+            </div>
+            <div class="mode-sub-pills">
+              <label class="mode-afk-label">AFK</label>
+              <select class="mode-afk-select" id="takeover-afk-fallback">
+                <option value="visual-radio">Visual Radio</option>
+                <option value="video-playlist">Video Playlist</option>
+              </select>
+            </div>
+          </div>
+          -->
+        </div>
+
         <!-- Player -->
         <div class="studio-player">
           <div class="panel player-wrap">
-            <video id="studio-player" autoplay playsinline muted></video>
-            <canvas id="static-noise-canvas" class="static-noise-canvas"></canvas>
-            <div class="crt-scanlines" id="crt-scanlines"></div>
+            <video id="studio-player" autoplay playsinline muted crossorigin="anonymous" disableRemotePlayback></video>
+<div id="standby-overlay" class="standby-overlay"></div>
             <div class="channel-flash" id="channel-flash"></div>
             <div class="player-overlay visible" id="player-overlay">
               <div class="player-overlay-spinner"></div>
@@ -41,50 +91,343 @@
           </div>
         </div>
 
-        <!-- Transport Bar -->
-        <div class="studio-transport">
-          <div class="transport-now-playing">
-            <span class="transport-track" id="studio-audio-track">--</span>
-            <span class="transport-bpm" id="studio-bpm"></span>
+        <!-- CRT Analyzer -->
+        <div class="analyzer-wrap" id="analyzer-wrap">
+          <div class="analyzer-header">
+            <div class="analyzer-modes">
+              <button class="az-mode active" data-azmode="spectrum">Spectrum</button>
+              <button class="az-mode" data-azmode="spectrogram">Spectrogram</button>
+              <button class="az-mode" data-azmode="scope">Scope</button>
+              <button class="az-mode" data-azmode="levels">Levels</button>
+            </div>
+            <div class="analyzer-info" id="analyzer-info">CLICK TO ACTIVATE</div>
+            <div class="az-sync" id="az-sync" style="display:none"><button class="az-sync-btn" id="az-sync-minus" title="Earlier">−</button><span class="az-sync-label" id="az-sync-label">0.0s</span><button class="az-sync-btn" id="az-sync-plus" title="Later">+</button></div>
+            <button class="az-toggle" id="az-toggle" title="Toggle analyzer">ON</button>
           </div>
-          <div class="transport-controls">
-            <span class="mode-tag off" id="broadcast-mode-tag">OFF</span>
-            <button class="btn-broadcast btn-play" id="btn-play">PLAY</button>
-            <button class="btn-broadcast btn-golive" id="btn-golive" disabled>GO LIVE</button>
-            <button class="btn-broadcast btn-stop" id="btn-stop" disabled>STOP</button>
-            <button class="btn-skip-main" id="skip-btn" title="Skip to next track (Space)">SKIP</button>
+          <div class="analyzer-crt" id="analyzer-crt">
+            <canvas id="analyzer-canvas"></canvas>
+            <div class="analyzer-scanlines"></div>
           </div>
         </div>
 
-        <!-- Broadcast Mode Selector -->
-        <div class="broadcast-mode-bar">
-          <div class="broadcast-mode-pills">
-            <button class="bmode-pill active" data-vmode="visual-radio" id="pill-visual-radio">
-              <span class="bmode-pill-icon">&#9654;&#9654;</span>
-              <span class="bmode-pill-label">Visual Radio</span>
-              <span class="bmode-pill-desc">Shuffled videos + DJ music</span>
-            </button>
-            <button class="bmode-pill" data-vmode="radio" id="pill-radio">
-              <span class="bmode-pill-icon">&#9654;</span>
-              <span class="bmode-pill-label">Radio</span>
-              <span class="bmode-pill-desc">One video on loop + DJ music</span>
-            </button>
-            <button class="bmode-pill" data-vmode="video-playlist" id="pill-video-playlist">
-              <span class="bmode-pill-icon">&#9199;</span>
-              <span class="bmode-pill-label">Video Playlist</span>
-              <span class="bmode-pill-desc">Videos with own audio, no DJ</span>
-            </button>
+        <!-- Transport -->
+        <div class="studio-transport">
+          <div class="transport-info">
+            <span class="mode-tag off" id="broadcast-mode-tag">OFF</span>
+            <span class="transport-track" id="studio-audio-track">--</span>
+            <span class="transport-bpm" id="studio-bpm"></span>
           </div>
-          <div class="broadcast-mode-options" id="broadcast-mode-options">
-            <div class="bmode-option-row" id="standby-visual-wrapper">
-              <label>Video:</label>
-              <select id="standby-visual-select">
-                <option value="">-- select video --</option>
+          <div class="transport-progress">
+            <span class="transport-time" id="transport-elapsed">0:00</span>
+            <div class="transport-bar">
+              <div class="transport-bar-fill" id="transport-bar-fill"></div>
+              <div class="transport-cue" id="transport-cue">
+                <span class="transport-cue-label">MIX</span>
+              </div>
+            </div>
+            <span class="transport-time" id="transport-duration">0:00</span>
+          </div>
+          <div class="transport-controls">
+            <button class="btn-broadcast btn-arm" id="btn-arm">ARM</button>
+            <button class="btn-broadcast btn-play" id="btn-play">PLAY</button>
+            <button class="btn-broadcast btn-stop" id="btn-stop" disabled>STOP</button>
+            <button class="btn-broadcast btn-skip" id="skip-btn" title="Skip to next track (Space)">SKIP</button>
+            <span class="transport-spacer"></span>
+            <button class="btn-broadcast btn-golive" id="btn-broadcast">BROADCAST</button>
+          </div>
+          <div class="transport-bottom">
+            <div class="transport-mix-mode" id="transport-mix-mode">
+              <button class="mix-pill active" data-mixmode="smart">Smart</button>
+              <button class="mix-pill" data-mixmode="cut">Cut</button>
+              <button class="mix-pill" data-mixmode="crossfade">Crossfade</button>
+            </div>
+          </div>
+        </div>
+
+        <!-- PHASE 2: Monitor Mixer — скрыто до Phase 2
+<div class="monitor-mixer" id="monitor-mixer">
+          <div class="mm-header">
+            <span class="mm-title">MONITOR MIXER</span>
+            <span class="mm-status-badge" id="mm-status-badge">OFF</span>
+          </div>
+          <div class="mm-body">
+            [* Устройства *]
+            <div class="mm-row mm-devices-row">
+              <div class="mm-device-group">
+                <label>Input</label>
+                <select id="mic-input-select"><option value="">Default</option></select>
+              </div>
+              <div class="mm-device-group">
+                <label>Output</label>
+                <select id="mic-output-select"><option value="">Default</option></select>
+              </div>
+            </div>
+            [* MIC channel strip *]
+            <div class="mm-channel" id="mm-ch-mic">
+              <button class="mm-ch-btn mm-mic-btn" id="mm-mic-btn">MIC ON</button>
+              <div class="mm-meter-wrap"><canvas id="mm-mic-meter" width="200" height="16"></canvas></div>
+              <input type="range" class="mm-fader" id="mm-mic-fader" min="0" max="200" value="100">
+              <span class="mm-fader-val" id="mm-mic-val">100%</span>
+            </div>
+            [* MUSIC channel strip *]
+            <div class="mm-channel" id="mm-ch-music">
+              <span class="mm-ch-label">MUSIC</span>
+              <div class="mm-meter-wrap"><canvas id="mm-music-meter" width="200" height="16"></canvas></div>
+              <input type="range" class="mm-fader" id="mm-music-fader" min="0" max="100" value="100">
+              <span class="mm-fader-val" id="mm-music-val">100%</span>
+            </div>
+            [* MASTER channel strip *]
+            <div class="mm-channel" id="mm-ch-master">
+              <button class="mm-ch-btn mm-mon-btn" id="mm-mon-btn" title="Monitor in headphones">MON</button>
+              <div class="mm-meter-wrap"><canvas id="mm-master-meter" width="200" height="16"></canvas></div>
+              <input type="range" class="mm-fader" id="mm-master-fader" min="0" max="100" value="100">
+              <span class="mm-fader-val" id="mm-master-val">100%</span>
+            </div>
+            [* Duck controls *]
+            <div class="mm-row mm-duck-row">
+              <button class="mm-duck-btn" id="mm-duck-btn">DUCK</button>
+              <label>Amount</label>
+              <input type="range" class="mm-fader mm-duck-fader" id="mm-duck-amount" min="0" max="30" value="12">
+              <span class="mm-fader-val" id="mm-duck-val">-12dB</span>
+              <label>Speed</label>
+              <select id="mm-duck-speed">
+                <option value="fast">Fast</option>
+                <option value="medium" selected>Medium</option>
+                <option value="slow">Slow</option>
               </select>
             </div>
           </div>
-          <div class="broadcast-mode-hint" id="transport-mode-hint"></div>
         </div>
+        -->
+
+        <!-- PHASE 3: Live Mode Bar — скрыто до Phase 3
+<div class="live-mode-bar" id="live-mode-bar" style="display:none">
+          <div class="live-mode-bar-header">
+            <span class="live-mode-bar-title">LIVE MODE</span>
+            <span class="live-status-badge offline" id="live-status-badge">OFFLINE</span>
+          </div>
+          <div class="live-mode-bar-body">
+            <div class="live-mode-bar-row">
+              <label>Source</label>
+              <div class="live-source-pills">
+                <button class="live-source-pill active" data-source="obs" id="live-src-obs">OBS</button>
+                <button class="live-source-pill" data-source="browser-mic" id="live-src-mic">Mic</button>
+              </div>
+              <span class="live-mode-bar-sep"></span>
+              <label>AFK</label>
+              <select id="live-afk-fallback">
+                <option value="visual-radio">Visual Radio</option>
+                <option value="video-playlist">Video Playlist</option>
+              </select>
+            </div>
+            <div class="live-mode-bar-row">
+              <label>RTMP</label>
+              <input type="text" class="live-ingest-input" id="live-ingest-url" readonly value="rtmp://localhost:1935/ingest/">
+              <button class="btn-small" id="live-copy-url" title="Copy URL">Copy</button>
+              <span class="live-mode-bar-sep"></span>
+              <label>Key</label>
+              <input type="password" class="live-ingest-input" id="live-ingest-key" readonly>
+              <button class="btn-small" id="live-show-key" title="Show/hide key">Show</button>
+              <button class="btn-small" id="live-copy-key" title="Copy key">Copy</button>
+              <button class="btn-small btn-danger" id="live-regen-key" title="Regenerate key">New</button>
+            </div>
+          </div>
+        </div>
+        -->
+
+        <!-- Push-to-Talk -->
+        <div class="ptt-bar" id="ptt-bar">
+          <div class="ptt-left">
+            <span class="ptt-icon" id="ptt-icon">&#127908;</span>
+            <span class="ptt-label" id="ptt-label">Push to Talk</span>
+            <span class="ptt-timer" id="ptt-timer"></span>
+          </div>
+          <canvas class="ptt-waveform" id="ptt-waveform" width="200" height="32"></canvas>
+          <div class="ptt-right">
+            <div class="ptt-rec-wrap" id="ptt-rec-wrap">
+              <button class="ptt-rec-btn" id="ptt-rec-btn" title="Hold or tap to record">
+                <span class="ptt-rec-dot"></span>
+              </button>
+            </div>
+            <div class="ptt-preview" id="ptt-preview">
+              <button class="btn-broadcast ptt-play-btn" id="ptt-play-btn" title="Preview">&#9654;</button>
+              <button class="btn-broadcast btn-stop ptt-discard-btn" id="ptt-discard-btn">Discard</button>
+              <button class="btn-broadcast btn-play ptt-send-btn" id="ptt-send-btn">Send to Air</button>
+            </div>
+            <button class="ptt-settings-btn" id="ptt-settings-btn" title="Voice settings">&#9881;</button>
+          </div>
+        </div>
+        <div class="ptt-config" id="ptt-config" style="display:none">
+          <div class="ptt-config-row">
+            <label class="ptt-config-label">Music during voice</label>
+            <input type="range" id="ptt-duck-slider" min="0" max="100" value="10" class="ptt-slider">
+            <span class="ptt-config-value" id="ptt-duck-value">10%</span>
+          </div>
+          <div class="ptt-config-row">
+            <label class="ptt-config-label">Voice boost</label>
+            <input type="range" id="ptt-gain-slider" min="10" max="100" value="50" class="ptt-slider">
+            <span class="ptt-config-value" id="ptt-gain-value">5.0x</span>
+          </div>
+        </div>
+
+        <!-- PHASE 2 — Channel Strip
+        <!~~ Channel Strip (horizontal grid, main area) ~~>
+        <div class="panel panel-collapsible collapsed" id="channel-strip-panel">
+          <div class="panel-head panel-toggle channel-strip-toolbar">
+            <span>Channel Strip</span>
+            <select id="strip-preset" onclick="event.stopPropagation()">
+              <option value="">Custom</option>
+              <option value="bypass">Bypass</option>
+              <option value="clean_voice">Clean Voice</option>
+              <option value="warm_radio">Warm Radio</option>
+              <option value="podcast">Podcast</option>
+              <option value="lo_fi">Lo-Fi</option>
+            </select>
+            <label class="checkbox-label strip-bypass-label" onclick="event.stopPropagation()">
+              <input type="checkbox" id="strip-bypass" checked>
+              <span>Bypass</span>
+            </label>
+            <span id="strip-bypass-badge" class="strip-badge bypass">BYPASS</span>
+            <div class="strip-compact-meters" id="strip-compact-meters">
+              <span id="strip-compact-gate" class="strip-led"></span>
+              <span id="strip-compact-gr" class="strip-compact-gr-text">0 dB</span>
+            </div>
+            <span class="collapse-arrow"></span>
+          </div>
+          <div class="panel-body">
+            <div class="channel-strip" id="channel-strip-grid">
+              <!~~ Gate ~~>
+              <div class="strip-col">
+                <div class="strip-col-head">Gate</div>
+                <div class="strip-knob">
+                  <label>Threshold</label>
+                  <input type="range" id="strip-gate-threshold" min="-80" max="0" step="1" value="-30">
+                  <span class="strip-val" id="strip-gate-threshold-val">-30 dB</span>
+                </div>
+                <div class="strip-knob">
+                  <label>Attack</label>
+                  <input type="range" id="strip-gate-attack" min="1" max="500" step="1" value="10">
+                  <span class="strip-val" id="strip-gate-attack-val">10 ms</span>
+                </div>
+                <div class="strip-knob">
+                  <label>Release</label>
+                  <input type="range" id="strip-gate-release" min="10" max="5000" step="10" value="2000">
+                  <span class="strip-val" id="strip-gate-release-val">2000 ms</span>
+                </div>
+              </div>
+              <!~~ EQ ~~>
+              <div class="strip-col strip-col-eq">
+                <div class="strip-col-head">EQ</div>
+                <div class="strip-knob-row">
+                  <div class="strip-knob">
+                    <label>Lo F</label>
+                    <input type="range" id="strip-eq-low-freq" min="20" max="500" step="1" value="200">
+                    <span class="strip-val" id="strip-eq-low-freq-val">200 Hz</span>
+                  </div>
+                  <div class="strip-knob">
+                    <label>Mid F</label>
+                    <input type="range" id="strip-eq-mid-freq" min="200" max="8000" step="10" value="1000">
+                    <span class="strip-val" id="strip-eq-mid-freq-val">1000 Hz</span>
+                  </div>
+                </div>
+                <div class="strip-knob-row">
+                  <div class="strip-knob">
+                    <label>Lo G</label>
+                    <input type="range" id="strip-eq-low-slope" min="-12" max="12" step="0.5" value="0">
+                    <span class="strip-val" id="strip-eq-low-slope-val">0 dB</span>
+                  </div>
+                  <div class="strip-knob">
+                    <label>Mid G</label>
+                    <input type="range" id="strip-eq-mid-gain" min="-12" max="12" step="0.5" value="0">
+                    <span class="strip-val" id="strip-eq-mid-gain-val">0 dB</span>
+                  </div>
+                </div>
+                <div class="strip-knob-row">
+                  <div class="strip-knob">
+                    <label>Hi F</label>
+                    <input type="range" id="strip-eq-high-freq" min="2000" max="16000" step="100" value="6000">
+                    <span class="strip-val" id="strip-eq-high-freq-val">6000 Hz</span>
+                  </div>
+                  <div class="strip-knob">
+                    <label>Hi G</label>
+                    <input type="range" id="strip-eq-high-slope" min="-12" max="12" step="0.5" value="0">
+                    <span class="strip-val" id="strip-eq-high-slope-val">0 dB</span>
+                  </div>
+                </div>
+                <div class="strip-knob-row">
+                  <div class="strip-knob">
+                    <label>Mid Q</label>
+                    <input type="range" id="strip-eq-mid-q" min="0.1" max="10" step="0.1" value="1">
+                    <span class="strip-val" id="strip-eq-mid-q-val">1.0</span>
+                  </div>
+                </div>
+              </div>
+              <!~~ Compressor ~~>
+              <div class="strip-col">
+                <div class="strip-col-head">Compressor</div>
+                <div class="strip-knob">
+                  <label>Threshold</label>
+                  <input type="range" id="strip-comp-threshold" min="-60" max="0" step="1" value="-10">
+                  <span class="strip-val" id="strip-comp-threshold-val">-10 dB</span>
+                </div>
+                <div class="strip-knob">
+                  <label>Ratio</label>
+                  <input type="range" id="strip-comp-ratio" min="1" max="20" step="0.5" value="2">
+                  <span class="strip-val" id="strip-comp-ratio-val">2:1</span>
+                </div>
+                <div class="strip-knob">
+                  <label>Attack</label>
+                  <input type="range" id="strip-comp-attack" min="1" max="500" step="1" value="50">
+                  <span class="strip-val" id="strip-comp-attack-val">50 ms</span>
+                </div>
+                <div class="strip-knob">
+                  <label>Release</label>
+                  <input type="range" id="strip-comp-release" min="10" max="5000" step="10" value="400">
+                  <span class="strip-val" id="strip-comp-release-val">400 ms</span>
+                </div>
+                <div class="strip-knob">
+                  <label>Makeup</label>
+                  <input type="range" id="strip-comp-makeup" min="-12" max="24" step="0.5" value="0">
+                  <span class="strip-val" id="strip-comp-makeup-val">0 dB</span>
+                </div>
+              </div>
+              <!~~ Limiter ~~>
+              <div class="strip-col">
+                <div class="strip-col-head">Limiter</div>
+                <div class="strip-knob">
+                  <label>Threshold</label>
+                  <input type="range" id="strip-lim-threshold" min="-20" max="0" step="0.5" value="-2">
+                  <span class="strip-val" id="strip-lim-threshold-val">-2 dB</span>
+                </div>
+              </div>
+              <!~~ Output ~~>
+              <div class="strip-col">
+                <div class="strip-col-head">Output</div>
+                <div class="strip-knob">
+                  <label>Gain</label>
+                  <input type="range" id="strip-output-gain" min="0" max="4" step="0.05" value="1">
+                  <span class="strip-val" id="strip-output-gain-val">0.0 dB</span>
+                </div>
+              </div>
+              <!~~ Meters ~~>
+              <div class="strip-col strip-meters-col">
+                <div class="strip-col-head">Meters</div>
+                <div class="strip-meter-item">
+                  <span id="strip-gate-led" class="strip-led-large"></span>
+                  <span class="strip-meter-label">GATE</span>
+                </div>
+                <div class="strip-meter-item">
+                  <div class="strip-gr-vertical" id="strip-comp-gr">
+                    <div class="strip-gr-vertical-fill"></div>
+                  </div>
+                  <span class="strip-meter-label">GR</span>
+                  <span class="strip-gr-value" id="strip-gr-value">0 dB</span>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+        PHASE 2 -->
 
         <!-- Queue + Track Selector -->
         <div class="studio-queue-area">
@@ -191,11 +534,11 @@
           </div>
         </div>
 
-        <!-- Settings (collapsible) -->
+        <!-- Settings (collapsible) — без live mode и channel strip -->
         <div class="panel panel-collapsible collapsed">
           <div class="panel-head panel-toggle"><span>Settings</span><span class="collapse-arrow"></span></div>
           <div class="panel-body">
-            <div class="settings-note">Restart streamer to apply changes</div>
+            <div id="transport-mode-hint" class="settings-hint"></div>
             <div class="form-group">
               <label>Quality Preset</label>
               <select id="quality-select">
@@ -591,6 +934,6 @@
   </div>
 
   <script src="/js/hls.min.js"></script>
-  <script src="/app.js?v=6"></script>
+  <script src="/app.js?v=105"></script>
 </body>
 </html>
