@@ -1433,8 +1433,11 @@
         '<div class="form-group"><label>Tag Mode</label>' +
         '<select id="smart-tag-mode"><option value="any"' + (rules.tagMode !== 'all' ? ' selected' : '') + '>Any</option>' +
         '<option value="all"' + (rules.tagMode === 'all' ? ' selected' : '') + '>All</option></select></div>' +
-        '<button class="btn-primary" onclick="updateSmartRules(\'' + escapeHtml(pl.id) + '\')">Update Rules</button>';
+        '<button class="btn-primary" data-action="updateSmartRules" data-id="' + escapeHtml(pl.id) + '">Update Rules</button>';
       rulesDiv.innerHTML = html;
+      rulesDiv.querySelector('[data-action="updateSmartRules"]').addEventListener('click', function() {
+        window.updateSmartRules(pl.id);
+      });
       contentEl.appendChild(rulesDiv);
 
       var tracksDiv = document.createElement('div');
@@ -2351,42 +2354,68 @@
       var header = document.createElement('div');
       header.className = 'overlay-layer-header';
       header.innerHTML =
-        '<label class="checkbox-label"><input type="checkbox" ' + (layer.enabled ? 'checked' : '') + ' onchange="toggleOverlayLayer(' + idx + ', this.checked)"> ' +
+        '<label class="checkbox-label"><input type="checkbox" ' + (layer.enabled ? 'checked' : '') + '> ' +
         '<span class="overlay-type-badge">' + escapeHtml(layer.type) + '</span></label>' +
-        '<button class="file-del" onclick="removeOverlayLayer(' + idx + ')">x</button>';
+        '<button class="file-del">x</button>';
+      header.querySelector('input[type="checkbox"]').addEventListener('change', function() {
+        window.toggleOverlayLayer(idx, this.checked);
+      });
+      header.querySelector('button.file-del').addEventListener('click', function() {
+        window.removeOverlayLayer(idx);
+      });
       div.appendChild(header);
 
       var body = document.createElement('div');
       body.className = 'overlay-layer-body';
 
+      // Хелпер: создаёт input с data-атрибутами для event delegation
+      function field(label, type, value, prop, parser, placeholder) {
+        return '<div class="form-group"><label>' + label + '</label>' +
+          '<input type="' + type + '" value="' + escapeHtml('' + value) + '"' +
+          ' data-layer="' + idx + '" data-prop="' + prop + '"' +
+          (parser ? ' data-parse="' + parser + '"' : '') +
+          (placeholder ? ' placeholder="' + escapeHtml(placeholder) + '"' : '') +
+          '></div>';
+      }
+
       if (layer.type === 'now_playing' || layer.type === 'scrolling_now_playing' || layer.type === 'static_text' || layer.type === 'clock' || layer.type === 'scrolling_text') {
         var isScrolling = layer.type === 'scrolling_text' || layer.type === 'scrolling_now_playing';
         body.innerHTML =
           '<div class="overlay-props">' +
-          (layer.type === 'static_text' || layer.type === 'scrolling_text' ? '<div class="form-group"><label>Text</label><input type="text" value="' + escapeHtml(layer.text || '') + '" onchange="updateOverlayLayer(' + idx + ', \'text\', this.value)"></div>' : '') +
+          (layer.type === 'static_text' || layer.type === 'scrolling_text' ? field('Text', 'text', layer.text || '', 'text') : '') +
           (layer.type === 'scrolling_now_playing' ? '<div class="form-group"><label>Source</label><span class="text-secondary">Current track (auto)</span></div>' : '') +
-          (isScrolling ? '<div class="form-group"><label>Speed (px/sec)</label><input type="number" value="' + escapeHtml('' + (layer.speed || 100)) + '" onchange="updateOverlayLayer(' + idx + ', \'speed\', parseInt(this.value))"></div>' : '') +
-          (layer.type === 'clock' ? '<div class="form-group"><label>Format</label><input type="text" value="' + escapeHtml(layer.format || '%H:%M') + '" onchange="updateOverlayLayer(' + idx + ', \'format\', this.value)"></div>' : '') +
+          (isScrolling ? field('Speed (px/sec)', 'number', layer.speed || 100, 'speed', 'int') : '') +
+          (layer.type === 'clock' ? field('Format', 'text', layer.format || '%H:%M', 'format') : '') +
           '<div class="overlay-pos-grid">' +
-          '<div class="form-group"><label>Font Size</label><input type="number" value="' + escapeHtml('' + (layer.fontsize || 28)) + '" onchange="updateOverlayLayer(' + idx + ', \'fontsize\', parseInt(this.value))"></div>' +
-          '<div class="form-group"><label>Color</label><input type="text" value="' + escapeHtml(layer.fontcolor || 'white') + '" onchange="updateOverlayLayer(' + idx + ', \'fontcolor\', this.value)"></div>' +
-          '<div class="form-group"><label>X</label><input type="text" value="' + escapeHtml('' + (layer.x || '20')) + '" onchange="updateOverlayLayer(' + idx + ', \'x\', this.value)"></div>' +
-          '<div class="form-group"><label>Y</label><input type="text" value="' + escapeHtml('' + (layer.y || '20')) + '" onchange="updateOverlayLayer(' + idx + ', \'y\', this.value)"></div>' +
+          field('Font Size', 'number', layer.fontsize || 28, 'fontsize', 'int') +
+          field('Color', 'text', layer.fontcolor || 'white', 'fontcolor') +
+          field('X', 'text', layer.x || '20', 'x') +
+          field('Y', 'text', layer.y || '20', 'y') +
           '</div>' +
-          '<div class="form-group"><label>Box Color</label><input type="text" value="' + escapeHtml(layer.boxcolor || '') + '" placeholder="black@0.6" onchange="updateOverlayLayer(' + idx + ', \'boxcolor\', this.value)"></div>' +
+          field('Box Color', 'text', layer.boxcolor || '', 'boxcolor', null, 'black@0.6') +
           '</div>';
       } else if (layer.type === 'logo') {
         body.innerHTML =
           '<div class="overlay-props">' +
-          '<div class="form-group"><label>Asset</label><input type="text" value="' + escapeHtml(layer.asset || '') + '" onchange="updateOverlayLayer(' + idx + ', \'asset\', this.value)" placeholder="logo.png"></div>' +
+          field('Asset', 'text', layer.asset || '', 'asset', null, 'logo.png') +
           '<div class="overlay-pos-grid">' +
-          '<div class="form-group"><label>X</label><input type="text" value="' + escapeHtml('' + (layer.x || 'W-w-20')) + '" onchange="updateOverlayLayer(' + idx + ', \'x\', this.value)"></div>' +
-          '<div class="form-group"><label>Y</label><input type="text" value="' + escapeHtml('' + (layer.y || '20')) + '" onchange="updateOverlayLayer(' + idx + ', \'y\', this.value)"></div>' +
+          field('X', 'text', layer.x || 'W-w-20', 'x') +
+          field('Y', 'text', layer.y || '20', 'y') +
           '</div>' +
           '</div>';
       }
       div.appendChild(body);
       container.appendChild(div);
+    });
+
+    // Event delegation: все input[data-layer] change events
+    container.addEventListener('change', function(e) {
+      var input = e.target;
+      if (!input.dataset || input.dataset.layer === undefined) return;
+      var layerIdx = parseInt(input.dataset.layer);
+      var prop = input.dataset.prop;
+      var value = input.dataset.parse === 'int' ? parseInt(input.value) : input.value;
+      window.updateOverlayLayer(layerIdx, prop, value);
     });
   }
 
