@@ -63,8 +63,8 @@ processed = mksafe(processed)
 processed = limit(threshold = -1.0, attack = 0.5, release = 80.0, processed)
 
 output.icecast(
-  %mp3(bitrate = 320, samplerate = 44100, stereo = true, id3v2 = true),
+  %ffmpeg(format="adts", %audio(codec="aac", b="256k", ar=48000, channels=2)),
   host = "icecast", port = 8000, password = "hackme", mount = "/live",
-  name = "SYSTEM 23", genre = "Hard Techno", description = "SYSTEM 23 AutoDJ",
+  name = "STUDIO 23", genre = "Hard Techno", description = "STUDIO 23 AutoDJ",
   processed
 )
