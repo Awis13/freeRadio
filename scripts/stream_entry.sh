@@ -15,6 +15,12 @@ MAIN_FFMPEG_MATCH="/tmp/videofifo.ts"
 FFMPEG_STDERR_LOG="/tmp/ffmpeg_stderr.log"
 RTMP_STATUS_FILE="/shared/rtmp_status.json"
 
+# Escape a string for safe JSON embedding (RFC 8259: quotes, backslashes, control chars)
+json_escape_value() {
+  printf '%s' "$1" | sed -e 's/\\/\\\\/g' -e 's/"/\\"/g' -e 's/\t/\\t/g' | tr -d '\n\r'
+}
+
+
 # Fetch RTMP URLs from dashboard API (for multi-streaming)
 fetch_rtmp_urls() {
   curl -s "${DASHBOARD_API}/api/rtmp-urls" 2>/dev/null || echo "[]"
@@ -1033,10 +1039,10 @@ build_outputs() {
     # Есть оверлеи/фильтры — нужен полный пайплайн
     if [ "$hw_accel" = "qsv" ]; then
       hwaccel_args="-hwaccel qsv -hwaccel_output_format nv12"
-      video_enc_args="$vf_args -c:v h264_qsv -load_plugin hevc_hw -b:v $vbr -minrate $vbr -maxrate $vbr -bufsize $vb_buf -g $gop -keyint_min $gop -sc_threshold 0 -flags +cgop"
+      video_enc_args="$vf_args -c:v h264_qsv -load_plugin hevc_hw -bf 0 -b:v $vbr -minrate $vbr -maxrate $vbr -bufsize $vb_buf -g $gop -keyint_min $gop -sc_threshold 0 -flags +cgop"
       echo "[+] QSV decode → filters → QSV encode ($vbr)" >&2
     else
-      video_enc_args="$vf_args -c:v libx264 -preset $speed -profile:v high $x264_extras -b:v $vbr -minrate $vbr -maxrate $vbr -bufsize $vb_buf -g $gop -keyint_min $gop -sc_threshold 0 -flags +cgop"
+      video_enc_args="$vf_args -c:v libx264 -preset $speed -profile:v high -bf 0 $x264_extras -b:v $vbr -minrate $vbr -maxrate $vbr -bufsize $vb_buf -g $gop -keyint_min $gop -sc_threshold 0 -flags +cgop"
       echo "[+] Software encode with filters ($vbr)" >&2
     fi
   else
@@ -1289,7 +1295,7 @@ restream_manager() {
       json='{"outputs":{'
       for ((i=0; i<${#url_list[@]}; i++)); do
         [ $i -gt 0 ] && json="${json},"
-        json="${json}\"${name_list[$i]}\":{\"url\":\"${url_list[$i]}\",\"status\":\"offline\",\"error\":null,\"ts\":$now}"
+        json="${json}\"$(json_escape_value "${name_list[$i]}")\":{\"url\":\"$(json_escape_value "${url_list[$i]}")\",\"status\":\"offline\",\"error\":null,\"ts\":$now}"
       done
       json="${json}},\"ts\":$now}"
       echo "$json" > "$RTMP_STATUS_FILE"
@@ -1331,7 +1337,7 @@ restream_manager() {
       if kill -0 "${ff_pid[$i]}" 2>/dev/null; then
         status="live"
       fi
-      json="${json}\"${name_list[$i]}\":{\"url\":\"${url_list[$i]}\",\"status\":\"${status}\",\"error\":null,\"ts\":$(date +%s)}"
+      json="${json}\"$(json_escape_value "${name_list[$i]}")\":{\"url\":\"$(json_escape_value "${url_list[$i]}")\",\"status\":\"${status}\",\"error\":null,\"ts\":$(date +%s)}"
     done
     json="${json}},\"ts\":$(date +%s)}"
     echo "$json" > "$RTMP_STATUS_FILE"

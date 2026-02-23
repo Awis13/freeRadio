@@ -26,9 +26,9 @@ setup() {
   local out="$TEST_DIR/stream_functions.sh"
 
   awk '
-    NR >= 366 && NR <= 373 { next }
-    NR >= 850 && NR <= 856 { next }
-    NR >= 1343             { next }
+    NR >= 372 && NR <= 379 { next }
+    NR >= 856 && NR <= 862 { next }
+    NR >= 1349             { next }
     { print }
   ' "$src" > "$out"
 
