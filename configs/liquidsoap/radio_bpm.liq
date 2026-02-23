@@ -55,6 +55,18 @@ end
 
 my_source = source.on_metadata(my_source, on_track_handler)
 
+# Produce JSON-safe escaped string (without outer quotes).
+# json.stringify wraps: test -> "test", he"llo -> "he\"llo"
+# string.sub strips the outer quotes.
+def json_str(s) =
+  j = json.stringify(s)
+  if string.length(j) >= 2 then
+    string.sub(j, start=1, length=string.length(j) - 2)
+  else
+    ""
+  end
+end
+
 settings.harbor.bind_addrs := ["0.0.0.0"]
 
 harbor.http.register(port=7000, method="GET", "/metadata",
@@ -139,17 +151,6 @@ end
 # Strip file extension (track.mp3 → track)
 def strip_ext(name) =
   string.replace(pattern = "\\.[^.]*$", fun(_) -> "", name)
-end
-# Produce JSON-safe escaped string (without outer quotes).
-# json.stringify wraps: test -> "test", he"llo -> "he\"llo"
-# string.sub strips the outer quotes.
-def json_str(s) =
-  j = json.stringify(s)
-  if string.length(j) >= 2 then
-    string.sub(j, start=1, length=string.length(j) - 2)
-  else
-    ""
-  end
 end
 
 
