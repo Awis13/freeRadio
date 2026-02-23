@@ -778,6 +778,52 @@
           </div>
         </div>
 
+
+        <!-- Video Playlists -->
+        <div class="panel">
+          <div class="panel-head">
+            <span>Video Playlists</span>
+            <button class="btn-small btn-primary" id="create-video-playlist-btn">+ Create</button>
+          </div>
+          <div class="panel-body">
+            <div id="video-playlists-list" class="visual-profiles-list"></div>
+          </div>
+        </div>
+
+        <!-- Video Playlist Detail -->
+        <div class="panel" id="video-playlist-detail" style="display:none">
+          <div class="panel-head">
+            <span id="vpl-detail-title">Playlist</span>
+            <div style="margin-left:auto;display:flex;gap:6px">
+              <button class="btn-small btn-primary" id="vpl-load-queue-btn">Load to Queue</button>
+              <button class="btn-small btn-secondary" id="vpl-activate-profile-btn">Set as Shuffle</button>
+              <button class="btn-small btn-danger" id="vpl-delete-btn">Delete</button>
+            </div>
+          </div>
+          <div class="panel-body">
+            <div id="vpl-type-indicator"></div>
+            <div id="vpl-smart-rules" style="display:none">
+              <div class="form-group">
+                <label>Filename pattern (regex)</label>
+                <input type="text" id="vpl-name-pattern" placeholder="cyber.*|abstract.*">
+              </div>
+              <div class="form-group">
+                <label>Tags (comma-separated)</label>
+                <input type="text" id="vpl-tags" placeholder="dark, cyberpunk, abstract">
+              </div>
+              <div class="form-group">
+                <label>Tag mode</label>
+                <select id="vpl-tag-mode">
+                  <option value="any">Any tag</option>
+                  <option value="all">All tags</option>
+                </select>
+              </div>
+              <button class="btn-small btn-primary" id="vpl-update-rules-btn">Update Rules</button>
+            </div>
+            <div id="vpl-video-grid" class="video-grid"></div>
+          </div>
+        </div>
+
         <!-- Video Library -->
         <div class="panel">
           <div class="panel-head">
