@@ -11,6 +11,7 @@ const MUSIC_DIR = '/music';
 let currentSlotId = null;
 let currentPlaylistId = null;
 let getBpmMapFn = () => ({});
+let visualsDir = '/visuals';
 
 function loadSchedule() {
   try {
@@ -144,8 +145,7 @@ async function executeScheduleTick() {
     const videoPlaylistId = slot.videoPlaylistId;
     if (videoPlaylistId) {
       try {
-        const VISUALS_DIR = '/visuals';
-        const resolved = resolveVideoPlaylist(videoPlaylistId, VISUALS_DIR);
+        const resolved = resolveVideoPlaylist(videoPlaylistId, visualsDir);
         if (resolved.length > 0) {
           const ACTIVE_FILE = '/shared/active_visual_profile.json';
           const payload = JSON.stringify({
@@ -160,6 +160,15 @@ async function executeScheduleTick() {
       } catch (e) {
         console.error('[schedule] Failed to switch video playlist:', e.message);
       }
+    } else {
+      // Deactivate video playlist — streamer falls back to all processed visuals
+      const ACTIVE_FILE = "/shared/active_visual_profile.json";
+      try {
+        if (fs.existsSync(ACTIVE_FILE)) {
+          fs.unlinkSync(ACTIVE_FILE);
+          console.log("[schedule] Deactivated video playlist (slot has none)");
+        }
+      } catch (e) {}
     }
   }
 
@@ -185,8 +194,9 @@ async function executeScheduleTick() {
   }
 }
 
-function startExecutor(getBpmMap) {
+function startExecutor(getBpmMap, vDir) {
   getBpmMapFn = getBpmMap;
+  if (vDir) visualsDir = vDir;
   console.log('[schedule] Executor started (interval: 30s)');
   // Run immediately, then every 30s
   executeScheduleTick();
@@ -285,7 +295,10 @@ function createScheduleRouter() {
     const data = loadSchedule();
     const ev = data.events[req.params.id];
     if (!ev) return res.status(404).json({ error: 'not found' });
-    Object.assign(ev, req.body, { id: req.params.id });
+    const ALLOWED_FIELDS = ["date", "startTime", "endTime", "playlistId", "videoPlaylistId", "label", "priority"];
+    for (const key of ALLOWED_FIELDS) {
+      if (req.body[key] !== undefined) ev[key] = req.body[key];
+    }
     saveSchedule(data);
     res.json(ev);
   });

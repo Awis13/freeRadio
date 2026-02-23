@@ -145,6 +145,12 @@ wss.on('connection', (ws) => {
   // ws.on('close', () => { fftAnalyzer.unsubscribe(ws); });
 });
 
+// --- CSP header ---
+app.use((req, res, next) => {
+  res.setHeader("Content-Security-Policy", "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; media-src 'self' blob:; connect-src 'self' ws: wss:; worker-src 'self' blob:; font-src 'self'");
+  next();
+});
+
 // --- Static files (no-cache for JS to avoid stale code after deploys) ---
 app.use(express.static(path.join(__dirname, 'public'), {
   setHeaders: (res, filePath) => {
@@ -671,7 +677,7 @@ bpmPoller.start();
 rtmpHealthPoller.start();
 
 // Start schedule executor daemon
-startExecutor(getBpmMap);
+startExecutor(getBpmMap, VISUALS_DIR);
 
 // Keep-alive: предотвратить race condition закрытия соединения при конкурентных запросах
 server.keepAliveTimeout = 61000;

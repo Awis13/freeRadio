@@ -35,6 +35,7 @@
   var trackStartedAt = 0;
   var trackDuration = 0;
   var trackMixDur = 0;
+  var lastAudioMsg = null; // кэш последнего audio сообщения (для replay после ARM→PLAY)
   var queueList = document.getElementById('queue-list');
   var skipBtn = document.getElementById('skip-btn');
   var clearQueueBtn = document.getElementById('clear-queue-btn');
@@ -735,6 +736,7 @@
         deriveUiMode();
         updateBroadcastUI();
         updateMode(msg.data.outputMode);
+        lastAudioMsg = msg.data.audio;
         updateAudio(msg.data.audio);
         updateIcecast(msg.data.icecast);
         updateFfmpeg(msg.data.ffmpeg);
@@ -743,6 +745,7 @@
         loadFileList('visuals');
         break;
       case 'audio':
+        lastAudioMsg = msg.data;
         updateAudio(msg.data);
         break;
       case 'video':
@@ -3300,6 +3303,8 @@
           playerMuteBtn.title = 'Mute';
           playerMuteBtn.classList.add('unmuted');
           log('PLAY: gate open, track from beginning');
+          // Replay кэшированный audio — updateAudio пропустил его во время armed
+          if (lastAudioMsg) updateAudio(lastAudioMsg);
         })
         .catch(function(e) {
           log('PLAY: cue/resume FAILED: ' + e);
@@ -3347,6 +3352,8 @@
         // Убрать static noise сразу — видео появится когда HLS подключится
         stopStaticNoise();
         log('PLAY: pipeline live, waiting for content...');
+        // Replay кэшированный audio — мог прийти пока streamMode был standby
+        if (lastAudioMsg) updateAudio(lastAudioMsg);
         // Дать pipeline 3с: gate уже открыт, Liquidsoap играет трек с 0:00,
         // FFmpeg пишет первые HLS-сегменты с музыкой. После рестарта player
         // подхватит свежие сегменты и начнёт с начала трека.
@@ -3441,6 +3448,7 @@
       .then(function() {
         broadcastState.streamMode = 'standby';
         broadcastState.broadcast = false;
+        lastAudioMsg = null;
         studioAudioTrack.textContent = '--';
         studioBpm.textContent = '';
         trackStartedAt = 0;
