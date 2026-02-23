@@ -2,6 +2,8 @@
 
 WATCH_DIR="/visuals"
 OUTPUT_DIR="/visuals/.processed"
+MUSIC_DIR="/music"
+MUSIC_OUTPUT_DIR="/music/processed"
 LOG_FILE="/var/log/transcoder.log"
 MAX_PARALLEL=3
 
@@ -31,8 +33,8 @@ transcode_video() {
     src_fps=$(ffprobe -v error -select_streams v:0 -show_entries stream=r_frame_rate -of csv=p=0 "$input_file" 2>/dev/null | head -1)
     local fps_num=${src_fps%/*}
     [ -z "$fps_num" ] || [ "$fps_num" -eq 0 ] 2>/dev/null && fps_num=24
-    local gop_size=$((fps_num * 2))
-    log "  Source: ${fps_num}fps, GOP: ${gop_size} (2s keyframes)"
+    local gop_size=$((fps_num * 1))
+    log "  Source: ${fps_num}fps, GOP: ${gop_size} (1s keyframes)"
 
     # Определяем наличие аудио в исходнике
     local has_audio audio_args audio_label
@@ -79,16 +81,40 @@ transcode_video() {
     fi
 }
 
+process_audio() {
+    local input_file="$1"
+    local filename=$(basename "$input_file")
+    local basename="${filename%.*}"
+    local output_file="${MUSIC_OUTPUT_DIR}/${basename}.wav"
+    local tmp_file="${MUSIC_OUTPUT_DIR}/.transcoding_${basename}.wav"
+
+    log "Audio: $filename"
+
+    if ffmpeg -y -hide_banner -loglevel error \
+        -i "$input_file" \
+        -af "loudnorm=I=-14:TP=-1:LRA=7" \
+        -ar 44100 -ac 2 -c:a pcm_s16le \
+        "$tmp_file" 2>> "$LOG_FILE"; then
+        mv "$tmp_file" "$output_file"
+        log "  Audio done: $output_file"
+    else
+        log "  ERROR: Failed to process audio $filename"
+        rm -f "$tmp_file"
+    fi
+}
+
 mkdir -p "$OUTPUT_DIR"
+mkdir -p "$MUSIC_OUTPUT_DIR"
 mkdir -p "$(dirname $LOG_FILE)"
 
 # Чистим недоделанные транскоды от предыдущих запусков
 rm -f "${OUTPUT_DIR}"/.transcoding_*
+rm -f "${MUSIC_OUTPUT_DIR}"/.transcoding_*
 
-log "Transcoder started (max $MAX_PARALLEL parallel). Watching: $WATCH_DIR"
+log "Transcoder started (max $MAX_PARALLEL parallel). Watching: $WATCH_DIR + $MUSIC_DIR"
 
 while true; do
-    for file in "$WATCH_DIR"/*.mp4 "$WATCH_DIR"/*.mov "$WATCH_DIR"/*.mkv; do
+    for file in "$WATCH_DIR"/*.mp4 "$WATCH_DIR"/*.mov "$WATCH_DIR"/*.mkv "$WATCH_DIR"/incoming/*.mp4 "$WATCH_DIR"/incoming/*.mov "$WATCH_DIR"/incoming/*.mkv; do
         [ -f "$file" ] || continue
 
         filename=$(basename "$file")
@@ -104,7 +130,7 @@ while true; do
 
         # Файл ещё пишется (< 10MB)
         size=$(stat -c%s "$file" 2>/dev/null || echo 0)
-        [ "$size" -lt 10000000 ] && continue
+        [ "$size" -lt 1000000 ] && continue
 
         # Ждём свободный слот
         while [ $(jobs -rp | wc -l) -ge $MAX_PARALLEL ]; do
@@ -113,6 +139,34 @@ while true; do
 
         log "Found new file: $filename"
         transcode_video "$file" &
+    done
+
+    # Аудио файлы
+    for file in "$MUSIC_DIR"/*.wav "$MUSIC_DIR"/*.mp3 "$MUSIC_DIR"/*.flac "$MUSIC_DIR"/*.ogg "$MUSIC_DIR"/*.aac "$MUSIC_DIR"/*.m4a; do
+        [ -f "$file" ] || continue
+
+        filename=$(basename "$file")
+        basename="${filename%.*}"
+        output_file="${MUSIC_OUTPUT_DIR}/${basename}.wav"
+
+        [[ "$filename" == .* ]] && continue
+        [[ "$filename" == *.part ]] && continue
+        [[ "$filename" == *.tmp ]] && continue
+
+        # Уже обработан
+        [ -f "$output_file" ] && continue
+
+        # Файл ещё пишется (< 1MB)
+        size=$(stat -c%s "$file" 2>/dev/null || echo 0)
+        [ "$size" -lt 1000000 ] && continue
+
+        # Ждём свободный слот
+        while [ $(jobs -rp | wc -l) -ge $MAX_PARALLEL ]; do
+            sleep 2
+        done
+
+        log "Found new audio: $filename"
+        process_audio "$file" &
     done
 
     # Ждём завершения текущих задач

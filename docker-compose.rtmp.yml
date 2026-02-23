@@ -3,10 +3,9 @@ services:
     image: alfg/nginx-rtmp
     container_name: s23-rtmp
     ports:
-      - "100.110.164.51:1935:1935"
-      - "100.110.164.51:8080:8080"
+      - "8080:80"
     volumes:
-      - ./configs/nginx/rtmp.conf:/etc/nginx/nginx.conf:ro
+      - ./configs/nginx/rtmp.conf:/etc/nginx/nginx.conf
     restart: unless-stopped
     networks:
       - rave-net

@@ -17,10 +17,10 @@ services:
     ports:
       - "8000:8000"
     environment:
-      - ICECAST_SOURCE_PASSWORD=hackme
-      - ICECAST_ADMIN_PASSWORD=hackme
-      - ICECAST_PASSWORD=hackme
-      - ICECAST_RELAY_PASSWORD=hackme
+      - ICECAST_SOURCE_PASSWORD=${ICECAST_SOURCE_PASSWORD}
+      - ICECAST_ADMIN_PASSWORD=${ICECAST_ADMIN_PASSWORD}
+      - ICECAST_PASSWORD=${ICECAST_PASSWORD}
+      - ICECAST_RELAY_PASSWORD=${ICECAST_RELAY_PASSWORD}
     networks:
       - rave-net
     restart: unless-stopped
@@ -29,6 +29,9 @@ services:
   dj:
     image: savonet/liquidsoap:v2.3.0
     container_name: s23-dj
+    environment:
+      - OCAMLRUNPARAM=l=32M
+      - ICECAST_SOURCE_PASSWORD=${ICECAST_SOURCE_PASSWORD}
     user: root
     entrypoint: liquidsoap
     command: /config/radio_bpm.liq
@@ -40,6 +43,20 @@ services:
       - rave-net
     depends_on:
       - icecast
+    restart: unless-stopped
+
+  # 2.5 RTMP Ingest (nginx-rtmp) — accepts OBS/external RTMP for Live mode
+  rtmp-ingest:
+    image: alfg/nginx-rtmp
+    container_name: s23-rtmp-ingest
+    entrypoint: ["nginx"]
+    command: ["-c", "/config/ingest.conf"]
+    ports:
+      - "1935:1935"
+    volumes:
+      - ./configs/nginx/ingest.conf:/config/ingest.conf:ro
+    networks:
+      - rave-net
     restart: unless-stopped
 
   # 3. Стример (FFMPEG → HLS или RTMP + multi-streaming)
@@ -78,6 +95,7 @@ services:
     depends_on:
       - icecast
       - dj
+      - rtmp-ingest
     restart: unless-stopped
 
   # 3.5 Transcoder — автоматическая конвертация видео из incoming в готовый формат
@@ -90,6 +108,7 @@ services:
     volumes:
       - /dev/dri:/dev/dri
       - ./content/visuals:/visuals
+      - ./content/music:/music
       - ./scripts:/scripts:ro
     mem_limit: 512m
     networks:
@@ -97,25 +116,32 @@ services:
     restart: unless-stopped
 
   # 4. Dashboard (Node.js — preview + API + WebSocket)
-  # http://localhost (port 80)
+  # Dashboard UI
   dashboard:
     build: ./dashboard
     container_name: s23-dashboard
     ports:
       - "80:9090"
+      - "443:9443"
     environment:
       - PORT=9090
+      - TLS_PORT=9443
+      - TLS_CERT=/certs/tls.crt
+      - TLS_KEY=/certs/tls.key
       - HLS_DIR=/hls
       - MUSIC_DIR=/music
       - VISUALS_DIR=/visuals
       - OUTPUT_MODE=${OUTPUT_MODE:-hls}
       - MAX_PLATFORMS=${MAX_PLATFORMS:-3}
       - FFMPEG_PROGRESS_FILE=/shared/ffmpeg_progress.txt
+      - STREAM_KEYS_SECRET=${STREAM_KEYS_SECRET}
+      - DASHBOARD_TOKEN=${DASHBOARD_TOKEN}
     volumes:
       - ./content/music:/music
       - ./content/visuals:/visuals
       - hls-data:/hls:ro
       - shared-data:/shared
+      - ./certs:/certs:ro
     networks:
       - rave-net
     depends_on:

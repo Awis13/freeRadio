@@ -9,6 +9,7 @@ RTMP_URL="${RTMP_URL:-}"
 FFMPEG_PROGRESS_FILE="${FFMPEG_PROGRESS_FILE:-}"
 DASHBOARD_API="${DASHBOARD_API:-http://dashboard:9090}"
 FIFO="/tmp/videofifo.ts"
+AUDIO_FIFO="/tmp/audiofifo.ts"
 APPLIED_SIG_FILE="/tmp/applied_stream_sig.txt"
 MAIN_FFMPEG_MATCH="/tmp/videofifo.ts"
 FFMPEG_STDERR_LOG="/tmp/ffmpeg_stderr.log"
@@ -40,31 +41,45 @@ get_rtmp_mode() {
   fi
 }
 
-# Check if streaming is enabled
+# Check if streaming is enabled — pure bash, no subprocesses
 is_streaming_enabled() {
   local control_file="/shared/stream_control.json"
   if [ -f "$control_file" ]; then
-    if grep -qE '"streaming"[[:space:]]*:[[:space:]]*true' "$control_file"; then
-      return 0
-    fi
-    if grep -qE '"streaming"[[:space:]]*:[[:space:]]*false' "$control_file"; then
+    local content
+    content=$(<"$control_file")
+    if [[ "$content" == *'"streaming":false'* ]] || [[ "$content" == *'"streaming": false'* ]]; then
       return 1
     fi
-    # Unknown/partial content should not block stream start.
     return 0
   fi
   # Missing control file defaults to enabled.
   return 0
 }
 
-# Get stream mode (standby or live)
+# Check if broadcast is enabled (RTMP output) — pure bash, no subprocesses
+get_broadcast_enabled() {
+  local control_file="/shared/stream_control.json"
+  if [ -f "$control_file" ]; then
+    local content
+    content=$(<"$control_file")
+    if [[ "$content" == *'"broadcast":true'* ]] || [[ "$content" == *'"broadcast": true'* ]]; then
+      echo "true"
+      return
+    fi
+  fi
+  echo "false"
+}
+
+# Get stream mode (standby, armed, or live) — pure bash, no subprocesses
 get_stream_mode() {
   local mode_file="/shared/stream_mode.json"
   if [ -f "$mode_file" ]; then
-    local mode
-    mode=$(grep -o '"mode":"[^"]*"' "$mode_file" 2>/dev/null | cut -d'"' -f4)
-    if [ "$mode" = "live" ]; then
+    local content
+    content=$(<"$mode_file")
+    if [[ "$content" == *'"mode":"live"'* ]]; then
       echo "live"
+    elif [[ "$content" == *'"mode":"armed"'* ]]; then
+      echo "armed"
     else
       echo "standby"
     fi
@@ -91,34 +106,110 @@ get_standby_visual() {
   echo "$first"
 }
 
-# Get visual mode (radio, visual-radio, video-playlist)
+# Generate poster video (5s still frame from first content video) for armed mode
+generate_poster() {
+  local poster_mp4="/tmp/poster.mp4"
+  local poster_png="/tmp/poster.png"
+  # Pick first video from rotation
+  local first_video
+  first_video=$(get_video_list | head -1)
+  if [ -z "$first_video" ] || [ ! -f "$first_video" ]; then
+    echo "[poster] No content videos, using standby black"
+    cp "$STANDBY_FILE" "$poster_mp4" 2>/dev/null || true
+    return
+  fi
+  echo "[poster] Extracting frame from: ${first_video##*/}"
+  # Extract first frame
+  ffmpeg -hide_banner -loglevel error -i "$first_video" -vframes 1 -y "$poster_png" 2>/dev/null
+  if [ ! -f "$poster_png" ]; then
+    echo "[poster] Frame extraction failed, using standby black"
+    cp "$STANDBY_FILE" "$poster_mp4" 2>/dev/null || true
+    return
+  fi
+  # Create 5s still H.264 video matching transcoder format
+  ffmpeg -hide_banner -loglevel error \
+    -loop 1 -i "$poster_png" \
+    -c:v libx264 -profile:v high -bf 0 -pix_fmt yuv420p \
+    -t 5 -r 24 \
+    -vf "scale=1920:1080:force_original_aspect_ratio=decrease,pad=1920:1080:(ow-iw)/2:(oh-ih)/2:black" \
+    -y "$poster_mp4" 2>/dev/null
+  if [ ! -f "$poster_mp4" ]; then
+    echo "[poster] Encode failed, using standby black"
+    cp "$STANDBY_FILE" "$poster_mp4" 2>/dev/null || true
+    return
+  fi
+  rm -f "$poster_png"
+  echo "[poster] Ready: $poster_mp4"
+}
+
+# Get visual mode (live, visual-radio, video-playlist) — pure bash, no subprocesses
 get_visual_mode() {
   local mode_file="/shared/visual_mode.json"
   if [ -f "$mode_file" ]; then
-    local mode
-    mode=$(grep -o '"mode":"[^"]*"' "$mode_file" 2>/dev/null | cut -d'"' -f4)
-    case "$mode" in
-      radio|video-playlist) echo "$mode" ;;
-      *) echo "visual-radio" ;;
-    esac
+    local content
+    content=$(<"$mode_file")
+    if [[ "$content" == *'"mode":"live"'* ]] || [[ "$content" == *'"mode":"radio"'* ]]; then
+      echo "live"
+    elif [[ "$content" == *'"mode":"video-playlist"'* ]]; then
+      echo "video-playlist"
+    else
+      echo "visual-radio"
+    fi
   else
     echo "visual-radio"
   fi
 }
 
-# Get radio visual file path (for radio mode — single looping visual)
-get_radio_visual() {
-  local mode_file="/shared/visual_mode.json"
-  local visual_name=""
-  if [ -f "$mode_file" ]; then
-    visual_name=$(grep -o '"radioVisual":"[^"]*"' "$mode_file" 2>/dev/null | cut -d'"' -f4)
+# Get OBS connection status from live_mode.json — pure bash
+get_live_obs_status() {
+  local live_file="/shared/live_mode.json"
+  if [ -f "$live_file" ]; then
+    local content
+    content=$(<"$live_file")
+    if [[ "$content" == *'"obsStatus":"connected"'* ]]; then
+      echo "connected"
+    elif [[ "$content" == *'"obsStatus":"disconnected"'* ]]; then
+      echo "disconnected"
+    else
+      echo "offline"
+    fi
+  else
+    echo "offline"
   fi
-  if [ -n "$visual_name" ] && [ -f "/visuals/.processed/$visual_name" ]; then
-    echo "/visuals/.processed/$visual_name"
-    return
+}
+
+# Get AFK fallback mode — pure bash
+get_live_afk_fallback() {
+  local live_file="/shared/live_mode.json"
+  if [ -f "$live_file" ]; then
+    local content
+    content=$(<"$live_file")
+    if [[ "$content" == *'"afkFallback":"video-playlist"'* ]]; then
+      echo "video-playlist"
+    else
+      echo "visual-radio"
+    fi
+  else
+    echo "visual-radio"
   fi
-  # Fallback: first file in .processed/
-  find /visuals/.processed -type f \( -name "*.mp4" -o -name "*.mov" -o -name "*.mkv" \) 2>/dev/null | head -1
+}
+
+# Get ingest key for RTMP URL — pure bash
+get_live_ingest_key() {
+  local live_file="/shared/live_mode.json"
+  if [ -f "$live_file" ]; then
+    local content
+    content=$(<"$live_file")
+    # Extract key value between quotes after "ingestKey":"
+    local key=""
+    key="${content#*\"ingestKey\":\"}"
+    key="${key%%\"*}"
+    if [ -n "$key" ] && [ "$key" != "$content" ]; then
+      echo "$key"
+      return
+    fi
+  fi
+  echo ""
 }
 
 # Fetch quality settings from file
@@ -259,9 +350,10 @@ get_video_filter_with_scale() {
   esac
 }
 
-# Pre-transcoded standby file (TV static noise, QSV H.264 CBR 6Mbps, same format as .processed/)
-# Generated once: ffmpeg -f lavfi ... -c:v h264_qsv ... /visuals/.processed/_standby_static.mp4
-STANDBY_FILE="/visuals/.processed/_standby_static.mp4"
+# Pre-transcoded standby file (solid black, QSV H.264 CBR 6Mbps, same format as .processed/)
+# Black frames: even if stale data leaks through mbuffer during standby→live transition,
+# it's invisible (black) instead of jarring noise/static.
+STANDBY_FILE="/visuals/.processed/_standby_black.mp4"
 
 # Get current audio bitrate from quality preset (for feed_fifo per-clip encoding)
 get_current_audio_bitrate() {
@@ -277,6 +369,7 @@ echo "[+] Go!"
 
 # Создаем FIFO
 [ -p "$FIFO" ] || mkfifo "$FIFO"
+[ -p "$AUDIO_FIFO" ] || mkfifo "$AUDIO_FIFO"
 
 # Get video list from active visual profile or fallback to all visuals
 get_video_list() {
@@ -312,7 +405,7 @@ build_video_filters() {
   # Нет дефолтных фильтров — пре-транскодированный контент готов к отдаче
 }
 
-# Wait for background ffmpeg, kill immediately on mode/visual-mode change or video skip.
+# Wait for background ffmpeg, kill immediately on mode/visual-mode change, video skip, or OBS connect.
 # Usage: wait_or_interrupt <ffpid> <mode> <vmode>
 wait_or_interrupt() {
   local ffpid=$1 start_mode=$2 start_vmode=$3
@@ -327,8 +420,15 @@ wait_or_interrupt() {
     # Mode or visual-mode changed → kill clip, let loop pick new content instantly
     local m=$(get_stream_mode) vm=$(get_visual_mode)
     if [ "$m" != "$start_mode" ] || [ "$vm" != "$start_vmode" ]; then
+      # armed→live: убить preview, пустить concat плейлист
       kill $ffpid 2>/dev/null; wait $ffpid 2>/dev/null
       echo "[+] Interrupted: $start_mode/$start_vmode → $m/$vm"
+      return 0
+    fi
+    # Live mode AFK: interrupt clip when OBS connects
+    if [ "$start_vmode" = "live" ] && [ "$(get_live_obs_status)" = "connected" ]; then
+      kill $ffpid 2>/dev/null; wait $ffpid 2>/dev/null
+      echo "[+] Interrupted: OBS connected, switching to RTMP"
       return 0
     fi
     sleep 0.5
@@ -339,6 +439,8 @@ wait_or_interrupt() {
 # Mode-aware feed_fifo: all playback runs in background with mode-change polling.
 # Mode switches kill current clip instantly → next iteration picks new content within 0.5s.
 feed_fifo() {
+  # Redirect echo/printf to stderr (docker logs), keep fd 3 for data pipe (stdout → mbuffer → FIFO)
+  exec 3>&1 1>&2
   declare -a SHUFFLED
   SHUFFLED=()
   local prev_mode="" prev_vmode=""
@@ -357,10 +459,18 @@ feed_fifo() {
     # Логируем смену режима
     if [ "$current_mode" != "$prev_mode" ] || [ "$visual_mode" != "$prev_vmode" ]; then
       echo "[+] Mode: ${prev_mode:-init}/${prev_vmode:-init} → $current_mode/$visual_mode"
-      if [ "$current_mode" = "live" ] && [ "$prev_mode" = "standby" ]; then
+      if [ "$current_mode" = "armed" ]; then
+        # Каждый ARM = новый плейлист
         SHUFFLED=()
-        echo "[+] Shuffle reset for fresh start"
+        echo "[+] Armed: сброс плейлиста (будет новый шаффл)"
+      elif [ "$current_mode" = "live" ] && [ "$prev_mode" = "armed" ]; then
+        # Armed → Live: плейлист уже готов в SHUFFLED, PLAY подхватывает его
+        echo "[+] Armed → Live: плейлист готов (${#SHUFFLED[@]} клипов)"
+      elif [ "$current_mode" = "live" ] && [ "$prev_mode" = "standby" ]; then
+        SHUFFLED=()
+        echo "[+] Shuffle reset (standby → live)"
       fi
+      # Armed: feed_fifo switches to real content video below (no poster needed)
       prev_mode="$current_mode"
       prev_vmode="$visual_mode"
     fi
@@ -369,23 +479,119 @@ feed_fifo() {
     local RANDOM_FILE=""
 
     if [ "$current_mode" = "standby" ]; then
-      # Standby: pre-transcoded TV static with baked-in noise audio — real-time, 0% CPU (copy mode)
-      ffmpeg -hide_banner -loglevel error -re \
-        -i "$STANDBY_FILE" \
-        -c:v copy -c:a copy \
-        -f mpegts - 2>/dev/null &
+      if [ "$visual_mode" = "video-playlist" ]; then
+        # Standby + video-playlist: video+audio from standby file, бесконечный луп
+        ffmpeg -hide_banner -loglevel error -re \
+          -stream_loop -1 -i "$STANDBY_FILE" \
+          -c:v copy -c:a copy \
+          -f mpegts - >&3 2>/dev/null &
+      else
+        # Standby + live/visual-radio: video-only, бесконечный луп
+        ffmpeg -hide_banner -loglevel error -re \
+          -stream_loop -1 -i "$STANDBY_FILE" \
+          -c:v copy -an \
+          -f mpegts - >&3 2>/dev/null &
+      fi
       wait_or_interrupt $! "$current_mode" "$visual_mode"
       continue
-    elif [ "$visual_mode" = "radio" ]; then
-      # Radio: один визуал в цикле (как standby, но в live)
-      RANDOM_FILE=$(get_radio_visual)
-      if [ -z "$RANDOM_FILE" ] || [ ! -f "$RANDOM_FILE" ]; then
-        echo "[!] No radio visual found, skipping"
-        sleep 2
-        continue
+    elif [ "$current_mode" = "armed" ]; then
+      # Armed: шаффлим плейлист, крутим первый клип. PLAY подхватит этот же плейлист.
+      if [ ${#SHUFFLED[@]} -eq 0 ]; then
+        mapfile -t ALL_VIDEOS < <(get_video_list)
+        if [ ${#ALL_VIDEOS[@]} -gt 0 ]; then
+          SHUFFLED=("${ALL_VIDEOS[@]}")
+          for ((i=${#SHUFFLED[@]}-1; i>0; i--)); do
+            j=$((RANDOM % (i+1)))
+            tmp="${SHUFFLED[$i]}"
+            SHUFFLED[$i]="${SHUFFLED[$j]}"
+            SHUFFLED[$j]="$tmp"
+          done
+          echo "[+] Armed: новый плейлист ${#SHUFFLED[@]} клипов, preview: ${SHUFFLED[0]##*/}"
+        fi
       fi
-    else
-      # Visual Radio / Video Playlist: ротация из shuffle
+      local arm_video="${SHUFFLED[0]:-$STANDBY_FILE}"
+      if [ ! -f "$arm_video" ]; then
+        arm_video="$STANDBY_FILE"
+      fi
+      ffmpeg -hide_banner -loglevel error -re \
+        -stream_loop -1 -i "$arm_video" \
+        -c:v copy -an \
+        -f mpegts - >&3 2>/dev/null &
+      wait_or_interrupt $! "$current_mode" "$visual_mode"
+      continue
+    elif [ "$visual_mode" = "live" ]; then
+      # Live mode: OBS connected → RTMP passthrough, OBS disconnected → AFK shuffle
+      local obs_status ingest_key
+      obs_status=$(get_live_obs_status)
+      ingest_key=$(get_live_ingest_key)
+
+      if [ "$obs_status" = "connected" ] && [ -n "$ingest_key" ]; then
+        # OBS LIVE: passthrough video from RTMP ingest (copy mode, 0% CPU)
+        local rtmp_url="rtmp://rtmp-ingest:1935/ingest/${ingest_key}"
+        echo "[+] Live: OBS video from ${rtmp_url##*/ingest/}"
+
+        # Retry up to 3 times — stream may not be ready for subscribers immediately
+        local obs_ffpid=0 retry
+        for retry in 1 2 3; do
+          ffmpeg -hide_banner -loglevel warning \
+            -rw_timeout 5000000 \
+            -rtmp_live live \
+            -i "$rtmp_url" \
+            -c:v copy -an \
+            -f mpegts - >&3 2>&2 &
+          obs_ffpid=$!
+          sleep 1
+          if kill -0 $obs_ffpid 2>/dev/null; then
+            echo "[+] Live: OBS video connected (attempt $retry)"
+            break
+          fi
+          echo "[!] Live: OBS video failed (attempt $retry)"
+          wait $obs_ffpid 2>/dev/null || true
+          obs_ffpid=0
+        done
+
+        if [ "$obs_ffpid" -eq 0 ] || ! kill -0 $obs_ffpid 2>/dev/null; then
+          echo "[!] Live: OBS video failed after 3 attempts, AFK fallback"
+          # Fall through to AFK shuffle below
+        else
+          # Monitor: check for mode change, visual-mode change, or OBS disconnect
+          local grace_start=0
+          while kill -0 $obs_ffpid 2>/dev/null; do
+            local m vm os
+            m=$(get_stream_mode)
+            vm=$(get_visual_mode)
+            os=$(get_live_obs_status)
+            # Mode or visual-mode changed → kill and re-enter loop
+            if [ "$m" != "$current_mode" ] || [ "$vm" != "$visual_mode" ]; then
+              kill $obs_ffpid 2>/dev/null; wait $obs_ffpid 2>/dev/null
+              echo "[+] Live: interrupted by mode change ($m/$vm)"
+              break
+            fi
+            # OBS disconnected → 3s grace period
+            if [ "$os" != "connected" ]; then
+              if [ "$grace_start" -eq 0 ]; then
+                grace_start=$(date +%s)
+                echo "[+] Live: OBS signal lost, 3s grace..."
+              elif [ $(( $(date +%s) - grace_start )) -ge 3 ]; then
+                echo "[+] Live: OBS disconnected, switching to AFK"
+                kill $obs_ffpid 2>/dev/null; wait $obs_ffpid 2>/dev/null
+                break
+              fi
+            else
+              grace_start=0
+            fi
+            sleep 0.5
+          done
+          wait $obs_ffpid 2>/dev/null || true
+          continue
+        fi
+      fi
+
+      # AFK fallback: use shuffle code below (same as visual-radio)
+      echo "[+] Live AFK: shuffle fallback"
+    fi
+    # Common path for visual-radio, video-playlist, and live-AFK: shuffle/queue
+    if [ -z "$RANDOM_FILE" ]; then
       # В video-playlist режиме сначала проверяем очередь
       local queued_file=""
       if [ "$visual_mode" = "video-playlist" ] && [ -f /shared/video_queue.txt ]; then
@@ -426,6 +632,56 @@ feed_fifo() {
           echo "[+] Новый раунд видео: ${#SHUFFLED[@]} клипов"
         fi
 
+        # === CONCAT DEMUXER: бесшовное воспроизведение всего раунда ===
+        # Вместо отдельного ffmpeg на каждый 5с клип (с гэпами между ними),
+        # собираем concat-лист и проигрываем весь раунд одним ffmpeg.
+        # visual-radio + все файлы processed → concat (0 гэпов)
+        if [ "$visual_mode" != "video-playlist" ]; then
+          local all_processed=true
+          for cf in "${SHUFFLED[@]}"; do
+            if [[ "$cf" != /visuals/.processed/* ]]; then
+              all_processed=false
+              break
+            fi
+          done
+
+          if [ "$all_processed" = true ] && [ ${#SHUFFLED[@]} -gt 0 ]; then
+            local concat_file="/tmp/concat_list.txt"
+            > "$concat_file"
+            local clip_count=${#SHUFFLED[@]}
+            # Первый раунд — текущий SHUFFLED (подготовлен в armed или свежий)
+            for cf in "${SHUFFLED[@]}"; do
+              echo "file '$cf'" >> "$concat_file"
+            done
+            # Дополнительные раунды с пере-шаффлом (бесшовно, ~10+ мин контента)
+            local round round_arr
+            for round in $(seq 2 20); do
+              round_arr=("${ALL_VIDEOS[@]}")
+              for ((i=${#round_arr[@]}-1; i>0; i--)); do
+                j=$((RANDOM % (i+1)))
+                tmp="${round_arr[$i]}"
+                round_arr[$i]="${round_arr[$j]}"
+                round_arr[$j]="$tmp"
+              done
+              for cf in "${round_arr[@]}"; do
+                echo "file '$cf'" >> "$concat_file"
+              done
+            done
+            local total_clips=$((clip_count * 20))
+            echo "[+] Concat: $clip_count клипов × 20 раундов = $total_clips (бесшовный)"
+            echo "${SHUFFLED[0]##*/}" > /shared/current_video.txt 2>/dev/null || true
+            SHUFFLED=()
+
+            ffmpeg -hide_banner -loglevel error -re \
+              -f concat -safe 0 -i "$concat_file" \
+              -c:v copy -an \
+              -f mpegts - >&3 2>/dev/null &
+            wait_or_interrupt $! "$current_mode" "$visual_mode"
+            continue
+          fi
+        fi
+
+        # Fallback: один клип (очередь, video-playlist, non-processed)
         RANDOM_FILE="${SHUFFLED[0]}"
         SHUFFLED=("${SHUFFLED[@]:1}")
       fi
@@ -434,47 +690,145 @@ feed_fifo() {
     # Записываем текущее видео для дашборда
     echo "${RANDOM_FILE##*/}" > /shared/current_video.txt 2>/dev/null || true
 
-    # Воспроизведение: все режимы выдают video+audio MPEG-TS
-    # Все ffmpeg запускаются в фоне + wait_or_interrupt для мгновенного переключения режима
+    # Воспроизведение: video-playlist выдаёт video+audio, live/visual-radio — только video
     local abr
     abr=$(get_current_audio_bitrate)
 
     if [[ "$RANDOM_FILE" == /visuals/.processed/* ]]; then
       if [ "$visual_mode" = "video-playlist" ] && [ "$current_mode" = "live" ]; then
-        # Video Playlist: аудио из файла + поддержка skip
         local has_audio
         has_audio=$(ffprobe -v error -select_streams a:0 -show_entries stream=codec_type -of csv=p=0 "$RANDOM_FILE" 2>/dev/null)
         if [ -n "$has_audio" ]; then
           ffmpeg -hide_banner -loglevel error -re -i "$RANDOM_FILE" \
-            -c:v copy -c:a aac -b:a "$abr" -ar 48000 -f mpegts - 2>/dev/null &
+            -c:v copy -c:a aac -b:a "$abr" -ar 48000 -f mpegts - >&3 2>/dev/null &
         else
           ffmpeg -hide_banner -loglevel error -re -i "$RANDOM_FILE" \
             -f lavfi -i anullsrc=r=48000:cl=stereo \
-            -c:v copy -c:a aac -b:a 128k -shortest -f mpegts - 2>/dev/null &
+            -c:v copy -c:a aac -b:a 128k -shortest -f mpegts - >&3 2>/dev/null &
         fi
         wait_or_interrupt $! "$current_mode" "$visual_mode"
       else
-        # Radio / Visual Radio: видео из файла + аудио из Icecast
         ffmpeg -hide_banner -loglevel error -re \
           -i "$RANDOM_FILE" \
-          -reconnect 1 -reconnect_streamed 1 -reconnect_delay_max 2 \
-          -i "$ICECAST_URL" \
-          -map 0:v -map 1:a -c:v copy -c:a aac -b:a "$abr" -ar 48000 \
-          -shortest -f mpegts - 2>/dev/null &
+          -c:v copy -an \
+          -f mpegts - >&3 2>/dev/null &
         wait_or_interrupt $! "$current_mode" "$visual_mode"
       fi
     else
-      # Non-processed file: transcode video + Icecast audio
-      ffmpeg -hide_banner -loglevel error -re \
-        -i "$RANDOM_FILE" \
-        -reconnect 1 -reconnect_streamed 1 -reconnect_delay_max 2 \
-        -i "$ICECAST_URL" \
-        -map 0:v -map 1:a \
-        -vf "scale=1920:1080:force_original_aspect_ratio=decrease,pad=1920:1080:(ow-iw)/2:(oh-ih)/2:black,fps=30,format=yuv420p" \
-        -c:v mpeg2video -q:v 2 -c:a aac -b:a "$abr" -ar 48000 \
-        -shortest -f mpegts - 2>/dev/null &
+      if [ "$visual_mode" = "video-playlist" ] && [ "$current_mode" = "live" ]; then
+        ffmpeg -hide_banner -loglevel error -re \
+          -i "$RANDOM_FILE" \
+          -vf "scale=1920:1080:force_original_aspect_ratio=decrease,pad=1920:1080:(ow-iw)/2:(oh-ih)/2:black,fps=30,format=yuv420p" \
+          -c:v mpeg2video -q:v 2 -c:a aac -b:a "$abr" -ar 48000 \
+          -f mpegts - >&3 2>/dev/null &
+      else
+        ffmpeg -hide_banner -loglevel error -re \
+          -i "$RANDOM_FILE" \
+          -vf "scale=1920:1080:force_original_aspect_ratio=decrease,pad=1920:1080:(ow-iw)/2:(oh-ih)/2:black,fps=30,format=yuv420p" \
+          -c:v mpeg2video -q:v 2 -an \
+          -f mpegts - >&3 2>/dev/null &
+      fi
       wait_or_interrupt $! "$current_mode" "$visual_mode"
     fi
+  done
+}
+
+# Audio feeder: Icecast всегда подключён (gate в Liquidsoap рулит тишиной/музыкой).
+# Без mbuffer — нет буфера тишины. При PLAY музыка идёт мгновенно.
+# live+OBS → RTMP аудио. video-playlist = idle (audio from video FIFO).
+feed_audio() {
+  # Redirect echo to stderr (docker logs), keep fd 3 for data pipe
+  exec 3>&1 1>&2
+
+  while true; do
+    if ! pgrep -f "ffmpeg.*$FIFO" >/dev/null 2>&1; then
+      echo "[audio] Main ffmpeg died, exiting"
+      exit 0
+    fi
+
+    local visual_mode obs_status audio_source
+    visual_mode=$(get_visual_mode)
+
+    # Video-playlist: audio comes from video FIFO, not us.
+    if [ "$visual_mode" = "video-playlist" ]; then
+      sleep 2
+      continue
+    fi
+
+    # Determine audio source
+    audio_source="icecast"
+    if [ "$visual_mode" = "live" ]; then
+      obs_status=$(get_live_obs_status)
+      if [ "$obs_status" = "connected" ]; then
+        audio_source="rtmp"
+      fi
+    fi
+
+    local audio_pid=0
+
+    if [ "$audio_source" = "rtmp" ]; then
+      # OBS audio: second subscriber on the same nginx-rtmp stream
+      local ingest_key
+      ingest_key=$(get_live_ingest_key)
+      local rtmp_url="rtmp://rtmp-ingest:1935/ingest/${ingest_key}"
+      echo "[audio] OBS RTMP audio subscriber (AAC 256k)"
+      ffmpeg -hide_banner -loglevel warning \
+        -rw_timeout 5000000 \
+        -rtmp_live live \
+        -i "$rtmp_url" -vn \
+        -c:a aac -b:a 256k -ar 48000 \
+        -f mpegts - >&3 2>&2 &
+      audio_pid=$!
+    else
+      # Icecast — всегда подключён, gate рулит тишиной/музыкой. Без mbuffer = без задержки.
+      echo "[audio] Icecast AAC passthrough (no mbuffer, gate handles standby/live)"
+      ffmpeg -hide_banner -loglevel error \
+        -reconnect 1 -reconnect_streamed 1 -reconnect_delay_max 5 \
+        -i "$ICECAST_URL" -vn \
+        -c:a copy \
+        -f mpegts - >&3 2>/dev/null &
+      audio_pid=$!
+    fi
+
+    local health_counter=0
+
+    # Monitor: visual mode change, OBS status change, stale connection
+    while kill -0 $audio_pid 2>/dev/null; do
+      local new_vmode new_obs_status new_source
+      new_vmode=$(get_visual_mode)
+
+      # Restart on visual mode change
+      if [ "$new_vmode" != "$visual_mode" ]; then
+        echo "[audio] Visual mode changed: $visual_mode → $new_vmode"
+        kill $audio_pid 2>/dev/null; wait $audio_pid 2>/dev/null; break
+      fi
+
+      # In live mode: check if audio source should change
+      if [ "$visual_mode" = "live" ]; then
+        new_obs_status=$(get_live_obs_status)
+        new_source="icecast"
+        if [ "$new_obs_status" = "connected" ]; then
+          new_source="rtmp"
+        fi
+        if [ "$new_source" != "$audio_source" ]; then
+          echo "[audio] Source switch: $audio_source → $new_source"
+          kill $audio_pid 2>/dev/null; wait $audio_pid 2>/dev/null; break
+        fi
+      fi
+
+      # Every 5s: verify ffmpeg is still alive and connected
+      health_counter=$((health_counter + 1))
+      if [ $((health_counter % 10)) -eq 0 ]; then
+        if ! kill -0 $audio_pid 2>/dev/null; then break; fi
+        if [ "$audio_source" = "icecast" ]; then
+          if ! ls -la /proc/$audio_pid/fd/ 2>/dev/null | grep -q socket; then
+            echo "[audio] ffmpeg lost Icecast connection, restarting"
+            kill $audio_pid 2>/dev/null; wait $audio_pid 2>/dev/null; break
+          fi
+        fi
+      fi
+      sleep 0.5
+    done
   done
 }
 
@@ -494,21 +848,36 @@ fi
 file_sig() {
   local file="$1"
   if [ -f "$file" ]; then
-    cksum "$file" | awk '{print $1 ":" $2}'
+    stat -c '%Y%s' "$file" 2>/dev/null || echo "none"
   else
     echo "none"
   fi
 }
 
 current_stream_sig() {
-  # Visual mode switches no longer restart main ffmpeg — feed_fifo handles all modes.
-  # Only overlay/quality/key/control changes trigger restart.
-  echo "keys=$(file_sig /shared/stream_keys.enc);quality=$(file_sig /shared/stream_quality.json);audio=$(file_sig /shared/stream_audio.json);video=$(file_sig /shared/stream_video.json);control=$(file_sig /shared/stream_control.json);overlay=$(file_sig /shared/overlay_config.json);visual=$(file_sig /shared/active_visual_profile.json);filter=$(file_sig /shared/overlay_filter_string.txt)"
+  # Mode changes (standby/armed/live) are handled internally by feed_fifo/feed_audio polling (0.5s).
+  # stream_mode.json excluded — no main ffmpeg restart needed on mode transitions.
+  # stream_control.json excluded — broadcast flag handled by restream_manager, streaming flag by main loop.
+  # live_mode.json excluded — obsStatus changes handled by feed_fifo/feed_audio polling, no main ffmpeg restart needed
+  echo "keys=$(file_sig /shared/stream_keys.enc);quality=$(file_sig /shared/stream_quality.json);audio=$(file_sig /shared/stream_audio.json);video=$(file_sig /shared/stream_video.json);overlay=$(file_sig /shared/overlay_config.json);visual=$(file_sig /shared/active_visual_profile.json);filter=$(file_sig /shared/overlay_filter_string.txt);vmode=$(file_sig /shared/visual_mode.json)"
 }
 
 watch_stream_config() {
+  # Grace period: не трогать ffmpeg первые 10 секунд после старта
+  sleep 10
   while true; do
     sleep 1
+
+    # Сигнал рестарта пайплайна (standby -> armed): flush stale mbuffer data
+    if [ -f /shared/restart_stream ]; then
+      rm -f /shared/restart_stream
+      if pgrep -f "$MAIN_FFMPEG_MATCH" >/dev/null 2>&1; then
+        echo "[!] Pipeline restart signaled (standby->armed), flushing stale buffer..."
+        pkill -TERM -f "$MAIN_FFMPEG_MATCH" 2>/dev/null || true
+      fi
+      continue
+    fi
+
     [ -f "$APPLIED_SIG_FILE" ] || continue
 
     if pgrep -f "$MAIN_FFMPEG_MATCH" >/dev/null 2>&1 && ! is_streaming_enabled; then
@@ -575,7 +944,27 @@ build_outputs() {
   vfilter=$(get_video_filter_with_scale "$preset" "$base_vfilter" "$enhance_vfilter")
   echo "[+] Video filter: $vfilter" >&2
 
-  # Check for logo overlay inputs
+  # Audio routing: separate AUDIO_FIFO for live/visual-radio (managed by feed_audio),
+  # video FIFO audio for video-playlist (synced with clips in feed_fifo).
+  # feed_audio: Icecast always-on (gate handles silence), no mbuffer — NO restart on PLAY/STOP.
+  local cur_vmode audio_input audio_map audio_enc logo_start_idx
+  cur_vmode=$(get_visual_mode)
+
+  if [ "$cur_vmode" = "video-playlist" ]; then
+    audio_input=""
+    audio_map="-map 0:a"
+    audio_enc="-c:a copy"
+    logo_start_idx=1   # inputs: 0=VIDEO_FIFO, 1+=logos
+    echo "[+] Audio: from VIDEO FIFO (video-playlist — file audio per-clip)" >&2
+  else
+    audio_input="-thread_queue_size 4096 -i $AUDIO_FIFO"
+    audio_map="-map 1:a"
+    audio_enc="-c:a copy"
+    logo_start_idx=2   # inputs: 0=VIDEO_FIFO, 1=AUDIO_FIFO, 2+=logos
+    echo "[+] Audio: from AUDIO FIFO (Icecast always-on, no mbuffer)" >&2
+  fi
+
+  # Check for logo overlay inputs (index depends on whether Icecast is an input)
   local logo_inputs=""
   local logo_overlays=""
   if [ -f "/shared/overlay_compiled.json" ]; then
@@ -583,7 +972,7 @@ build_outputs() {
     logo_count=$(grep -c '"asset"' /shared/overlay_compiled.json 2>/dev/null | tr -d '[:space:]' || echo "0")
     [ -z "$logo_count" ] && logo_count=0
     if [ "$logo_count" -gt 0 ]; then
-      local idx=1  # input 0=FIFO (video+audio), logos start at 1
+      local idx=$logo_start_idx
       while IFS= read -r asset_path; do
         if [ -f "$asset_path" ]; then
           logo_inputs="$logo_inputs -i $asset_path"
@@ -606,8 +995,8 @@ build_outputs() {
   # Get extra x264 options
   local x264_extras
   x264_extras=$(get_x264_extras "$preset")
-  
-  # Get extra x264 options
+
+  # Hardware accel and video encoder selection
   local hw_accel="${HW_ACCEL:-}"
   local video_encoder video_args hwaccel_args vf_args
   hwaccel_args=""
@@ -617,6 +1006,11 @@ build_outputs() {
   local needs_sw_filters=false
   if [ -n "$vfilter" ] || [ -n "$logo_inputs" ]; then
     needs_sw_filters=true
+  fi
+
+  # Собираем -vf аргумент из вычисленных фильтров
+  if [ -n "$vfilter" ]; then
+    vf_args="-vf $vfilter"
   fi
 
   local video_enc_args=""
@@ -633,51 +1027,48 @@ build_outputs() {
   else
     # COPY MODE: видео уже готово к стримингу (CBR, GOP, H.264 High)
     # 0% CPU, 0% GPU — просто перекладываем байты
-    # -tag:v 7 нужен т.к. MPEG-TS FIFO передаёт codec tag 0x1b, а FLV/RTMP ожидает 7 (H.264)
-    video_enc_args="-c:v copy -tag:v 7"
+    video_enc_args="-c:v copy"
     echo "[+] VIDEO COPY MODE: 0% CPU, 0% GPU (pre-transcoded CBR stream-ready)" >&2
   fi
 
-  # Unified: FIFO always contains both video+audio (feed_fifo handles all modes)
-  echo "[+] Audio: from FIFO (unified — feed_fifo encodes per-clip)" >&2
   local base_args
-  base_args="-hide_banner -loglevel error $PROGRESS_ARGS -fflags +genpts+igndts $hwaccel_args -thread_queue_size 10240 -i $FIFO $logo_inputs -map 0:v -map 0:a $video_enc_args -c:a copy"
+  base_args="-hide_banner -loglevel error $PROGRESS_ARGS -fflags +genpts+igndts $hwaccel_args -thread_queue_size 10240 -i $FIFO $audio_input $logo_inputs -map 0:v $audio_map $video_enc_args $audio_enc"
   
-  # Always build tee outputs (HLS + all RTMPs)
-  local outputs="[f=hls:hls_time=1:hls_list_size=20:hls_flags=delete_segments+omit_endlist+split_by_time:hls_segment_filename=${HLS_DIR}/seg_%03d.ts]${HLS_PLAYLIST}"
-  
-  if [ "$rtmp_urls" != "[]" ] && [ -n "$rtmp_urls" ]; then
-    local urls
-    urls=$(echo "$rtmp_urls" | grep -o '"url":"[^"]*"' | sed 's/"url":"//;s/"$//')
-    for url in $urls; do
-      url=$(echo "$url" | sed 's/\\\//\//g')
-      if [ -n "$url" ]; then
-        outputs="${outputs}|[f=flv:onfail=ignore]${url}"
-        echo "[+] Adding RTMP output: ${url}" >&2
-      fi
-    done
-  fi
-  
-  echo "$base_args -f tee \"$outputs\" "
+  # HLS-only output (RTMP handled separately by restream_manager)
+  echo "$base_args -f hls -hls_time 1 -hls_list_size 60 -hls_flags delete_segments+omit_endlist -hls_segment_filename ${HLS_DIR}/seg_%03d.ts ${HLS_PLAYLIST}"
 }
 
 # Cleanup stale processes and FIFO
 cleanup_stream() {
-  # Kill by PID file first
+  # Убиваем по PID-файлам + все их дочерние процессы
   if [ -f /tmp/feeder.pid ]; then
-    kill -9 $(cat /tmp/feeder.pid) 2>/dev/null || true
+    local fpid=$(cat /tmp/feeder.pid)
+    kill -9 -$fpid 2>/dev/null || kill -9 $fpid 2>/dev/null || true
     rm -f /tmp/feeder.pid
+  fi
+  if [ -f /tmp/audio_feeder.pid ]; then
+    local apid=$(cat /tmp/audio_feeder.pid)
+    kill -9 -$apid 2>/dev/null || kill -9 $apid 2>/dev/null || true
+    rm -f /tmp/audio_feeder.pid
   fi
   pkill -9 -f "mbuffer" 2>/dev/null || true
   pkill -9 -f "ffmpeg.*-f mpegts" 2>/dev/null || true
   pkill -9 -f "ffmpeg.*$FIFO" 2>/dev/null || true
-  sleep 0.5
+  pkill -9 -f "ffmpeg.*-f flv" 2>/dev/null || true
+  if [ -f /tmp/restream_manager.pid ]; then
+    kill -9 $(cat /tmp/restream_manager.pid) 2>/dev/null || true
+    rm -f /tmp/restream_manager.pid
+  fi
+  sleep 1  # увеличено с 0.5 — гарантируем завершение всех процессов
   [ -p "$FIFO" ] && rm -f "$FIFO" && mkfifo "$FIFO"
+  [ -p "$AUDIO_FIFO" ] && rm -f "$AUDIO_FIFO" && mkfifo "$AUDIO_FIFO"
+  # Flush old HLS segments so player doesn't pick up stale frames
+  rm -f "$HLS_DIR"/seg_*.ts "$HLS_PLAYLIST"
 }
 
 # Main stream function
 stream() {
-  local cmd stream_sig feeder_pid rc health_pid
+  local cmd stream_sig feeder_pid rc restream_pid
   if ! is_streaming_enabled; then
     echo "[!] Streaming disabled, skip stream start."
     return 0
@@ -692,37 +1083,51 @@ stream() {
   # Clean up stderr log for fresh start
   > "$FFMPEG_STDERR_LOG"
 
-  feed_fifo | mbuffer -q -s 128k -m 256M > "$FIFO" &
+  feed_fifo | mbuffer -q -s 128k -m 16M > "$FIFO" &
   feeder_pid=$!
   echo "$feeder_pid" > /tmp/feeder.pid
-  echo "[+] Feeder started with 256M mbuffer (PID: $feeder_pid)"
+  echo "[+] Video feeder started with 16M mbuffer (PID: $feeder_pid)"
+
+  feed_audio > "$AUDIO_FIFO" &
+  local audio_feeder_pid=$!
+  echo "$audio_feeder_pid" > /tmp/audio_feeder.pid
+  echo "[+] Audio feeder started (Icecast always-on, no mbuffer) (PID: $audio_feeder_pid)"
+
   echo "[+] Main ffmpeg PID: $$"
 
-  # Start RTMP health monitor in background
-  monitor_rtmp_health &
-  health_pid=$!
+  # Start RTMP restream manager (separate ffmpeg per platform, PID = health)
+  restream_manager &
+  restream_pid=$!
+  echo "$restream_pid" > /tmp/restream_manager.pid
 
   echo "[+] FFmpeg command: $cmd" >&2
   rc=0
   eval "ffmpeg $cmd 2>>$FFMPEG_STDERR_LOG" || rc=$?
 
-  # Stop health monitor
-  kill "$health_pid" 2>/dev/null || true
-  wait "$health_pid" 2>/dev/null || true
+  # Stop restream manager (its trap cleans up child ffmpeg processes)
+  kill "$restream_pid" 2>/dev/null || true
+  wait "$restream_pid" 2>/dev/null || true
+  rm -f /tmp/restream_manager.pid
+  pkill -9 -f "ffmpeg.*-f flv" 2>/dev/null || true
 
   # Set all outputs to offline on exit
   if [ -f "$RTMP_STATUS_FILE" ]; then
     sed -i 's/"status":"live"/"status":"offline"/g;s/"status":"error"/"status":"offline"/g' "$RTMP_STATUS_FILE" 2>/dev/null || true
   fi
 
-  # Force kill feeder and any stale mbuffer/ffmpeg
+  # Force kill feeders and any stale mbuffer/ffmpeg
   if [ -f /tmp/feeder.pid ]; then
     kill -9 $(cat /tmp/feeder.pid) 2>/dev/null || true
     rm -f /tmp/feeder.pid
   fi
+  if [ -f /tmp/audio_feeder.pid ]; then
+    kill -9 $(cat /tmp/audio_feeder.pid) 2>/dev/null || true
+    rm -f /tmp/audio_feeder.pid
+  fi
   pkill -9 -f "mbuffer" 2>/dev/null || true
   pkill -9 -f "ffmpeg.*-f mpegts" 2>/dev/null || true
   wait "$feeder_pid" 2>/dev/null || true
+  wait "$audio_feeder_pid" 2>/dev/null || true
 
   return $rc
 }
@@ -759,97 +1164,142 @@ lookup_platform_name() {
   echo "$result"
 }
 
-# Monitor RTMP health by watching FFmpeg stderr
-monitor_rtmp_health() {
-  local platform_map rtmp_urls
-  sleep 5  # Wait for FFmpeg to start
-
-  # Get platform name mapping
-  fetch_platform_map
-
-  # Get active RTMP URLs
-  rtmp_urls=$(fetch_rtmp_urls)
-  if [ "$rtmp_urls" = "[]" ] || [ -z "$rtmp_urls" ]; then
-    echo "[rtmp-health] No RTMP URLs configured, monitor idle"
+# Restream HLS to RTMP platforms via separate ffmpeg processes.
+# Process alive = stream alive. Guaranteed, no stderr parsing.
+restream_manager() {
+  # Wait for HLS playlist to appear
+  local wait_count=0
+  while [ ! -f "${HLS_PLAYLIST}" ] && [ $wait_count -lt 30 ]; do
+    sleep 1
+    wait_count=$((wait_count + 1))
+  done
+  if [ ! -f "${HLS_PLAYLIST}" ]; then
+    echo "[restream] HLS playlist not found after 30s, exiting"
     return
   fi
 
+  fetch_platform_map
+
+  # Retry fetching RTMP URLs — dashboard may not be ready yet
+  local rtmp_urls="" url_wait=0
+  while [ $url_wait -lt 60 ]; do
+    rtmp_urls=$(fetch_rtmp_urls)
+    if [ "$rtmp_urls" != "[]" ] && [ -n "$rtmp_urls" ]; then
+      break
+    fi
+    if [ $url_wait -eq 0 ]; then
+      echo "[restream] Waiting for RTMP URLs from dashboard..."
+    fi
+    sleep 3
+    url_wait=$((url_wait + 3))
+  done
+  if [ "$rtmp_urls" = "[]" ] || [ -z "$rtmp_urls" ]; then
+    echo "[restream] No RTMP URLs configured after 60s, manager idle"
+    return
+  fi
+
+  # Parse URLs and names into arrays
+  local -a url_list name_list ff_pid last_start
+  local idx=0
   local urls
   urls=$(echo "$rtmp_urls" | grep -o '"url":"[^"]*"' | sed 's/"url":"//;s/"$//')
-
-  echo "[rtmp-health] Monitoring started"
-
-  # Build reusable arrays of url->name mappings
-  local -a url_list name_list
-  local idx=0
   for url in $urls; do
     url=$(echo "$url" | sed 's/\\\//\//g')
-    url_list[$idx]="$url"
-    name_list[$idx]=$(lookup_platform_name "$url")
-    idx=$((idx + 1))
+    if [ -n "$url" ]; then
+      url_list[$idx]="$url"
+      name_list[$idx]=$(lookup_platform_name "$url")
+      ff_pid[$idx]=0
+      last_start[$idx]=0
+      idx=$((idx + 1))
+    fi
   done
 
-  # Initialize status file with all platforms as live
-  local json i
-  json='{"outputs":{'
-  for ((i=0; i<${#url_list[@]}; i++)); do
-    [ $i -gt 0 ] && json="${json},"
-    json="${json}\"${name_list[$i]}\":{\"url\":\"${url_list[$i]}\",\"status\":\"live\",\"error\":null,\"ts\":$(date +%s)}"
-  done
-  json="${json}},\"ts\":$(date +%s)}"
-  echo "$json" > "$RTMP_STATUS_FILE"
+  if [ ${#url_list[@]} -eq 0 ]; then
+    echo "[restream] No valid RTMP URLs, manager idle"
+    return
+  fi
 
-  # Monitor loop: check stderr for errors every 2 seconds
+  # Cleanup all child ffmpeg on exit
+  cleanup_restreams() {
+    for pid in "${ff_pid[@]}"; do
+      [ "$pid" -ne 0 ] && kill "$pid" 2>/dev/null || true
+    done
+    wait 2>/dev/null || true
+  }
+  trap cleanup_restreams EXIT TERM INT
+
+  echo "[restream] Managing ${#url_list[@]} platform(s)"
+
+  # Monitor loop: start/restart ffmpeg per platform, write status
+  # Respects broadcast flag — only streams when broadcast=true
   while true; do
-    sleep 2
+    local now broadcast_on
+    now=$(date +%s)
+    broadcast_on=$(get_broadcast_enabled)
 
-    # Check if main ffmpeg is running
-    if ! pgrep -f "$MAIN_FFMPEG_MATCH" >/dev/null 2>&1; then
+    if [ "$broadcast_on" = "false" ]; then
+      # Kill all RTMP processes when broadcast is off
+      for ((i=0; i<${#url_list[@]}; i++)); do
+        if [ "${ff_pid[$i]}" -ne 0 ] && kill -0 "${ff_pid[$i]}" 2>/dev/null; then
+          echo "[restream] ${name_list[$i]}: broadcast off, stopping"
+          kill "${ff_pid[$i]}" 2>/dev/null || true
+          wait "${ff_pid[$i]}" 2>/dev/null || true
+          ff_pid[$i]=0
+        fi
+      done
+      # Write offline status
+      local json
       json='{"outputs":{'
       for ((i=0; i<${#url_list[@]}; i++)); do
         [ $i -gt 0 ] && json="${json},"
-        json="${json}\"${name_list[$i]}\":{\"url\":\"${url_list[$i]}\",\"status\":\"offline\",\"error\":null,\"ts\":$(date +%s)}"
+        json="${json}\"${name_list[$i]}\":{\"url\":\"${url_list[$i]}\",\"status\":\"offline\",\"error\":null,\"ts\":$now}"
       done
-      json="${json}},\"ts\":$(date +%s)}"
+      json="${json}},\"ts\":$now}"
       echo "$json" > "$RTMP_STATUS_FILE"
+      sleep 2
       continue
     fi
 
-    # Check stderr for recent errors
-    if [ ! -f "$FFMPEG_STDERR_LOG" ]; then
-      continue
-    fi
+    for ((i=0; i<${#url_list[@]}; i++)); do
+      # Check if ffmpeg is running for this platform
+      if [ "${ff_pid[$i]}" -eq 0 ] || ! kill -0 "${ff_pid[$i]}" 2>/dev/null; then
+        # Reap zombie
+        [ "${ff_pid[$i]}" -ne 0 ] && wait "${ff_pid[$i]}" 2>/dev/null || true
 
+        # Cooldown: don't restart faster than every 5s
+        local elapsed=$((now - ${last_start[$i]}))
+        if [ "$elapsed" -lt 5 ]; then
+          continue
+        fi
+
+        [ "${ff_pid[$i]}" -ne 0 ] && echo "[restream] ${name_list[$i]}: disconnected, restarting..."
+
+        ffmpeg -hide_banner -loglevel error \
+          -rw_timeout 5000000 \
+          -live_start_index -3 \
+          -i "${HLS_PLAYLIST}" \
+          -c copy -f flv "${url_list[$i]}" 2>/dev/null &
+        ff_pid[$i]=$!
+        last_start[$i]=$now
+        echo "[restream] ${name_list[$i]}: started (PID ${ff_pid[$i]})"
+      fi
+    done
+
+    # Write rtmp_status.json based on PID liveness
+    local json
     json='{"outputs":{'
     for ((i=0; i<${#url_list[@]}; i++)); do
       [ $i -gt 0 ] && json="${json},"
-
-      local url_host error_msg status recent_errors
-      url_host=$(echo "${url_list[$i]}" | sed 's|.*://||;s|/.*||')
-      recent_errors=$(tail -50 "$FFMPEG_STDERR_LOG" 2>/dev/null | grep -i "$url_host\|tee\|output" | grep -io "broken pipe\|connection refused\|connection reset\|failed to write\|error writing\|i/o error\|no route to host\|network is unreachable" | tail -1)
-
-      status="live"
-      error_msg=""
-      if [ -n "$recent_errors" ]; then
-        status="error"
-        error_msg="$recent_errors"
+      local status="error"
+      if kill -0 "${ff_pid[$i]}" 2>/dev/null; then
+        status="live"
       fi
-
-      if [ -n "$error_msg" ]; then
-        json="${json}\"${name_list[$i]}\":{\"url\":\"${url_list[$i]}\",\"status\":\"${status}\",\"error\":\"${error_msg}\",\"ts\":$(date +%s)}"
-      else
-        json="${json}\"${name_list[$i]}\":{\"url\":\"${url_list[$i]}\",\"status\":\"${status}\",\"error\":null,\"ts\":$(date +%s)}"
-      fi
+      json="${json}\"${name_list[$i]}\":{\"url\":\"${url_list[$i]}\",\"status\":\"${status}\",\"error\":null,\"ts\":$(date +%s)}"
     done
     json="${json}},\"ts\":$(date +%s)}"
     echo "$json" > "$RTMP_STATUS_FILE"
 
-    # Truncate stderr log if it gets too large (keep last 200 lines)
-    local line_count
-    line_count=$(wc -l < "$FFMPEG_STDERR_LOG" 2>/dev/null || echo "0")
-    if [ "$line_count" -gt 500 ]; then
-      tail -200 "$FFMPEG_STDERR_LOG" > "${FFMPEG_STDERR_LOG}.tmp" && mv "${FFMPEG_STDERR_LOG}.tmp" "$FFMPEG_STDERR_LOG"
-    fi
+    sleep 2
   done
 }
 
@@ -860,7 +1310,7 @@ while true; do
     stream || true
   else
     echo "[!] Streaming disabled, waiting..."
-    sleep 5
+    sleep 1
     continue
   fi
   echo "[!] Restarting in 1s..."
