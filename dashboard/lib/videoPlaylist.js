@@ -5,6 +5,7 @@ const { loadMeta } = require('./trackMeta');
 
 const PLAYLIST_FILE = '/shared/video_playlists.json';
 const ACTIVE_FILE = '/shared/active_visual_profile.json';
+const QUEUE_FILE = '/shared/video_queue.txt';
 const VIDEO_EXTENSIONS = /\.(mp4|mov|mkv)$/i;
 
 function loadVideoPlaylists() {
@@ -12,7 +13,9 @@ function loadVideoPlaylists() {
     if (fs.existsSync(PLAYLIST_FILE)) {
       return JSON.parse(fs.readFileSync(PLAYLIST_FILE, 'utf8'));
     }
-  } catch (e) {}
+  } catch (e) {
+    console.error('[video-playlists] Failed to load playlists:', e.message);
+  }
   return { playlists: {} };
 }
 
@@ -32,9 +35,10 @@ function resolveVideoPlaylist(playlistId, visualsDir) {
   const processedDir = path.join(visualsDir, '.processed');
 
   if (playlist.type === 'manual') {
-    // Сохраняем порядок, фильтруем несуществующие
+    // Сохраняем порядок, фильтруем несуществующие + path traversal
     return (playlist.tracks || []).filter(t => {
-      return fs.existsSync(path.join(processedDir, t));
+      const safe = path.basename(t);
+      return safe && safe === t && fs.existsSync(path.join(processedDir, safe));
     });
   }
 
@@ -90,10 +94,11 @@ function createVideoPlaylistRouter(visualsDir) {
   // GET /api/video-playlists — список всех
   router.get('/', (req, res) => {
     const data = loadVideoPlaylists();
+    const processedDir = path.join(visualsDir, '.processed');
     const list = Object.values(data.playlists).map(pl => {
       const trackCount = pl.type === 'smart'
         ? resolveSmartVideoPlaylist(pl.rules || {}, visualsDir).length
-        : (pl.tracks || []).length;
+        : (pl.tracks || []).filter(t => fs.existsSync(path.join(processedDir, path.basename(t)))).length;
       return { ...pl, trackCount };
     });
     res.json(list);
@@ -115,7 +120,7 @@ function createVideoPlaylistRouter(visualsDir) {
     };
 
     if (playlist.type === 'manual') {
-      playlist.tracks = Array.isArray(tracks) ? tracks : [];
+      playlist.tracks = Array.isArray(tracks) ? tracks.map(t => path.basename(t)).filter(Boolean) : [];
     } else if (playlist.type === 'smart') {
       playlist.rules = rules || {};
     }
@@ -145,7 +150,7 @@ function createVideoPlaylistRouter(visualsDir) {
     const { name, tracks, rules } = req.body;
     if (name !== undefined) existing.name = name;
     if (existing.type === 'manual' && tracks !== undefined) {
-      existing.tracks = tracks;
+      existing.tracks = tracks.map(t => path.basename(t)).filter(Boolean);
     }
     if (existing.type === 'smart' && rules !== undefined) {
       existing.rules = rules;
@@ -163,6 +168,17 @@ function createVideoPlaylistRouter(visualsDir) {
     if (!data.playlists[req.params.id]) {
       return res.status(404).json({ error: 'not found' });
     }
+
+    // Clean up active profile if this playlist was activated
+    try {
+      if (fs.existsSync(ACTIVE_FILE)) {
+        const active = JSON.parse(fs.readFileSync(ACTIVE_FILE, 'utf8'));
+        if (active.id === req.params.id) {
+          fs.unlinkSync(ACTIVE_FILE);
+        }
+      }
+    } catch (e) { /* ignore corrupt active file */ }
+
     delete data.playlists[req.params.id];
     saveVideoPlaylists(data);
     res.json({ ok: true });
@@ -204,13 +220,16 @@ function createVideoPlaylistRouter(visualsDir) {
       return res.status(400).json({ error: 'playlist resolves to 0 videos' });
     }
 
-    const videoQueue = require('./videoQueue');
     const visualMode = require('./visualMode');
 
-    videoQueue.clear();
-    for (const file of resolved) {
-      videoQueue.push(file);
-    }
+    // Atomic write: temp file + rename (same pattern as visualMode.js)
+    const sanitized = resolved.map(f => path.basename(f));
+    const content = sanitized.join('\n') + '\n';
+    const tmpFile = QUEUE_FILE + '.tmp';
+    fs.mkdirSync(path.dirname(QUEUE_FILE), { recursive: true });
+    fs.writeFileSync(tmpFile, content);
+    fs.renameSync(tmpFile, QUEUE_FILE);
+
     visualMode.setVisualMode('video-playlist');
 
     res.json({ ok: true, loaded: resolved.length, videos: resolved });
@@ -226,15 +245,22 @@ function createVideoPlaylistRouter(visualsDir) {
       return res.status(400).json({ error: 'playlist resolves to 0 videos' });
     }
 
+    const visualMode = require('./visualMode');
+
+    // Sanitize resolved filenames before writing
+    const sanitized = resolved.map(f => path.basename(f));
+
     const payload = {
       id: playlist.id,
       name: playlist.name,
-      videos: resolved,
+      videos: sanitized,
       activatedAt: Date.now()
     };
     fs.writeFileSync(ACTIVE_FILE, JSON.stringify(payload, null, 2));
 
-    res.json({ ok: true, activated: resolved.length, videos: resolved });
+    visualMode.setVisualMode('visual-radio');
+
+    res.json({ activated: true, videoCount: resolved.length, mode: 'visual-radio' });
   });
 
   return router;
