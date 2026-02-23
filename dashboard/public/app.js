@@ -1707,6 +1707,8 @@
       .then(function(data) {
         document.getElementById('sched-active-slot').textContent = data.label || data.slotId || '--';
         document.getElementById('sched-active-playlist').textContent = data.playlistName || '--';
+        var vplEl = document.getElementById('sched-active-video-playlist');
+        if (vplEl) vplEl.textContent = data.videoPlaylistName || '--';
         document.getElementById('sw-now').textContent = data.label || 'No active slot';
         document.getElementById('sw-next').textContent = data.nextLabel || '--';
       })
@@ -1821,6 +1823,22 @@
         });
       })
       .catch(function() {});
+
+    // Load video playlists for video-playlist-select dropdowns
+    authFetch('/api/video-playlists')
+      .then(function(r) { return r.json(); })
+      .then(function(data) {
+        var selects = document.querySelectorAll('.video-playlist-select');
+        selects.forEach(function(sel) {
+          var current = sel.value;
+          sel.innerHTML = '<option value="">-- None --</option>';
+          data.forEach(function(pl) {
+            sel.innerHTML += '<option value="' + pl.id + '">' + pl.name + ' (' + pl.trackCount + ' videos)</option>';
+          });
+          sel.value = current;
+        });
+      })
+      .catch(function() {});
   }
 
   document.getElementById('save-schedule-settings').onclick = function() {
@@ -1846,6 +1864,7 @@
       '<div class="form-group"><label>Start Time</label><input type="time" id="slot-start" value="22:00"></div>' +
       '<div class="form-group"><label>End Time</label><input type="time" id="slot-end" value="06:00"></div>' +
       '<div class="form-group"><label>Playlist</label><select id="slot-playlist" class="playlist-select"><option value="">-- None --</option></select></div>' +
+      '<div class="form-group"><label>Video Playlist</label><select id="slot-video-playlist" class="video-playlist-select"><option value="">-- None --</option></select></div>' +
       '<div class="form-group"><label>Label</label><input type="text" id="slot-label" placeholder="Friday Night"></div>',
       function() {
         var slot = {
@@ -1853,6 +1872,7 @@
           startTime: document.getElementById('slot-start').value,
           endTime: document.getElementById('slot-end').value,
           playlistId: document.getElementById('slot-playlist').value || null,
+          videoPlaylistId: document.getElementById('slot-video-playlist').value || null,
           label: document.getElementById('slot-label').value.trim()
         };
         authFetch('/api/schedule/weekly', {
@@ -1879,6 +1899,7 @@
       '<div class="form-group"><label>Start Time</label><input type="time" id="event-start" value="20:00"></div>' +
       '<div class="form-group"><label>End Time</label><input type="time" id="event-end" value="23:00"></div>' +
       '<div class="form-group"><label>Playlist</label><select id="event-playlist" class="playlist-select"><option value="">-- None --</option></select></div>' +
+      '<div class="form-group"><label>Video Playlist</label><select id="event-video-playlist" class="video-playlist-select"><option value="">-- None --</option></select></div>' +
       '<div class="form-group"><label>Label</label><input type="text" id="event-label" placeholder="Guest DJ"></div>',
       function() {
         var ev = {
@@ -1886,6 +1907,7 @@
           startTime: document.getElementById('event-start').value,
           endTime: document.getElementById('event-end').value,
           playlistId: document.getElementById('event-playlist').value || null,
+          videoPlaylistId: document.getElementById('event-video-playlist').value || null,
           label: document.getElementById('event-label').value.trim()
         };
         authFetch('/api/schedule/events', {

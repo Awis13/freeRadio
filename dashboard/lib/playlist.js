@@ -31,7 +31,8 @@ function resolvePlaylist(playlistId, musicDir, bpmMap) {
   if (playlist.type === 'manual') {
     // Filter out tracks that no longer exist
     return (playlist.tracks || []).filter(t => {
-      return fs.existsSync(path.join(musicDir, t));
+      const safe = path.basename(t);
+      return safe && safe === t && fs.existsSync(path.join(musicDir, safe));
     });
   }
 
@@ -118,7 +119,7 @@ function createPlaylistRouter(musicDir, getBpmMap) {
     const list = Object.values(data.playlists).map(pl => {
       const trackCount = pl.type === 'smart'
         ? resolveSmartPlaylist(pl.rules || {}, musicDir, getBpmMap()).length
-        : (pl.tracks || []).length;
+        : (pl.tracks || []).filter(t => fs.existsSync(path.join(musicDir, path.basename(t)))).length;
       return { ...pl, trackCount };
     });
     res.json(list);
@@ -140,7 +141,7 @@ function createPlaylistRouter(musicDir, getBpmMap) {
     };
 
     if (playlist.type === 'manual') {
-      playlist.tracks = Array.isArray(tracks) ? tracks : [];
+      playlist.tracks = Array.isArray(tracks) ? tracks.map(t => path.basename(t)).filter(Boolean) : [];
     } else if (playlist.type === 'smart') {
       playlist.rules = rules || {};
     }
@@ -170,7 +171,7 @@ function createPlaylistRouter(musicDir, getBpmMap) {
     const { name, tracks, rules } = req.body;
     if (name !== undefined) existing.name = name;
     if (existing.type === 'manual' && tracks !== undefined) {
-      existing.tracks = tracks;
+      existing.tracks = tracks.map(t => path.basename(t)).filter(Boolean);
     }
     if (existing.type === 'smart' && rules !== undefined) {
       existing.rules = rules;
@@ -239,7 +240,10 @@ function createPlaylistRouter(musicDir, getBpmMap) {
     }
 
     // Filter to only tracks that exist
-    const existingTracks = tracks.filter(t => fs.existsSync(path.join(musicDir, t)));
+    const existingTracks = tracks.filter(t => {
+      const safe = path.basename(t);
+      return safe && safe === t && fs.existsSync(path.join(musicDir, safe));
+    });
 
     const id = 'pl_' + Date.now();
     const now = Date.now();
