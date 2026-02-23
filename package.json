@@ -13,6 +13,7 @@
     "bats-assert": "^2.2.4",
     "bats-support": "^0.3.0",
     "express": "^5.2.1",
+    "multer": "^2.0.2",
     "vitest": "^3.0.0"
   }
 }
