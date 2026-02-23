@@ -7,3 +7,20 @@ content/music/*
 content/visuals/*
 !content/visuals/.gitkeep
 shared-data/
+certs/
+__pycache__/
+.pytest_cache/
+*.pyc
+
+# Secrets
+.env
+.env.*
+
+# Backup files
+*.bak
+*.bak.*
+*.broken
+*.old
+
+# Lock files (installed in container)
+package-lock.json

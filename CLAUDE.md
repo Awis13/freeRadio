@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-SYSTEM 23 is a 24/7 automated streaming system for hard techno music with synchronized video visuals. It combines Liquidsoap (AutoDJ) with FFmpeg video processing and streams via HLS (browser preview) or RTMP (YouTube/Kick). All services run as Docker containers. A Node.js dashboard at port 80 provides real-time monitoring, file/queue/schedule management, and an HLS preview player.
+STUDIO 23 is a 24/7 automated streaming system for hard techno music with synchronized video visuals. It combines Liquidsoap (AutoDJ) with FFmpeg video processing and streams via HLS (browser preview) or RTMP (YouTube/Kick). All services run as Docker containers. A Node.js dashboard at port 80 provides real-time monitoring, file/queue/schedule management, and an HLS preview player.
 
 ## Commands
 
@@ -28,7 +28,22 @@ docker compose up -d [service] --build
 docker compose down
 ```
 
-There are no tests, no linter, and no build step. The dashboard frontend is vanilla JS (`dashboard/public/app.js`) — no bundler or transpiler.
+No linter and no build step. The dashboard frontend is vanilla JS (`dashboard/public/app.js`) — no bundler or transpiler.
+
+## Tests
+
+```bash
+# Python (audio_analyzer_simple.py) — 65 tests
+pytest tests/
+
+# JavaScript (dashboard/public/utils.js) — 78 tests
+npx vitest run
+
+# Bash (scripts/stream_entry.sh) — 117 tests
+npx bats tests/bash/
+```
+
+Dependencies: `requirements-test.txt` (pytest, numpy), `package.json` (vitest, bats).
 
 ## Architecture
 
@@ -102,9 +117,9 @@ REST API base path: `/api/` — endpoints for `status`, `music`, `visuals`, `que
 ### Liquidsoap Config (configs/liquidsoap/)
 
 - `radio.liq` — simple random playlist, 3s crossfade (not in use)
-- `radio_bpm.liq` — **currently active.** BPM-aware mixing from `.analysis_map`. Smart crossfade: 8-bar mix when BPM data available (beat-synced fade curves), 8s simple fade as fallback. Harbor HTTP API on port 7000 for metadata/queue/skip.
+- `radio_bpm.liq` — **currently active.** Single cross pipeline (5s buffer). BPM-aware smart mix from `.analysis_map`: 2-3 bar crossfade with beat-aligned sin curves and compression. All tracks (including first track at stream start) go through `request.queue` → `cross()` for consistent transitions. `/playback/cue` pushes into the queue; dashboard waits ~5.5s for buffer fill before opening gate. Harbor HTTP API on port 7000 for metadata/queue/skip/cue/resume.
 
-Audio chain: normalize (-14dB) → compress (2.5:1, -16dB threshold) → limit (-1dB). Output: MP3 320kbps to Icecast.
+Audio chain: DSP (normalize/compress/limit) removed from Liquidsoap — applied at transcode time via loudnorm. Output: AAC 256kbps to Icecast.
 
 ### Inter-service Communication
 
@@ -122,7 +137,9 @@ Services communicate through two mechanisms:
 ## Notes
 
 - Code comments are in Russian
-- Icecast binds to Tailscale IP (100.110.164.51), dashboard maps port 80→9090
+- Dashboard maps port 80→9090, авторизация через DASHBOARD_TOKEN
+- Proxmox NAT: 95.217.38.43:8080 → 10.10.10.2:80 (dashboard через интернет)
+- Monitoring/RTMP порты открыты на 0.0.0.0 (Prometheus :9092, Grafana :3000)
 - HLS segments are always generated (even in RTMP mode) so the dashboard preview always works
 - Container memory limits: streamer 1536m, transcoder 512m
 - The `linuxserver/ffmpeg:latest` image is used for both streamer and transcoder (has full QSV support)
