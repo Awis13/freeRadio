@@ -66,6 +66,9 @@ const state = {
   rtmpHealth: {}
 };
 
+// Boot abort flag: set by /api/dj/stop to cancel auto-restore during startup
+let bootAborted = false;
+
 // BPM getter for playlist/track modules
 function getBpmMap() {
   return state.bpm;
@@ -333,6 +336,7 @@ app.post('/api/dj/cue', async (req, res) => {
 
 app.post('/api/dj/stop', async (req, res) => {
   try {
+    bootAborted = true;
     const result = await liqClient.stopPlayback();
     res.json({ ok: true, data: result.data });
   } catch (e) {
@@ -595,30 +599,32 @@ const bootMode = streamControl.getModeState().mode || 'standby';
 console.log(`[boot] streaming=true, broadcast=${!!restreamCfg.autoStart}, mode=${bootMode}`);
 
 
-// Авто-восстановление: ВСЕГДА запускается при boot.
-// Liquidsoap имеет autoplay таймер (8с), dashboard синхронизирует mode.
-// Если Liquidsoap уже играет (autoplay сработал) — просто ставим mode=live.
-// Если нет — cue + resume как fallback.
+// Авто-восстановление: ВСЕГДА запускается при boot (24/7 radio).
+// Liquidsoap имеет autoplay таймер (8с) — он является primary авторитетом.
+// Dashboard только наблюдает и синхронизирует mode state.
+// /playback/stop во время boot отменяет autoplay (через autoplay_cancelled ref в Liquidsoap).
+// bootAborted flag объявлен выше, устанавливается в /api/dj/stop.
 (async () => {
   const MAX_RETRIES = 30;
   const RETRY_INTERVAL = 2000;
-  const noPoolAgent = new http.Agent({ keepAlive: false, maxSockets: 1 });
   const start = Date.now();
 
-  function probe() {
+  function probeStatus() {
+    const agent = new http.Agent({ keepAlive: false, maxSockets: 1 });
     return new Promise((resolve, reject) => {
       const req = http.get({
         hostname: 'dj', port: 7000, path: '/playback/status',
-        timeout: 3000, agent: noPoolAgent
+        timeout: 3000, agent
       }, (res) => {
         let d = '';
         res.on('data', c => d += c);
         res.on('end', () => {
+          agent.destroy();
           try { resolve(JSON.parse(d)); } catch(e) { resolve(d); }
         });
       });
-      req.on('error', reject);
-      req.on('timeout', () => { req.destroy(); reject(new Error('timeout')); });
+      req.on('error', (e) => { agent.destroy(); reject(e); });
+      req.on('timeout', () => { req.destroy(); agent.destroy(); reject(new Error('timeout')); });
     });
   }
 
@@ -626,8 +632,9 @@ console.log(`[boot] streaming=true, broadcast=${!!restreamCfg.autoStart}, mode=$
   await new Promise(r => setTimeout(r, 1000));
   let probeResult = null;
   for (let attempt = 1; attempt <= MAX_RETRIES; attempt++) {
+    if (bootAborted) { console.log('[boot] Aborted by user'); return; }
     try {
-      probeResult = await probe();
+      probeResult = await probeStatus();
       break;
     } catch (e) {
       if (attempt < MAX_RETRIES) {
@@ -638,7 +645,6 @@ console.log(`[boot] streaming=true, broadcast=${!!restreamCfg.autoStart}, mode=$
       }
     }
   }
-  noPoolAgent.destroy();
   if (!probeResult) return;
 
   const playing = (typeof probeResult === 'object') ? probeResult.playing : false;
@@ -648,31 +654,17 @@ console.log(`[boot] streaming=true, broadcast=${!!restreamCfg.autoStart}, mode=$
     return;
   }
 
-  // Phase 2: Liquidsoap ещё не играет — ждём autoplay (8с от его старта)
+  // Phase 2: Liquidsoap ещё не играет — ждём autoplay (8с от его старта + 4с margin)
   const elapsed = (Date.now() - start) / 1000;
-  const waitForAutoplay = Math.max(0, 10 - elapsed) * 1000;
+  const waitForAutoplay = Math.max(0, 12 - elapsed) * 1000;
   if (waitForAutoplay > 0) {
     await new Promise(r => setTimeout(r, waitForAutoplay));
   }
+  if (bootAborted) { console.log('[boot] Aborted by user'); return; }
 
-  // Проверяем ещё раз — autoplay мог уже сработать
+  // Проверяем ещё раз — autoplay должен был сработать
   try {
-    const noPoolAgent2 = new http.Agent({ keepAlive: false, maxSockets: 1 });
-    const status = await new Promise((resolve, reject) => {
-      const req = http.get({
-        hostname: 'dj', port: 7000, path: '/playback/status',
-        timeout: 3000, agent: noPoolAgent2
-      }, (res) => {
-        let d = '';
-        res.on('data', c => d += c);
-        res.on('end', () => {
-          try { resolve(JSON.parse(d)); } catch(e) { resolve(d); }
-        });
-      });
-      req.on('error', reject);
-      req.on('timeout', () => { req.destroy(); reject(new Error('timeout')); });
-    });
-    noPoolAgent2.destroy();
+    const status = await probeStatus();
     if (status && status.playing) {
       streamControl.setModeState('live');
       console.log('[boot] Liquidsoap autoplay active, mode set to live');
@@ -682,7 +674,8 @@ console.log(`[boot] streaming=true, broadcast=${!!restreamCfg.autoStart}, mode=$
     // Продолжаем к fallback
   }
 
-  // Phase 3: fallback — ручной cue + resume
+  // Phase 3: fallback — ручной cue + resume (autoplay не сработал)
+  if (bootAborted) { console.log('[boot] Aborted by user'); return; }
   try {
     const musicDir = '/music/processed';
     const files = (await fs.promises.readdir(musicDir)).filter(f => /\.(wav|mp3|flac|ogg|aac|m4a)$/i.test(f));
@@ -690,10 +683,22 @@ console.log(`[boot] streaming=true, broadcast=${!!restreamCfg.autoStart}, mode=$
       console.log('[boot] No tracks found, cannot auto-restore');
       return;
     }
+    // Re-check: autoplay мог сработать пока мы читали диск
+    try {
+      const recheck = await probeStatus();
+      if (recheck && recheck.playing) {
+        streamControl.setModeState('live');
+        console.log('[boot] Liquidsoap started playing during fallback prep, mode set to live');
+        return;
+      }
+    } catch (e) { /* продолжаем fallback */ }
+
+    if (bootAborted) { console.log('[boot] Aborted by user'); return; }
     const track = files[Math.floor(Math.random() * files.length)];
     const fullPath = path.join(musicDir, track);
     await liqClient.cueTrack(fullPath);
     await new Promise(resolve => setTimeout(resolve, 6000));
+    if (bootAborted) { console.log('[boot] Aborted by user during buffer wait'); return; }
     await liqClient.resumePlayback();
     fs.writeFileSync('/shared/current_audio.txt', fullPath);
     streamControl.setModeState('live');
