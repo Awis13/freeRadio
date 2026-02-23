@@ -796,6 +796,12 @@
           log('live: ' + msg.data.obsStatus);
         }
         break;
+      case 'schedule-slot':
+        if (msg.data) {
+          log('schedule: slot changed → ' + (msg.data.label || msg.data.slotId || 'default'));
+          loadScheduleCurrent();
+        }
+        break;
     }
   }
 
@@ -1819,6 +1825,8 @@
     setTimeout(function() {
       var sel = document.getElementById('schedule-default-playlist');
       sel.value = s.defaultPlaylistId || '';
+      var vsel = document.getElementById('schedule-default-video-playlist');
+      if (vsel) vsel.value = s.defaultVideoPlaylistId || '';
     }, 500);
   }
 
@@ -1856,9 +1864,11 @@
   }
 
   document.getElementById('save-schedule-settings').onclick = function() {
+    var vsel = document.getElementById('schedule-default-video-playlist');
     var settings = {
       timezone: document.getElementById('schedule-timezone').value,
       defaultPlaylistId: document.getElementById('schedule-default-playlist').value || null,
+      defaultVideoPlaylistId: vsel ? (vsel.value || null) : null,
       enabled: document.getElementById('schedule-enabled').checked
     };
     authFetch('/api/schedule', {

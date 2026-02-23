@@ -717,7 +717,7 @@ bpmPoller.start();
 rtmpHealthPoller.start();
 
 // Start schedule executor daemon
-startExecutor(getBpmMap, VISUALS_DIR);
+startExecutor(getBpmMap, VISUALS_DIR, broadcast);
 
 // Keep-alive: предотвратить race condition закрытия соединения при конкурентных запросах
 server.keepAliveTimeout = 61000;
