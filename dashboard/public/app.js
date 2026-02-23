@@ -278,6 +278,17 @@
     return name;
   }
 
+  // Экранирование HTML-спецсимволов для безопасной вставки в innerHTML
+  function escapeHtml(str) {
+    if (typeof str !== 'string') return str;
+    return str
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;')
+      .replace(/'/g, '&#039;');
+  }
+
   function timeAgo(ts) {
     var diff = Math.floor((Date.now() - ts) / 1000);
     if (diff < 60) return 'just now';
@@ -1320,7 +1331,7 @@
           div.className = 'restream-status-item';
           div.innerHTML =
             '<span class="restream-status-dot ' + (config.enabled ? 'on' : 'off') + '"></span>' +
-            '<span>' + name + '</span>' +
+            '<span>' + escapeHtml(name) + '</span>' +
             '<span class="restream-status-text off">' + (config.enabled ? 'READY' : 'OFF') + '</span>';
           container.appendChild(div);
         });
@@ -1403,17 +1414,17 @@
 
       var rules = pl.rules || {};
       var html = '<div class="form-group"><label>BPM Range</label><div class="range-inputs">' +
-        '<input type="number" id="smart-bpm-min" value="' + (rules.bpmMin || '') + '" placeholder="Min" class="input-small">' +
-        ' - <input type="number" id="smart-bpm-max" value="' + (rules.bpmMax || '') + '" placeholder="Max" class="input-small">' +
+        '<input type="number" id="smart-bpm-min" value="' + escapeHtml('' + (rules.bpmMin || '')) + '" placeholder="Min" class="input-small">' +
+        ' - <input type="number" id="smart-bpm-max" value="' + escapeHtml('' + (rules.bpmMax || '')) + '" placeholder="Max" class="input-small">' +
         '</div></div>' +
         '<div class="form-group"><label>Name Pattern (regex)</label>' +
-        '<input type="text" id="smart-name-pattern" value="' + (rules.namePattern || '') + '" placeholder="e.g. hard.*techno"></div>' +
+        '<input type="text" id="smart-name-pattern" value="' + escapeHtml(rules.namePattern || '') + '" placeholder="e.g. hard.*techno"></div>' +
         '<div class="form-group"><label>Tags</label>' +
-        '<input type="text" id="smart-tags" value="' + ((rules.tags || []).join(', ')) + '" placeholder="tag1, tag2"></div>' +
+        '<input type="text" id="smart-tags" value="' + escapeHtml((rules.tags || []).join(', ')) + '" placeholder="tag1, tag2"></div>' +
         '<div class="form-group"><label>Tag Mode</label>' +
         '<select id="smart-tag-mode"><option value="any"' + (rules.tagMode !== 'all' ? ' selected' : '') + '>Any</option>' +
         '<option value="all"' + (rules.tagMode === 'all' ? ' selected' : '') + '>All</option></select></div>' +
-        '<button class="btn-primary" onclick="updateSmartRules(\'' + pl.id + '\')">Update Rules</button>';
+        '<button class="btn-primary" onclick="updateSmartRules(\'' + escapeHtml(pl.id) + '\')">Update Rules</button>';
       rulesDiv.innerHTML = html;
       contentEl.appendChild(rulesDiv);
 
@@ -1786,9 +1797,9 @@
       var div = document.createElement('div');
       div.className = 'event-item';
       div.innerHTML =
-        '<span class="event-date">' + ev.date + '</span>' +
-        '<span class="event-time">' + ev.startTime + '-' + ev.endTime + '</span>' +
-        '<span class="event-label">' + (ev.label || 'Event') + '</span>' +
+        '<span class="event-date">' + escapeHtml(ev.date) + '</span>' +
+        '<span class="event-time">' + escapeHtml(ev.startTime) + '-' + escapeHtml(ev.endTime) + '</span>' +
+        '<span class="event-label">' + escapeHtml(ev.label || 'Event') + '</span>' +
         '<button class="file-del" title="Delete">x</button>';
       div.querySelector('button').onclick = function() {
         deleteEvent(ev.id);
@@ -1817,7 +1828,7 @@
           var current = sel.value;
           sel.innerHTML = '<option value="">-- None --</option>';
           data.forEach(function(pl) {
-            sel.innerHTML += '<option value="' + pl.id + '">' + pl.name + '</option>';
+            sel.innerHTML += '<option value="' + escapeHtml(pl.id) + '">' + escapeHtml(pl.name) + '</option>';
           });
           sel.value = current;
         });
@@ -1833,7 +1844,7 @@
           var current = sel.value;
           sel.innerHTML = '<option value="">-- None --</option>';
           data.forEach(function(pl) {
-            sel.innerHTML += '<option value="' + pl.id + '">' + pl.name + ' (' + pl.trackCount + ' videos)</option>';
+            sel.innerHTML += '<option value="' + escapeHtml(pl.id) + '">' + escapeHtml(pl.name) + ' (' + escapeHtml('' + (pl.trackCount || 0)) + ' videos)</option>';
           });
           sel.value = current;
         });
@@ -2328,7 +2339,7 @@
       header.className = 'overlay-layer-header';
       header.innerHTML =
         '<label class="checkbox-label"><input type="checkbox" ' + (layer.enabled ? 'checked' : '') + ' onchange="toggleOverlayLayer(' + idx + ', this.checked)"> ' +
-        '<span class="overlay-type-badge">' + layer.type + '</span></label>' +
+        '<span class="overlay-type-badge">' + escapeHtml(layer.type) + '</span></label>' +
         '<button class="file-del" onclick="removeOverlayLayer(' + idx + ')">x</button>';
       div.appendChild(header);
 
@@ -2339,25 +2350,25 @@
         var isScrolling = layer.type === 'scrolling_text' || layer.type === 'scrolling_now_playing';
         body.innerHTML =
           '<div class="overlay-props">' +
-          (layer.type === 'static_text' || layer.type === 'scrolling_text' ? '<div class="form-group"><label>Text</label><input type="text" value="' + (layer.text || '') + '" onchange="updateOverlayLayer(' + idx + ', \'text\', this.value)"></div>' : '') +
+          (layer.type === 'static_text' || layer.type === 'scrolling_text' ? '<div class="form-group"><label>Text</label><input type="text" value="' + escapeHtml(layer.text || '') + '" onchange="updateOverlayLayer(' + idx + ', \'text\', this.value)"></div>' : '') +
           (layer.type === 'scrolling_now_playing' ? '<div class="form-group"><label>Source</label><span class="text-secondary">Current track (auto)</span></div>' : '') +
-          (isScrolling ? '<div class="form-group"><label>Speed (px/sec)</label><input type="number" value="' + (layer.speed || 100) + '" onchange="updateOverlayLayer(' + idx + ', \'speed\', parseInt(this.value))"></div>' : '') +
-          (layer.type === 'clock' ? '<div class="form-group"><label>Format</label><input type="text" value="' + (layer.format || '%H:%M') + '" onchange="updateOverlayLayer(' + idx + ', \'format\', this.value)"></div>' : '') +
+          (isScrolling ? '<div class="form-group"><label>Speed (px/sec)</label><input type="number" value="' + escapeHtml('' + (layer.speed || 100)) + '" onchange="updateOverlayLayer(' + idx + ', \'speed\', parseInt(this.value))"></div>' : '') +
+          (layer.type === 'clock' ? '<div class="form-group"><label>Format</label><input type="text" value="' + escapeHtml(layer.format || '%H:%M') + '" onchange="updateOverlayLayer(' + idx + ', \'format\', this.value)"></div>' : '') +
           '<div class="overlay-pos-grid">' +
-          '<div class="form-group"><label>Font Size</label><input type="number" value="' + (layer.fontsize || 28) + '" onchange="updateOverlayLayer(' + idx + ', \'fontsize\', parseInt(this.value))"></div>' +
-          '<div class="form-group"><label>Color</label><input type="text" value="' + (layer.fontcolor || 'white') + '" onchange="updateOverlayLayer(' + idx + ', \'fontcolor\', this.value)"></div>' +
-          '<div class="form-group"><label>X</label><input type="text" value="' + (layer.x || '20') + '" onchange="updateOverlayLayer(' + idx + ', \'x\', this.value)"></div>' +
-          '<div class="form-group"><label>Y</label><input type="text" value="' + (layer.y || '20') + '" onchange="updateOverlayLayer(' + idx + ', \'y\', this.value)"></div>' +
+          '<div class="form-group"><label>Font Size</label><input type="number" value="' + escapeHtml('' + (layer.fontsize || 28)) + '" onchange="updateOverlayLayer(' + idx + ', \'fontsize\', parseInt(this.value))"></div>' +
+          '<div class="form-group"><label>Color</label><input type="text" value="' + escapeHtml(layer.fontcolor || 'white') + '" onchange="updateOverlayLayer(' + idx + ', \'fontcolor\', this.value)"></div>' +
+          '<div class="form-group"><label>X</label><input type="text" value="' + escapeHtml('' + (layer.x || '20')) + '" onchange="updateOverlayLayer(' + idx + ', \'x\', this.value)"></div>' +
+          '<div class="form-group"><label>Y</label><input type="text" value="' + escapeHtml('' + (layer.y || '20')) + '" onchange="updateOverlayLayer(' + idx + ', \'y\', this.value)"></div>' +
           '</div>' +
-          '<div class="form-group"><label>Box Color</label><input type="text" value="' + (layer.boxcolor || '') + '" placeholder="black@0.6" onchange="updateOverlayLayer(' + idx + ', \'boxcolor\', this.value)"></div>' +
+          '<div class="form-group"><label>Box Color</label><input type="text" value="' + escapeHtml(layer.boxcolor || '') + '" placeholder="black@0.6" onchange="updateOverlayLayer(' + idx + ', \'boxcolor\', this.value)"></div>' +
           '</div>';
       } else if (layer.type === 'logo') {
         body.innerHTML =
           '<div class="overlay-props">' +
-          '<div class="form-group"><label>Asset</label><input type="text" value="' + (layer.asset || '') + '" onchange="updateOverlayLayer(' + idx + ', \'asset\', this.value)" placeholder="logo.png"></div>' +
+          '<div class="form-group"><label>Asset</label><input type="text" value="' + escapeHtml(layer.asset || '') + '" onchange="updateOverlayLayer(' + idx + ', \'asset\', this.value)" placeholder="logo.png"></div>' +
           '<div class="overlay-pos-grid">' +
-          '<div class="form-group"><label>X</label><input type="text" value="' + (layer.x || 'W-w-20') + '" onchange="updateOverlayLayer(' + idx + ', \'x\', this.value)"></div>' +
-          '<div class="form-group"><label>Y</label><input type="text" value="' + (layer.y || '20') + '" onchange="updateOverlayLayer(' + idx + ', \'y\', this.value)"></div>' +
+          '<div class="form-group"><label>X</label><input type="text" value="' + escapeHtml('' + (layer.x || 'W-w-20')) + '" onchange="updateOverlayLayer(' + idx + ', \'x\', this.value)"></div>' +
+          '<div class="form-group"><label>Y</label><input type="text" value="' + escapeHtml('' + (layer.y || '20')) + '" onchange="updateOverlayLayer(' + idx + ', \'y\', this.value)"></div>' +
           '</div>' +
           '</div>';
       }
@@ -2469,7 +2480,7 @@
           var div = document.createElement('div');
           div.className = 'overlay-asset-item';
           div.innerHTML =
-            '<span class="file-name">' + a.name + '</span>' +
+            '<span class="file-name">' + escapeHtml(a.name) + '</span>' +
             '<span class="file-size">' + fmtSize(a.size) + '</span>' +
             '<button class="file-del" title="Delete">x</button>';
           div.querySelector('button').onclick = function() {

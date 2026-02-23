@@ -17,6 +17,7 @@ import {
   getBroadcastPhase,
   deriveUiMode,
   uniquePlatformName,
+  escapeHtml,
 } from '../../dashboard/public/utils.js';
 
 // ---------------------------------------------------------------------------
@@ -296,4 +297,46 @@ describe('uniquePlatformName(base, existingNames)', () => {
     expect(suffix).toBeGreaterThanOrEqual(before);
     expect(suffix).toBeLessThanOrEqual(after);
   });
+});
+
+// ---------------------------------------------------------------------------
+// escapeHtml(str)
+// ---------------------------------------------------------------------------
+describe('escapeHtml(str)', () => {
+  it('escapes <script> tags', () =>
+    expect(escapeHtml('<script>alert("xss")</script>')).toBe('&lt;script&gt;alert(&quot;xss&quot;)&lt;/script&gt;'));
+
+  it('escapes double quotes', () =>
+    expect(escapeHtml('"quotes"')).toBe('&quot;quotes&quot;'));
+
+  it('escapes single quotes (apostrophes)', () =>
+    expect(escapeHtml("it's")).toBe('it&#039;s'));
+
+  it('escapes ampersand', () =>
+    expect(escapeHtml('a & b')).toBe('a &amp; b'));
+
+  it('escapes greater-than sign', () =>
+    expect(escapeHtml('a > b')).toBe('a &gt; b'));
+
+  it('escapes less-than sign', () =>
+    expect(escapeHtml('a < b')).toBe('a &lt; b'));
+
+  it('handles a string with all special chars together', () =>
+    expect(escapeHtml('<div class="a" data-x=\'b\'>&</div>')).toBe(
+      '&lt;div class=&quot;a&quot; data-x=&#039;b&#039;&gt;&amp;&lt;/div&gt;'));
+
+  it('returns empty string unchanged', () =>
+    expect(escapeHtml('')).toBe(''));
+
+  it('returns a plain string unchanged', () =>
+    expect(escapeHtml('hello world')).toBe('hello world'));
+
+  it('passes through numbers unchanged (not a string)', () =>
+    expect(escapeHtml(42)).toBe(42));
+
+  it('passes through null unchanged', () =>
+    expect(escapeHtml(null)).toBe(null));
+
+  it('passes through undefined unchanged', () =>
+    expect(escapeHtml(undefined)).toBe(undefined));
 });
