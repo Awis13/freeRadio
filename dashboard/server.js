@@ -66,6 +66,9 @@ const state = {
   rtmpHealth: {}
 };
 
+// Boot abort flag: set by /api/dj/stop to cancel auto-restore during startup
+let bootAborted = false;
+
 // BPM getter for playlist/track modules
 function getBpmMap() {
   return state.bpm;
@@ -333,6 +336,7 @@ app.post('/api/dj/cue', async (req, res) => {
 
 app.post('/api/dj/stop', async (req, res) => {
   try {
+    bootAborted = true;
     const result = await liqClient.stopPlayback();
     res.json({ ok: true, data: result.data });
   } catch (e) {
@@ -595,79 +599,115 @@ const bootMode = streamControl.getModeState().mode || 'standby';
 console.log(`[boot] streaming=true, broadcast=${!!restreamCfg.autoStart}, mode=${bootMode}`);
 
 
-// Авто-восстановление: если mode=live после рестарта,
-// cue случайный трек и открыть gate в Liquidsoap.
-// Retry каждые 3с с agent:false (обход HTTP connection pool).
-if (bootMode === 'live') {
-  (async () => {
-    const MAX_RETRIES = 30;
-    const RETRY_INTERVAL = 3000;
-    const noPoolAgent = new http.Agent({ keepAlive: false, maxSockets: 1 });
-    const start = Date.now();
+// Авто-восстановление: ВСЕГДА запускается при boot (24/7 radio).
+// Liquidsoap имеет autoplay таймер (8с) — он является primary авторитетом.
+// Dashboard только наблюдает и синхронизирует mode state.
+// /playback/stop во время boot отменяет autoplay (через autoplay_cancelled ref в Liquidsoap).
+// bootAborted flag объявлен выше, устанавливается в /api/dj/stop.
+(async () => {
+  const MAX_RETRIES = 30;
+  const RETRY_INTERVAL = 2000;
+  const start = Date.now();
 
-    function probe() {
-      return new Promise((resolve, reject) => {
-        const req = http.get({
-          hostname: 'dj', port: 7000, path: '/playback/status',
-          timeout: 3000, agent: noPoolAgent
-        }, (res) => {
-          let d = '';
-          res.on('data', c => d += c);
-          res.on('end', () => {
-            try { resolve(JSON.parse(d)); } catch(e) { resolve(d); }
-          });
+  function probeStatus() {
+    const agent = new http.Agent({ keepAlive: false, maxSockets: 1 });
+    return new Promise((resolve, reject) => {
+      const req = http.get({
+        hostname: 'dj', port: 7000, path: '/playback/status',
+        timeout: 3000, agent
+      }, (res) => {
+        let d = '';
+        res.on('data', c => d += c);
+        res.on('end', () => {
+          agent.destroy();
+          try { resolve(JSON.parse(d)); } catch(e) { resolve(d); }
         });
-        req.on('error', reject);
-        req.on('timeout', () => { req.destroy(); reject(new Error('timeout')); });
       });
-    }
+      req.on('error', (e) => { agent.destroy(); reject(e); });
+      req.on('timeout', () => { req.destroy(); agent.destroy(); reject(new Error('timeout')); });
+    });
+  }
 
-    // Phase 1: ждём пока Liquidsoap ответит на HTTP (retryable)
-    await new Promise(r => setTimeout(r, RETRY_INTERVAL));
-    let probeResult = null;
-    for (let attempt = 1; attempt <= MAX_RETRIES; attempt++) {
-      try {
-        probeResult = await probe();
-        break;
-      } catch (e) {
-        if (attempt < MAX_RETRIES) {
-          console.log(`[boot] Liquidsoap not ready (${attempt}/${MAX_RETRIES}): ${e.message}`);
-          await new Promise(r => setTimeout(r, RETRY_INTERVAL));
-        } else {
-          console.log(`[boot] Auto-restore gave up after ${MAX_RETRIES} attempts: ${e.message}`);
-        }
+  // Phase 1: ждём пока Liquidsoap ответит на HTTP (retryable)
+  await new Promise(r => setTimeout(r, 1000));
+  let probeResult = null;
+  for (let attempt = 1; attempt <= MAX_RETRIES; attempt++) {
+    if (bootAborted) { console.log('[boot] Aborted by user'); return; }
+    try {
+      probeResult = await probeStatus();
+      break;
+    } catch (e) {
+      if (attempt < MAX_RETRIES) {
+        console.log(`[boot] Liquidsoap not ready (${attempt}/${MAX_RETRIES}): ${e.message}`);
+        await new Promise(r => setTimeout(r, RETRY_INTERVAL));
+      } else {
+        console.log(`[boot] Auto-restore gave up after ${MAX_RETRIES} attempts: ${e.message}`);
       }
     }
-    noPoolAgent.destroy();
-    if (!probeResult) return;
+  }
+  if (!probeResult) return;
 
-    const playing = (typeof probeResult === 'object') ? probeResult.playing : false;
-    if (playing) {
-      console.log('[boot] Liquidsoap already playing, skip restore');
+  const playing = (typeof probeResult === 'object') ? probeResult.playing : false;
+  if (playing) {
+    streamControl.setModeState('live');
+    console.log('[boot] Liquidsoap already playing, mode set to live');
+    return;
+  }
+
+  // Phase 2: Liquidsoap ещё не играет — ждём autoplay (8с от его старта + 4с margin)
+  const elapsed = (Date.now() - start) / 1000;
+  const waitForAutoplay = Math.max(0, 12 - elapsed) * 1000;
+  if (waitForAutoplay > 0) {
+    await new Promise(r => setTimeout(r, waitForAutoplay));
+  }
+  if (bootAborted) { console.log('[boot] Aborted by user'); return; }
+
+  // Проверяем ещё раз — autoplay должен был сработать
+  try {
+    const status = await probeStatus();
+    if (status && status.playing) {
+      streamControl.setModeState('live');
+      console.log('[boot] Liquidsoap autoplay active, mode set to live');
       return;
     }
+  } catch (e) {
+    // Продолжаем к fallback
+  }
 
-    // Phase 2: cue + resume (run once — no re-cue on failure)
+  // Phase 3: fallback — ручной cue + resume (autoplay не сработал)
+  if (bootAborted) { console.log('[boot] Aborted by user'); return; }
+  try {
+    const musicDir = '/music/processed';
+    const files = (await fs.promises.readdir(musicDir)).filter(f => /\.(wav|mp3|flac|ogg|aac|m4a)$/i.test(f));
+    if (files.length === 0) {
+      console.log('[boot] No tracks found, cannot auto-restore');
+      return;
+    }
+    // Re-check: autoplay мог сработать пока мы читали диск
     try {
-      const musicDir = '/music/processed';
-      const files = (await fs.promises.readdir(musicDir)).filter(f => /\.(wav|mp3|flac|ogg|aac|m4a)$/i.test(f));
-      if (files.length === 0) {
-        console.log('[boot] No tracks found, cannot auto-restore');
+      const recheck = await probeStatus();
+      if (recheck && recheck.playing) {
+        streamControl.setModeState('live');
+        console.log('[boot] Liquidsoap started playing during fallback prep, mode set to live');
         return;
       }
-      const track = files[Math.floor(Math.random() * files.length)];
-      const fullPath = path.join(musicDir, track);
-      await liqClient.cueTrack(fullPath);
-      await new Promise(resolve => setTimeout(resolve, 6000));
-      await liqClient.resumePlayback();
-      fs.writeFileSync('/shared/current_audio.txt', fullPath);
-      const elapsed = ((Date.now() - start) / 1000).toFixed(1);
-      console.log(`[boot] Auto-restored: cued ${track}, gate opened (${elapsed}s)`);
-    } catch (e) {
-      console.log(`[boot] Auto-restore cue/resume failed: ${e.message}`);
-    }
-  })();
-}
+    } catch (e) { /* продолжаем fallback */ }
+
+    if (bootAborted) { console.log('[boot] Aborted by user'); return; }
+    const track = files[Math.floor(Math.random() * files.length)];
+    const fullPath = path.join(musicDir, track);
+    await liqClient.cueTrack(fullPath);
+    await new Promise(resolve => setTimeout(resolve, 6000));
+    if (bootAborted) { console.log('[boot] Aborted by user during buffer wait'); return; }
+    await liqClient.resumePlayback();
+    fs.writeFileSync('/shared/current_audio.txt', fullPath);
+    streamControl.setModeState('live');
+    const totalElapsed = ((Date.now() - start) / 1000).toFixed(1);
+    console.log(`[boot] Auto-restored (fallback): cued ${track}, gate opened (${totalElapsed}s)`);
+  } catch (e) {
+    console.log(`[boot] Auto-restore cue/resume failed: ${e.message}`);
+  }
+})();
 
 icecastPoller.start();
 trackPoller.start();
