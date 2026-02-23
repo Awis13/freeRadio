@@ -50,8 +50,9 @@ function getModeState() {
   try {
     if (fs.existsSync(MODE_FILE)) {
       const parsed = JSON.parse(fs.readFileSync(MODE_FILE, 'utf8'));
+      const m = parsed.mode;
       return {
-        mode: parsed.mode === 'live' ? 'live' : 'standby',
+        mode: (m === 'live' || m === 'armed') ? m : 'standby',
         standbyVisual: parsed.standbyVisual || null
       };
     }

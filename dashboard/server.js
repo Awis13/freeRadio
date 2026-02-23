@@ -1,7 +1,9 @@
 const fs = require('fs');
 const express = require('express');
 const http = require('http');
+const https = require('https');
 const path = require('path');
+const { spawn } = require('child_process');
 const { WebSocketServer } = require('ws');
 const { createIcecastPoller } = require('./lib/icecast');
 const { createTrackPoller } = require('./lib/track');
@@ -17,6 +19,7 @@ const videoSettings = require('./lib/videoSettings');
 const streamControl = require('./lib/streamControl');
 const restreamSettings = require('./lib/restreamSettings');
 const visualMode = require('./lib/visualMode');
+const liveMode = require('./lib/liveMode');
 const videoQueue = require('./lib/videoQueue');
 const createQueueRouter = require('./lib/queue');
 const { createPlaylistRouter } = require('./lib/playlist');
@@ -25,6 +28,11 @@ const { createVisualProfileRouter } = require('./lib/visualProfile');
 const { createOverlayRouter } = require('./lib/overlay');
 const { createScheduleRouter, startExecutor, onTrackChange } = require('./lib/schedule');
 const { createHistoryRouter } = require('./lib/history');
+const createVoiceRouter = require('./lib/voice');
+const createMixingRouter = require('./lib/mixing');
+const liqClient = require('./lib/liqClient');
+const channelStrip = require("./lib/channelStrip");
+// const { FftAnalyzer } = require("./lib/fftAnalyzer"); // DISABLED: WebKit bug 180696
 
 const PORT = process.env.PORT || 9090;
 const HLS_DIR = process.env.HLS_DIR || '/hls';
@@ -32,10 +40,18 @@ const MUSIC_DIR = process.env.MUSIC_DIR || '/music';
 const VISUALS_DIR = process.env.VISUALS_DIR || '/visuals';
 const FFMPEG_PROGRESS_FILE = process.env.FFMPEG_PROGRESS_FILE || '';
 const OUTPUT_MODE = process.env.OUTPUT_MODE || 'hls';
+const DASHBOARD_TOKEN = process.env.DASHBOARD_TOKEN || '';
+
+// --- Auth: WebSocket token verification ---
+function verifyWsClient(info) {
+  if (!DASHBOARD_TOKEN) return true;
+  const url = new URL(info.req.url, 'http://localhost');
+  return url.searchParams.get('token') === DASHBOARD_TOKEN;
+}
 
 const app = express();
 const server = http.createServer(app);
-const wss = new WebSocketServer({ server });
+const wss = new WebSocketServer({ server, verifyClient: verifyWsClient });
 
 // --- State ---
 const state = {
@@ -93,29 +109,73 @@ const rtmpHealthPoller = createRtmpHealthPoller((data) => {
   broadcast('rtmp-health', data);
 });
 
+// --- Server-side FFT analyzer (Safari equalizer sync) ---
+// const fftAnalyzer = new FftAnalyzer(); // DISABLED
+// fftAnalyzer.start();
+
 // --- WebSocket ---
-function broadcast(type, data) {
+let broadcast = function(type, data) {
   const msg = JSON.stringify({ type, data });
   wss.clients.forEach((client) => {
     if (client.readyState === 1) client.send(msg);
   });
-}
+};
 
 wss.on('connection', (ws) => {
   const initState = {
     ...state,
     track: state.audio,
-    rtmpHealth: state.rtmpHealth
+    rtmpHealth: state.rtmpHealth,
+    liveMode: liveMode.getLiveMode(),
+    streamControl: streamControl.getControlState(),
+    streamMode: streamControl.getModeState(),
+    visualMode: visualMode.getVisualMode()
   };
   ws.send(JSON.stringify({ type: 'init', data: initState }));
+
+  // Обработка сообщений от клиента (FFT subscribe и т.д.)
+  ws.on('message', (data) => {
+    try {
+      const msg = JSON.parse(data);
+      // if (msg.type === 'fft-subscribe') fftAnalyzer.subscribe(ws);
+      // else if (msg.type === 'fft-unsubscribe') fftAnalyzer.unsubscribe(ws);
+    } catch(e) {}
+  });
+  // ws.on('close', () => { fftAnalyzer.unsubscribe(ws); });
 });
 
-// --- Static files ---
-app.use(express.static(path.join(__dirname, 'public')));
+// --- Static files (no-cache for JS to avoid stale code after deploys) ---
+app.use(express.static(path.join(__dirname, 'public'), {
+  setHeaders: (res, filePath) => {
+    if (filePath.endsWith('.js') || filePath.endsWith('.html') || filePath.endsWith('.css')) {
+      res.set('Cache-Control', 'no-cache, no-store, must-revalidate');
+      res.set('Pragma', 'no-cache');
+      res.set('Expires', '0');
+    }
+  }
+}));
 
 // hls.js
 app.get('/js/hls.min.js', (req, res) => {
   res.sendFile('/app/hls.min.js');
+});
+
+// --- Audio stream proxy (for Web Audio API analyzer in Safari) ---
+// Safari's decodeAudioData can't handle raw AAC ADTS, so ffmpeg transcodes to MP3.
+app.get('/api/audio-stream', (req, res) => {
+  const ff = spawn('ffmpeg', [
+    '-hide_banner', '-loglevel', 'error',
+    '-i', 'http://icecast:8000/live',
+    '-f', 'mp3', '-codec:a', 'libmp3lame', '-b:a', '128k',
+    'pipe:1'
+  ]);
+  res.set('Content-Type', 'audio/mpeg');
+  res.set('Access-Control-Allow-Origin', '*');
+  res.set('Cache-Control', 'no-cache, no-store');
+  ff.stdout.pipe(res);
+  ff.stderr.on('data', (d) => console.error('[audio-proxy]', d.toString().trim()));
+  res.on('close', () => ff.kill('SIGKILL'));
+  ff.on('error', () => res.status(502).end());
 });
 
 // --- HLS segments ---
@@ -126,14 +186,55 @@ app.use('/hls', express.static(HLS_DIR, {
   }
 }));
 
+// --- Body parser (before API routes) ---
+app.use(express.json());
+
+// --- Auth middleware ---
+const PUBLIC_PATHS = [
+  '/api/status',
+  '/api/audio-stream',
+  '/api/rtmp-urls',
+  '/api/rtmp-health',
+  '/api/live/on_publish',
+  '/api/live/on_done',
+  '/api/auth/verify'
+];
+
+app.use('/api/', (req, res, next) => {
+  if (!DASHBOARD_TOKEN) return next();
+  const fullPath = req.baseUrl + req.path;
+  if (PUBLIC_PATHS.some(p => fullPath === p || fullPath.startsWith(p + '/'))) return next();
+  const auth = req.headers.authorization;
+  if (auth === 'Bearer ' + DASHBOARD_TOKEN) return next();
+  res.status(401).json({ error: 'Unauthorized' });
+});
+
+// --- Auth verify endpoint ---
+app.post('/api/auth/verify', (req, res) => {
+  if (!DASHBOARD_TOKEN) return res.json({ ok: true });
+  const { token } = req.body || {};
+  if (token === DASHBOARD_TOKEN) {
+    res.json({ ok: true });
+  } else {
+    res.status(401).json({ error: 'Invalid token' });
+  }
+});
+
 // --- REST API: status ---
 app.get('/api/status', (req, res) => {
-  res.json(state);
+  // Broadcast state включён в status для batch-polling (1 запрос вместо 4)
+  res.json({
+    ...state,
+    streamControl: streamControl.getControlState(),
+    streamMode: streamControl.getModeState(),
+    visualMode: visualMode.getVisualMode(),
+    liveMode: liveMode.getLiveMode()
+  });
 });
 
 // --- REST API: file management ---
 app.use('/api/music', fileManager(MUSIC_DIR));
-app.use('/api/visuals', fileManager(VISUALS_DIR));
+app.use('/api/visuals', fileManager(path.join(VISUALS_DIR, 'incoming')));
 
 // --- REST API: queue control ---
 app.use('/api/queue', createQueueRouter(MUSIC_DIR, getBpmMap));
@@ -175,9 +276,63 @@ app.use('/api/visual-profiles', createVisualProfileRouter(VISUALS_DIR));
 // --- REST API: overlays ---
 app.use('/api/overlays', createOverlayRouter());
 
-// --- REST API: stream keys management ---
-app.use(express.json());
+// --- REST API: voice (push-to-talk) ---
+app.use('/api/voice', createVoiceRouter(broadcast));
 
+// --- REST API: mixing mode ---
+app.use('/api/mixing', createMixingRouter(broadcast));
+
+// --- REST API: DJ playback control ---
+app.post('/api/dj/start', async (req, res) => {
+  try {
+    const result = await liqClient.startPlayback();
+    res.json({ ok: true, data: result.data });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+app.post('/api/dj/resume', async (req, res) => {
+  try {
+    const result = await liqClient.resumePlayback();
+    // Write cued track to current_audio.txt so transport bar updates immediately
+    if (cuedTrackPath) {
+      try { fs.writeFileSync('/shared/current_audio.txt', cuedTrackPath); } catch (e) {}
+      cuedTrackPath = null;
+    }
+    res.json({ ok: true, data: result.data });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// Cue a random track into queue (cross-buffered pipeline, ~5s fill time)
+let cuedTrackPath = null;
+app.post('/api/dj/cue', async (req, res) => {
+  try {
+    const musicDir = '/music/processed';
+    const files = fs.readdirSync(musicDir).filter(f => /\.(wav|mp3|flac|ogg|aac|m4a)$/i.test(f));
+    if (files.length === 0) return res.status(404).json({ error: 'No tracks found' });
+    const track = files[Math.floor(Math.random() * files.length)];
+    const fullPath = path.join(musicDir, track);
+    cuedTrackPath = fullPath;
+    const result = await liqClient.cueTrack(fullPath);
+    res.json({ ok: true, track, data: result.data });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+app.post('/api/dj/stop', async (req, res) => {
+  try {
+    const result = await liqClient.stopPlayback();
+    res.json({ ok: true, data: result.data });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// --- REST API: stream keys management ---
 app.get('/api/stream-keys', (req, res) => {
   const platforms = streamKeys.getPlatforms();
   const maxPlatforms = parseInt(process.env.MAX_PLATFORMS) || 3;
@@ -258,6 +413,46 @@ app.post('/api/audio', (req, res) => {
   }
 });
 
+
+// --- REST API: channel strip ---
+app.get("/api/channel-strip", async (req, res) => {
+  try {
+    const config = await channelStrip.getConfig();
+    res.json(config);
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+app.post("/api/channel-strip", express.json(), async (req, res) => {
+  try {
+    const result = await channelStrip.setConfig(req.body);
+    res.json(result);
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+app.post("/api/channel-strip/preset", express.json(), async (req, res) => {
+  try {
+    const { name } = req.body;
+    if (!name) return res.status(400).json({ error: "missing preset name" });
+    const result = await channelStrip.setPreset(name);
+    if (!result.ok) return res.status(400).json(result);
+    res.json(result);
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+app.get("/api/channel-strip/metering", async (req, res) => {
+  try {
+    const data = await channelStrip.getMetering();
+    res.json(data);
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
 // --- REST API: video settings ---
 app.get('/api/video', (req, res) => {
   res.json(videoSettings.getVideoSettings());
@@ -301,9 +496,49 @@ app.get('/api/visual-mode', (req, res) => {
 });
 
 app.post('/api/visual-mode', (req, res) => {
-  const { mode, radioVisual } = req.body;
-  const result = visualMode.setVisualMode(mode, radioVisual);
+  const { mode } = req.body;
+  const result = visualMode.setVisualMode(mode);
   res.json({ success: true, ...result });
+});
+
+// --- REST API: live mode ---
+app.get('/api/live-mode', (req, res) => {
+  res.json(liveMode.getLiveMode());
+});
+
+app.post('/api/live-mode', (req, res) => {
+  const { source, afkFallback } = req.body;
+  const result = liveMode.setLiveMode({ source, afkFallback });
+  broadcast('live-mode', result);
+  res.json({ success: true, ...result });
+});
+
+app.post('/api/live-mode/generate-key', (req, res) => {
+  const result = liveMode.regenerateIngestKey();
+  broadcast('live-mode', result);
+  res.json({ success: true, ...result });
+});
+
+// nginx-rtmp callbacks (form-urlencoded by default)
+app.post('/api/live/on_publish', express.urlencoded({ extended: false }), (req, res) => {
+  const streamName = req.body.name || '';
+  const current = liveMode.getLiveMode();
+  // Validate stream key: OBS publishes to rtmp://host:1935/ingest/{key}
+  if (streamName !== current.ingestKey) {
+    console.log(`[live] on_publish rejected: key mismatch (got ${streamName})`);
+    return res.status(403).send('Forbidden');
+  }
+  console.log('[live] OBS connected');
+  const result = liveMode.setObsStatus('connected');
+  broadcast('live-mode', result);
+  res.send('OK');
+});
+
+app.post('/api/live/on_done', express.urlencoded({ extended: false }), (req, res) => {
+  console.log('[live] OBS disconnected');
+  const result = liveMode.setObsStatus('disconnected');
+  broadcast('live-mode', result);
+  res.send('OK');
 });
 
 // --- REST API: processed visuals list ---
@@ -344,8 +579,84 @@ app.use('/overlay-assets', express.static('/shared/overlay_assets'));
 // autoStart controls whether RTMP broadcast is active on boot.
 const restreamCfg = restreamSettings.getSettings();
 streamControl.setControlState(true, !!restreamCfg.autoStart);
-streamControl.setModeState('live');
-console.log(`[boot] streaming=true, broadcast=${!!restreamCfg.autoStart}, mode=live`);
+// Не сбрасываем mode — сохраняем из файла
+const bootMode = streamControl.getModeState().mode || 'standby';
+console.log(`[boot] streaming=true, broadcast=${!!restreamCfg.autoStart}, mode=${bootMode}`);
+
+
+// Авто-восстановление: если mode=live после рестарта,
+// cue случайный трек и открыть gate в Liquidsoap.
+// Retry каждые 3с с agent:false (обход HTTP connection pool).
+if (bootMode === 'live') {
+  (async () => {
+    const MAX_RETRIES = 30;
+    const RETRY_INTERVAL = 3000;
+    const noPoolAgent = new http.Agent({ keepAlive: false, maxSockets: 1 });
+    const start = Date.now();
+
+    function probe() {
+      return new Promise((resolve, reject) => {
+        const req = http.get({
+          hostname: 'dj', port: 7000, path: '/playback/status',
+          timeout: 3000, agent: noPoolAgent
+        }, (res) => {
+          let d = '';
+          res.on('data', c => d += c);
+          res.on('end', () => {
+            try { resolve(JSON.parse(d)); } catch(e) { resolve(d); }
+          });
+        });
+        req.on('error', reject);
+        req.on('timeout', () => { req.destroy(); reject(new Error('timeout')); });
+      });
+    }
+
+    // Phase 1: ждём пока Liquidsoap ответит на HTTP (retryable)
+    await new Promise(r => setTimeout(r, RETRY_INTERVAL));
+    let probeResult = null;
+    for (let attempt = 1; attempt <= MAX_RETRIES; attempt++) {
+      try {
+        probeResult = await probe();
+        break;
+      } catch (e) {
+        if (attempt < MAX_RETRIES) {
+          console.log(`[boot] Liquidsoap not ready (${attempt}/${MAX_RETRIES}): ${e.message}`);
+          await new Promise(r => setTimeout(r, RETRY_INTERVAL));
+        } else {
+          console.log(`[boot] Auto-restore gave up after ${MAX_RETRIES} attempts: ${e.message}`);
+        }
+      }
+    }
+    noPoolAgent.destroy();
+    if (!probeResult) return;
+
+    const playing = (typeof probeResult === 'object') ? probeResult.playing : false;
+    if (playing) {
+      console.log('[boot] Liquidsoap already playing, skip restore');
+      return;
+    }
+
+    // Phase 2: cue + resume (run once — no re-cue on failure)
+    try {
+      const musicDir = '/music/processed';
+      const files = fs.readdirSync(musicDir).filter(f => /\.(wav|mp3|flac|ogg|aac|m4a)$/i.test(f));
+      if (files.length === 0) {
+        console.log('[boot] No tracks found, cannot auto-restore');
+        return;
+      }
+      const track = files[Math.floor(Math.random() * files.length)];
+      const fullPath = path.join(musicDir, track);
+      await liqClient.cueTrack(fullPath);
+      await new Promise(resolve => setTimeout(resolve, 6000));
+      await liqClient.resumePlayback();
+      fs.writeFileSync('/shared/current_audio.txt', fullPath);
+      const elapsed = ((Date.now() - start) / 1000).toFixed(1);
+      console.log(`[boot] Auto-restored: cued ${track}, gate opened (${elapsed}s)`);
+    } catch (e) {
+      console.log(`[boot] Auto-restore cue/resume failed: ${e.message}`);
+    }
+  })();
+}
 
 icecastPoller.start();
 trackPoller.start();
@@ -357,7 +668,49 @@ rtmpHealthPoller.start();
 // Start schedule executor daemon
 startExecutor(getBpmMap);
 
+// Keep-alive: предотвратить race condition закрытия соединения при конкурентных запросах
+server.keepAliveTimeout = 61000;
+server.headersTimeout = 65000;
+
 server.listen(PORT, '0.0.0.0', () => {
   console.log(`[dashboard] http://0.0.0.0:${PORT}`);
   console.log(`[dashboard] mode=${OUTPUT_MODE} hls=${HLS_DIR}`);
 });
+
+// --- HTTPS (for getUserMedia / secure context) ---
+const TLS_PORT = process.env.TLS_PORT;
+const TLS_CERT = process.env.TLS_CERT;
+const TLS_KEY = process.env.TLS_KEY;
+
+if (TLS_PORT && TLS_CERT && TLS_KEY && fs.existsSync(TLS_CERT) && fs.existsSync(TLS_KEY)) {
+  const tlsOpts = {
+    cert: fs.readFileSync(TLS_CERT),
+    key: fs.readFileSync(TLS_KEY)
+  };
+  const tlsServer = https.createServer(tlsOpts, app);
+  const wssTls = new WebSocketServer({ server: tlsServer, verifyClient: verifyWsClient });
+  wssTls.on('connection', (ws) => {
+    const initState = { ...state, track: state.audio, rtmpHealth: state.rtmpHealth, liveMode: liveMode.getLiveMode(), streamControl: streamControl.getControlState(), streamMode: streamControl.getModeState(), visualMode: visualMode.getVisualMode() };
+    ws.send(JSON.stringify({ type: 'init', data: initState }));
+    ws.on('message', (data) => {
+      try {
+        const msg = JSON.parse(data);
+        // if (msg.type === 'fft-subscribe') fftAnalyzer.subscribe(ws);
+        // else if (msg.type === 'fft-unsubscribe') fftAnalyzer.unsubscribe(ws);
+      } catch(e) {}
+    });
+    // ws.on('close', () => { fftAnalyzer.unsubscribe(ws); });
+  });
+  // Patch broadcast to send to both WS servers
+  const origBroadcast = broadcast;
+  broadcast = function(type, data) {
+    const msg = JSON.stringify({ type, data });
+    wss.clients.forEach((c) => { if (c.readyState === 1) c.send(msg); });
+    wssTls.clients.forEach((c) => { if (c.readyState === 1) c.send(msg); });
+  };
+  tlsServer.listen(TLS_PORT, '0.0.0.0', () => {
+    console.log(`[dashboard] https://0.0.0.0:${TLS_PORT}`);
+  });
+} else {
+  if (TLS_PORT) console.log('[dashboard] TLS configured but cert/key not found, skipping HTTPS');
+}

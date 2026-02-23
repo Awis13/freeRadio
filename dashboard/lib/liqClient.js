@@ -51,4 +51,61 @@ function getQueueLength() {
   return request('GET', '/queue/length');
 }
 
-module.exports = { request, getQueue, pushTrack, skip, clearQueue, getQueueLength };
+function pushVoice(filePath) {
+  return request('POST', '/voice/push', filePath);
+}
+
+function getVoiceConfig() {
+  return request('GET', '/voice/config');
+}
+
+function setVoiceConfig(config) {
+  return request('POST', '/voice/config', JSON.stringify(config));
+}
+
+function getMixingConfig() {
+  return request('GET', '/mixing/config');
+}
+
+function setMixingConfig(config) {
+  return request('POST', '/mixing/config', JSON.stringify(config));
+}
+
+function startPlayback() {
+  return request('POST', '/playback/start', '');
+}
+
+function stopPlayback() {
+  return request('POST', '/playback/stop', '');
+}
+
+function resumePlayback() {
+  return request('POST', '/playback/resume', '');
+}
+
+function cueTrack(filePath) {
+  return request('POST', '/playback/cue', filePath);
+}
+
+// ---- Channel Strip ----
+
+function getStripConfig() {
+  return request('GET', '/strip/config');
+}
+
+function setStripConfig(params) {
+  return request('POST', '/strip/config', JSON.stringify(params));
+}
+
+function getStripMetering() {
+  return request('GET', '/strip/metering');
+}
+
+module.exports = {
+  request,
+  getQueue, pushTrack, skip, clearQueue, getQueueLength,
+  pushVoice, getVoiceConfig, setVoiceConfig,
+  getMixingConfig, setMixingConfig,
+  startPlayback, stopPlayback, resumePlayback, cueTrack,
+  getStripConfig, setStripConfig, getStripMetering
+};

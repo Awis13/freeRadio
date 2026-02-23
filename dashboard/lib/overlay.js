@@ -23,14 +23,14 @@ function saveOverlays(data) {
 
 function generateFilterString(config) {
   if (!config.enabled || !config.layers || config.layers.length === 0) {
-    // Default filter only
-    fs.writeFileSync(FILTER_STRING_FILE, 'fps=30,format=yuv420p');
+    // No overlays — empty filter so streamer stays in copy mode (0% CPU)
+    fs.writeFileSync(FILTER_STRING_FILE, '');
     return;
   }
 
   const enabledLayers = config.layers.filter(l => l.enabled);
   if (enabledLayers.length === 0) {
-    fs.writeFileSync(FILTER_STRING_FILE, 'fps=30,format=yuv420p');
+    fs.writeFileSync(FILTER_STRING_FILE, '');
     return;
   }
 
@@ -39,7 +39,7 @@ function generateFilterString(config) {
   const logoLayers = enabledLayers.filter(l => l.type === 'logo' && l.asset);
   const textLayers = enabledLayers.filter(l => l.type !== 'logo');
 
-  const filters = ['fps=30'];
+  const filters = [];
 
   // Add drawtext filters for text-based layers
   for (const layer of textLayers) {

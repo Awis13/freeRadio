@@ -1,6 +1,13 @@
+const path = require('path');
 const express = require('express');
 const liq = require('./liqClient');
 const { resolvePlaylist } = require('./playlist');
+
+// Map original filename to processed WAV path (transcoder outputs all audio as .wav)
+function toProcessedPath(filename) {
+  const base = path.basename(filename, path.extname(filename));
+  return '/music/processed/' + base + '.wav';
+}
 
 function createQueueRouter(musicDir, getBpmMap) {
   const router = express.Router();
@@ -20,7 +27,7 @@ function createQueueRouter(musicDir, getBpmMap) {
     try {
       const filename = (typeof req.body === 'string' ? req.body : JSON.stringify(req.body)).trim();
       if (!filename) return res.status(400).json({ error: 'no filename' });
-      const filePath = '/music/' + filename;
+      const filePath = toProcessedPath(filename);
       const result = await liq.pushTrack(filePath);
       res.json(result.data);
     } catch (e) {
@@ -70,7 +77,7 @@ function createQueueRouter(musicDir, getBpmMap) {
       const results = [];
       for (const track of batch) {
         try {
-          const r = await liq.pushTrack('/music/' + track);
+          const r = await liq.pushTrack(toProcessedPath(track));
           results.push({ track, ok: true });
         } catch (e) {
           results.push({ track, ok: false, error: e.message });
