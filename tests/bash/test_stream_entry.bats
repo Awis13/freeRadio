@@ -27,8 +27,8 @@ setup() {
 
   awk '
     NR >= 366 && NR <= 373 { next }
-    NR >= 835 && NR <= 841 { next }
-    NR >= 1306             { next }
+    NR >= 850 && NR <= 856 { next }
+    NR >= 1347             { next }
     { print }
   ' "$src" > "$out"
 
@@ -787,4 +787,126 @@ teardown() {
   } > "$TEST_DIR/rtmp_platform_map.txt"
   run lookup_platform_name "rtmp://fa723fc1b171.global.live-video.net/app/key2"
   assert_output "Kick"
+}
+
+# ===========================================================================
+# D. Bug fixes: audio feeder deadlock + retry backoff
+# ===========================================================================
+
+# ---------------------------------------------------------------------------
+# cleanup_stream: kills audiofifo ffmpeg processes
+# ---------------------------------------------------------------------------
+@test "cleanup_stream: calls pkill for audiofifo pattern" {
+  # Проверяем, что cleanup_stream содержит pkill для audiofifo
+  local src="$TEST_DIR/stream_functions.sh"
+  run grep -c 'pkill.*audiofifo' "$src"
+  # Должно быть минимум 2 вхождения (cleanup_stream + stream)
+  assert [ "$output" -ge 2 ]
+}
+
+@test "cleanup_stream: calls pkill for AUDIO_FIFO variable pattern" {
+  local src="$TEST_DIR/stream_functions.sh"
+  run grep -c 'pkill.*AUDIO_FIFO' "$src"
+  # Должно быть минимум 2 вхождения (cleanup_stream + stream)
+  assert [ "$output" -ge 2 ]
+}
+
+@test "cleanup_stream: recreates FIFOs unconditionally after kill" {
+  # Проверяем, что в cleanup_stream есть rm -f + mkfifo (без условия [ -p ])
+  local src="$TEST_DIR/stream_functions.sh"
+  # В cleanup_stream должно быть безусловное пересоздание FIFO
+  run grep -A2 'rm -f "$FIFO" "$AUDIO_FIFO"' "$src"
+  assert_output --partial 'mkfifo "$FIFO"'
+}
+
+@test "cleanup_stream: mocked execution kills audiofifo processes" {
+  # Мок pkill/kill/cat/mkfifo/rm/sleep — проверяем что cleanup_stream вызывает нужные pkill
+  local log="$TEST_DIR/pkill_log.txt"
+  > "$log"
+
+  # Создаём mock-функции
+  pkill() { echo "pkill $*" >> "$log"; return 0; }
+  kill() { return 0; }
+  cat() { echo "0"; }
+  mkfifo() { return 0; }
+  sleep() { return 0; }
+  rm() { return 0; }
+  export -f pkill kill cat mkfifo sleep rm
+
+  FIFO="/tmp/videofifo.ts"
+  AUDIO_FIFO="/tmp/audiofifo.ts"
+  HLS_DIR="$TEST_DIR/hls"
+  HLS_PLAYLIST="$HLS_DIR/stream.m3u8"
+  mkdir -p "$HLS_DIR"
+
+  # Убираем PID-файлы чтобы упростить тест
+  rm -f /tmp/feeder.pid /tmp/audio_feeder.pid /tmp/restream_manager.pid 2>/dev/null || true
+
+  cleanup_stream
+
+  # Проверяем что pkill вызван с audiofifo паттерном
+  run grep "audiofifo" "$log"
+  assert_success
+  assert_output --partial "audiofifo"
+}
+
+# ---------------------------------------------------------------------------
+# stream(): timeout-based wait instead of blocking wait
+# ---------------------------------------------------------------------------
+@test "stream: uses timeout-based wait loop instead of bare wait" {
+  local src="$TEST_DIR/stream_functions.sh"
+  # Проверяем что в функции stream() есть цикл с kill -0 и sleep 0.5
+  run grep -c 'kill -0.*feeder_pid' "$src"
+  assert [ "$output" -ge 1 ]
+}
+
+@test "stream: has kill -9 after timeout loop for audio_feeder_pid" {
+  local src="$TEST_DIR/stream_functions.sh"
+  run grep -c 'kill -9.*audio_feeder_pid' "$src"
+  assert [ "$output" -ge 1 ]
+}
+
+@test "stream: recreates FIFOs after feeder cleanup" {
+  local src="$TEST_DIR/stream_functions.sh"
+  # В stream() после timeout wait должно быть пересоздание FIFO
+  # Ищем mkfifo после секции с audio_feeder_pid kill
+  run grep -A20 'kill -9.*audio_feeder_pid.*|| true' "$src"
+  assert_output --partial 'mkfifo "$FIFO"'
+  assert_output --partial 'mkfifo "$AUDIO_FIFO"'
+}
+
+# ---------------------------------------------------------------------------
+# feed_audio: Icecast readiness check + backoff on fast exit
+# ---------------------------------------------------------------------------
+@test "feed_audio: contains Icecast readiness check with curl" {
+  local src="$TEST_DIR/stream_functions.sh"
+  # Проверяем наличие curl проверки перед ffmpeg в feed_audio
+  run grep -c 'curl.*ICECAST_URL.*200' "$src"
+  assert [ "$output" -ge 1 ]
+}
+
+@test "feed_audio: has backoff sleep on fast ffmpeg exit" {
+  local src="$TEST_DIR/stream_functions.sh"
+  # Проверяем наличие backoff логики (audio_elapsed < 2 → sleep 3)
+  run grep -c 'audio_elapsed.*-lt 2' "$src"
+  assert [ "$output" -ge 1 ]
+}
+
+@test "feed_audio: tracks start time for backoff calculation" {
+  local src="$TEST_DIR/stream_functions.sh"
+  # Проверяем что audio_start_time устанавливается
+  run grep -c 'audio_start_time=.*date' "$src"
+  assert [ "$output" -ge 1 ]
+}
+
+@test "feed_audio: logs backoff message on fast exit" {
+  local src="$TEST_DIR/stream_functions.sh"
+  run grep 'ffmpeg exited too fast' "$src"
+  assert_success
+}
+
+@test "feed_audio: logs Icecast not ready on failed curl check" {
+  local src="$TEST_DIR/stream_functions.sh"
+  run grep 'Icecast not ready' "$src"
+  assert_success
 }

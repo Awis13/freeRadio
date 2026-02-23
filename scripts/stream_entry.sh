@@ -780,6 +780,12 @@ feed_audio() {
         -f mpegts - >&3 2>&2 &
       audio_pid=$!
     else
+      # Проверяем доступность Icecast /live перед подключением (избегаем retry-спам)
+      if ! curl -s -o /dev/null -w "%{http_code}" "$ICECAST_URL" 2>/dev/null | grep -q "200"; then
+        echo "[audio] Icecast not ready, retry in 2s"
+        sleep 2
+        continue
+      fi
       # Icecast — всегда подключён, gate рулит тишиной/музыкой. Без mbuffer = без задержки.
       echo "[audio] Icecast AAC passthrough (no mbuffer, gate handles standby/live)"
       ffmpeg -hide_banner -loglevel error \
@@ -791,6 +797,8 @@ feed_audio() {
     fi
 
     local health_counter=0
+    local audio_start_time
+    audio_start_time=$(date +%s)
 
     # Monitor: visual mode change, OBS status change, stale connection
     while kill -0 $audio_pid 2>/dev/null; do
@@ -829,6 +837,13 @@ feed_audio() {
       fi
       sleep 0.5
     done
+
+    # Backoff при быстром падении ffmpeg (Icecast не готов, сетевая ошибка и т.д.)
+    local audio_elapsed=$(( $(date +%s) - audio_start_time ))
+    if [ "$audio_elapsed" -lt 2 ]; then
+      echo "[audio] ffmpeg exited too fast (${audio_elapsed}s), backoff 3s"
+      sleep 3
+    fi
   done
 }
 
@@ -1055,13 +1070,18 @@ cleanup_stream() {
   pkill -9 -f "ffmpeg.*-f mpegts" 2>/dev/null || true
   pkill -9 -f "ffmpeg.*$FIFO" 2>/dev/null || true
   pkill -9 -f "ffmpeg.*-f flv" 2>/dev/null || true
+  # Убиваем дочерние ffmpeg, пишущие в AUDIO_FIFO (могут блокироваться на FIFO write)
+  pkill -9 -f "ffmpeg.*audiofifo" 2>/dev/null || true
+  pkill -9 -f "ffmpeg.*$AUDIO_FIFO" 2>/dev/null || true
   if [ -f /tmp/restream_manager.pid ]; then
     kill -9 $(cat /tmp/restream_manager.pid) 2>/dev/null || true
     rm -f /tmp/restream_manager.pid
   fi
   sleep 1  # увеличено с 0.5 — гарантируем завершение всех процессов
-  [ -p "$FIFO" ] && rm -f "$FIFO" && mkfifo "$FIFO"
-  [ -p "$AUDIO_FIFO" ] && rm -f "$AUDIO_FIFO" && mkfifo "$AUDIO_FIFO"
+  # Пересоздаём FIFO после убийства всех процессов — разблокирует зависшие write
+  rm -f "$FIFO" "$AUDIO_FIFO"
+  mkfifo "$FIFO"
+  mkfifo "$AUDIO_FIFO"
   # Flush old HLS segments so player doesn't pick up stale frames
   rm -f "$HLS_DIR"/seg_*.ts "$HLS_PLAYLIST"
 }
@@ -1126,8 +1146,29 @@ stream() {
   fi
   pkill -9 -f "mbuffer" 2>/dev/null || true
   pkill -9 -f "ffmpeg.*-f mpegts" 2>/dev/null || true
-  wait "$feeder_pid" 2>/dev/null || true
-  wait "$audio_feeder_pid" 2>/dev/null || true
+  # Убиваем дочерние ffmpeg audio feeder (могут блокироваться на FIFO write)
+  pkill -9 -f "ffmpeg.*audiofifo" 2>/dev/null || true
+  pkill -9 -f "ffmpeg.*$AUDIO_FIFO" 2>/dev/null || true
+
+  # Ждём feeder с таймаутом (3с), чтобы не зависнуть на wait навечно
+  local _t
+  for _t in $(seq 1 6); do
+    kill -0 "$feeder_pid" 2>/dev/null || break
+    sleep 0.5
+  done
+  kill -9 "$feeder_pid" 2>/dev/null || true
+
+  # Ждём audio feeder с таймаутом (3с)
+  for _t in $(seq 1 6); do
+    kill -0 "$audio_feeder_pid" 2>/dev/null || break
+    sleep 0.5
+  done
+  kill -9 "$audio_feeder_pid" 2>/dev/null || true
+
+  # Пересоздаём FIFO — разблокирует зависшие write
+  rm -f "$FIFO" "$AUDIO_FIFO"
+  mkfifo "$FIFO"
+  mkfifo "$AUDIO_FIFO"
 
   return $rc
 }
