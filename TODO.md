@@ -1,7 +1,7 @@
 # STUDIO 23 — TODO
 
 > Last reviewed: 2026-02-23
-> Tests: 172/172 green (65 pytest + 107 vitest), bats: 124 (verified locally)
+> Tests: 184/184 green (65 pytest + 119 vitest), bats: 124 (verified locally)
 
 ## In Progress
 
@@ -9,18 +9,18 @@
 
 ## Up Next
 
-### XSS sanitization в innerHTML (app.js)
-- Playlist/profile names интерполируются в `innerHTML` без экранирования
-- За авторизацией, low risk, но defense-in-depth нужен
-- Добавить escape-функцию или использовать `textContent` вместо `innerHTML`
-- **Файл:** `dashboard/public/app.js` (модалки schedule, overlay layers)
-
 ### Object.assign whitelist в PUT /events/:id
 - `Object.assign(ev, req.body)` мержит произвольные ключи из request body в объект event
 - Нужен property whitelist: `{ date, startTime, endTime, playlistId, videoPlaylistId, label, priority }`
 - **Файл:** `dashboard/lib/schedule.js` ~line 288
 
 ## Backlog
+
+### Content-Security-Policy header
+- Добавить CSP header (`script-src 'self'`) в Express server
+- Предотвращает эксплуатацию любых пропущенных innerHTML в будущем
+- Reviewer recommendation из PR #4
+- **Файл:** `dashboard/server.js`
 
 ### Video playlist — smart rules: duration filter
 - Нужен `duration_map` (аналог `.bpm_map`) для видео файлов
@@ -82,6 +82,7 @@
 
 ## Done
 
+- [x] XSS sanitization: escapeHtml() для 24 innerHTML injection points — PR #4, `4fdb312` (2026-02-23)
 - [x] Audio feeder: deadlock fix + Icecast retry backoff — PR #3, `691340d` (2026-02-23)
 - [x] Восстановлен .env, создан .env.example — Icecast auth починен (2026-02-23)
 - [x] Up Next cleanup: path traversal, schedule video playlists, async readdir — PR #2, `226cc15` (2026-02-23)
