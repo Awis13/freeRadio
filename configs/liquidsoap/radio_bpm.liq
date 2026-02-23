@@ -713,6 +713,22 @@ gated = switch(track_sensitive=false, transitions=[
 ])
 gated = mksafe(gated)
 
+# ---- AUTOPLAY ----
+# Автоматически открыть gate через 8с после старта (cross buffer заполняется за ~5с).
+# Если dashboard вызвал /playback/resume раньше — таймер ничего не делает.
+# Dashboard может закрыть gate через /playback/stop если нужен standby.
+thread.run(delay=8.0, fun() -> begin
+  if not dj_playing() then
+    dj_playing := true
+    fn = next_track()
+    if fn != "" then
+      current_title := strip_ext(get_basename(fn))
+      file.write(data=fn, "/shared/current_audio.txt")
+    end
+    log("AUTOPLAY: gate auto-opened after initial buffer")
+  end
+end)
+
 harbor.http.register(port=7000, method="POST", "/playback/stop",
   fun(_, resp) -> begin
     dj_playing := false
