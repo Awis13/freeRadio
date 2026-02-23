@@ -15,9 +15,9 @@ MAIN_FFMPEG_MATCH="/tmp/videofifo.ts"
 FFMPEG_STDERR_LOG="/tmp/ffmpeg_stderr.log"
 RTMP_STATUS_FILE="/shared/rtmp_status.json"
 
-# Escape a string for safe JSON embedding (quotes and backslashes)
+# Escape a string for safe JSON embedding (RFC 8259: quotes, backslashes, control chars)
 json_escape_value() {
-  printf '%s' "$1" | sed 's/\\/\\\\/g;s/"/\\"/g'
+  printf '%s' "$1" | sed -e 's/\\/\\\\/g' -e 's/"/\\"/g' -e 's/\t/\\t/g' | tr -d '\n\r'
 }
 
 

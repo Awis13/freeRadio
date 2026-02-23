@@ -148,7 +148,7 @@ def json_str(s) =
   if string.length(j) >= 2 then
     string.sub(j, start=1, length=string.length(j) - 2)
   else
-    s
+    ""
   end
 end
 
@@ -688,7 +688,7 @@ harbor.http.register(port=7000, method="GET", "/mixing/config",
   fun(_, resp) -> begin
     resp.content_type("application/json")
     resp.header("access-control-allow-origin", "*")
-    resp.data('{"mode": "#{mix_mode()}"}')
+    resp.data('{"mode": "#{json_str(mix_mode())}"}')
   end
 )
 
@@ -779,7 +779,7 @@ harbor.http.register(port=7000, method="POST", "/playback/cue",
       log("PLAYBACK: cued #{path} into queue")
       resp.content_type("application/json")
       resp.header("access-control-allow-origin", "*")
-      resp.data('{"ok": true, "cued": "#{path}"}')
+      resp.data('{"ok": true, "cued": "#{json_str(path)}"}')
     else
       resp.content_type("application/json")
       resp.header("access-control-allow-origin", "*")
