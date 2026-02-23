@@ -1,7 +1,7 @@
 #!/bin/bash
 
 # ============================================
-# SYSTEM 23 — BPM Scanner (Live Daemon)
+# STUDIO 23 — BPM Scanner (Live Daemon)
 #
 # Работает ПОСТОЯННО. Каждые N секунд
 # проверяет /music на новые треки,
@@ -19,7 +19,7 @@ SCAN_INTERVAL=15   # Секунды между проверками
 set -Eeuo pipefail
 
 echo "=========================================="
-echo "  SYSTEM 23 — BPM Scanner (Live Mode)"
+echo "  STUDIO 23 — BPM Scanner (Live Mode)"
 echo "  Watching: ${MUSIC_DIR}"
 echo "  Interval: ${SCAN_INTERVAL}s"
 echo "=========================================="

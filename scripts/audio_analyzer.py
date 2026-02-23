@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-SYSTEM 23 — Advanced Audio Analyzer (Essentia)
+STUDIO 23 — Advanced Audio Analyzer (Essentia)
 
 Анализирует треки и находит:
 - BPM и позиции всех битов (beat positions)
@@ -434,7 +434,7 @@ def get_all_music_files() -> List[str]:
 
 def main():
     print("=" * 60)
-    print("SYSTEM 23 — Advanced Audio Analyzer (Essentia)")
+    print("STUDIO 23 — Advanced Audio Analyzer (Essentia)")
     print(f"Music dir: {MUSIC_DIR}")
     print(f"Analysis dir: {ANALYSIS_DIR}")
     print("=" * 60)

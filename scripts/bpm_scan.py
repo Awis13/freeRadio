@@ -65,7 +65,7 @@ def scan_file(filepath):
 
 def main():
     print("=" * 50)
-    print("SYSTEM 23 — BPM Scanner (librosa)")
+    print("STUDIO 23 — BPM Scanner (librosa)")
     print(f"Watching: {MUSIC_DIR}")
     print("=" * 50)
     
