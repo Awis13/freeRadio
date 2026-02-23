@@ -2,7 +2,7 @@
 
 > Last reviewed: 2026-02-23
 > Tests: 231/231 green (65 pytest + 175 vitest), bats: 124
-> Phase: Dashboard ✅ complete
+> Phase: Dashboard — стабилизация
 
 ## In Progress
 
