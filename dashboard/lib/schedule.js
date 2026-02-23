@@ -2,6 +2,7 @@ const fs = require('fs');
 const express = require('express');
 const liq = require('./liqClient');
 const { resolvePlaylist, getPlaylist } = require('./playlist');
+const { resolveVideoPlaylist, getVideoPlaylist } = require('./videoPlaylist');
 const { appendEntry } = require('./history');
 
 const SCHEDULE_FILE = '/shared/schedule.json';
@@ -41,6 +42,7 @@ function getCurrentSlot() {
       return {
         slotId: ev.id,
         playlistId: ev.playlistId,
+        videoPlaylistId: ev.videoPlaylistId || null,
         label: ev.label || 'Event',
         source: 'event'
       };
@@ -53,6 +55,7 @@ function getCurrentSlot() {
       return {
         slotId: ws.id,
         playlistId: ws.playlistId,
+        videoPlaylistId: ws.videoPlaylistId || null,
         label: ws.label || 'Weekly slot',
         source: 'weekly'
       };
@@ -63,6 +66,7 @@ function getCurrentSlot() {
   return {
     slotId: null,
     playlistId: data.settings.defaultPlaylistId || null,
+    videoPlaylistId: null,
     label: null,
     source: 'default'
   };
@@ -133,6 +137,28 @@ async function executeScheduleTick() {
         console.log(`[schedule] Loaded ${batch.length} tracks from playlist ${playlistId}`);
       } catch (e) {
         console.error('[schedule] Failed to switch playlist:', e.message);
+      }
+    }
+
+    // Switch video playlist
+    const videoPlaylistId = slot.videoPlaylistId;
+    if (videoPlaylistId) {
+      try {
+        const VISUALS_DIR = '/visuals';
+        const resolved = resolveVideoPlaylist(videoPlaylistId, VISUALS_DIR);
+        if (resolved.length > 0) {
+          const ACTIVE_FILE = '/shared/active_visual_profile.json';
+          const payload = JSON.stringify({
+            id: videoPlaylistId,
+            name: 'schedule-' + slotId,
+            videos: resolved,
+            activatedAt: Date.now()
+          }, null, 2);
+          fs.writeFileSync(ACTIVE_FILE, payload);
+          console.log(`[schedule] Activated video playlist ${videoPlaylistId} (${resolved.length} videos)`);
+        }
+      } catch (e) {
+        console.error('[schedule] Failed to switch video playlist:', e.message);
       }
     }
   }
@@ -207,22 +233,28 @@ function createScheduleRouter() {
       const pl = getPlaylist(slot.playlistId);
       if (pl) playlistName = pl.name;
     }
+    let videoPlaylistName = null;
+    if (slot.videoPlaylistId) {
+      const vpl = getVideoPlaylist(slot.videoPlaylistId);
+      if (vpl) videoPlaylistName = vpl.name;
+    }
     res.json({
       ...slot,
       playlistName,
+      videoPlaylistName,
       nextLabel: next ? next.label : null
     });
   });
 
   // POST /api/schedule/weekly — add weekly slot
   router.post('/weekly', express.json(), (req, res) => {
-    const { day, startTime, endTime, playlistId, label } = req.body;
+    const { day, startTime, endTime, playlistId, videoPlaylistId, label } = req.body;
     if (day === undefined || !startTime || !endTime) {
       return res.status(400).json({ error: 'day, startTime, endTime required' });
     }
     const data = loadSchedule();
     const id = 'ws_' + Date.now();
-    data.weekly[id] = { id, day: parseInt(day), startTime, endTime, playlistId: playlistId || null, label: label || '' };
+    data.weekly[id] = { id, day: parseInt(day), startTime, endTime, playlistId: playlistId || null, videoPlaylistId: videoPlaylistId || null, label: label || '' };
     saveSchedule(data);
     res.json(data.weekly[id]);
   });
@@ -237,13 +269,13 @@ function createScheduleRouter() {
 
   // POST /api/schedule/events — add one-time event
   router.post('/events', express.json(), (req, res) => {
-    const { date, startTime, endTime, playlistId, label, priority } = req.body;
+    const { date, startTime, endTime, playlistId, videoPlaylistId, label, priority } = req.body;
     if (!date || !startTime || !endTime) {
       return res.status(400).json({ error: 'date, startTime, endTime required' });
     }
     const data = loadSchedule();
     const id = 'ev_' + Date.now();
-    data.events[id] = { id, date, startTime, endTime, playlistId: playlistId || null, label: label || '', priority: priority || 10 };
+    data.events[id] = { id, date, startTime, endTime, playlistId: playlistId || null, videoPlaylistId: videoPlaylistId || null, label: label || '', priority: priority || 10 };
     saveSchedule(data);
     res.json(data.events[id]);
   });

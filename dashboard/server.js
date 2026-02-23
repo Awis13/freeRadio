@@ -313,7 +313,7 @@ let cuedTrackPath = null;
 app.post('/api/dj/cue', async (req, res) => {
   try {
     const musicDir = '/music/processed';
-    const files = fs.readdirSync(musicDir).filter(f => /\.(wav|mp3|flac|ogg|aac|m4a)$/i.test(f));
+    const files = (await fs.promises.readdir(musicDir)).filter(f => /\.(wav|mp3|flac|ogg|aac|m4a)$/i.test(f));
     if (files.length === 0) return res.status(404).json({ error: 'No tracks found' });
     const track = files[Math.floor(Math.random() * files.length)];
     const fullPath = path.join(musicDir, track);
@@ -544,15 +544,18 @@ app.post('/api/live/on_done', express.urlencoded({ extended: false }), (req, res
 });
 
 // --- REST API: processed visuals list ---
-app.get('/api/visuals-processed', (req, res) => {
+app.get('/api/visuals-processed', async (req, res) => {
   const processedDir = path.join(VISUALS_DIR, '.processed');
   try {
-    const files = fs.readdirSync(processedDir)
-      .filter(f => /\.(mp4|mov|mkv)$/i.test(f) && !f.startsWith('_standby_'))
-      .map(f => {
-        const stat = fs.statSync(path.join(processedDir, f));
-        return { name: f, size: stat.size };
-      });
+    const names = (await fs.promises.readdir(processedDir))
+      .filter(f => /\.(mp4|mov|mkv)$/i.test(f) && !f.startsWith('_standby_'));
+    const files = [];
+    for (const f of names) {
+      try {
+        const stat = await fs.promises.stat(path.join(processedDir, f));
+        files.push({ name: f, size: stat.size });
+      } catch (e) { /* skip files that disappeared */ }
+    }
     res.json(files);
   } catch (e) {
     res.json([]);
@@ -641,7 +644,7 @@ if (bootMode === 'live') {
     // Phase 2: cue + resume (run once — no re-cue on failure)
     try {
       const musicDir = '/music/processed';
-      const files = fs.readdirSync(musicDir).filter(f => /\.(wav|mp3|flac|ogg|aac|m4a)$/i.test(f));
+      const files = (await fs.promises.readdir(musicDir)).filter(f => /\.(wav|mp3|flac|ogg|aac|m4a)$/i.test(f));
       if (files.length === 0) {
         console.log('[boot] No tracks found, cannot auto-restore');
         return;

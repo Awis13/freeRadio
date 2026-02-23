@@ -35,7 +35,7 @@ function activateProfile(id) {
   const active = {
     id: profile.id,
     name: profile.name,
-    videos: profile.videos,
+    videos: (profile.videos || []).map(v => path.basename(v)).filter(Boolean),
     activatedAt: Date.now()
   };
   fs.writeFileSync(ACTIVE_FILE, JSON.stringify(active, null, 2));
@@ -73,7 +73,7 @@ function createVisualProfileRouter(visualsDir) {
     const profile = {
       id,
       name,
-      videos: Array.isArray(videos) ? videos : [],
+      videos: Array.isArray(videos) ? videos.map(v => path.basename(v)).filter(Boolean) : [],
       createdAt: now,
       updatedAt: now
     };
@@ -91,9 +91,10 @@ function createVisualProfileRouter(visualsDir) {
     if (!profile) return res.status(404).json({ error: 'not found' });
 
     // Verify which videos still exist
-    const existing = (profile.videos || []).filter(v =>
-      fs.existsSync(path.join(visualsDir, v))
-    );
+    const existing = (profile.videos || []).filter(v => {
+      const safe = path.basename(v);
+      return safe && safe === v && fs.existsSync(path.join(visualsDir, safe));
+    });
 
     const active = getActiveProfile();
     res.json({
@@ -110,7 +111,7 @@ function createVisualProfileRouter(visualsDir) {
     if (!existing) return res.status(404).json({ error: 'not found' });
 
     if (req.body.name !== undefined) existing.name = req.body.name;
-    if (req.body.videos !== undefined) existing.videos = req.body.videos;
+    if (req.body.videos !== undefined) existing.videos = req.body.videos.map(v => path.basename(v)).filter(Boolean);
     existing.updatedAt = Date.now();
 
     data.profiles[req.params.id] = existing;
