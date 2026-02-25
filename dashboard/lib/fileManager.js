@@ -14,6 +14,42 @@ function dirToS3Prefix(dir) {
   return '';
 }
 
+// Найти processed-версию файла (transcoder меняет расширение: mp3→wav, mov→mp4)
+function findProcessed(dir, name) {
+  const base = name.replace(/\.[^.]+$/, '');
+  if (dir.includes('/music')) {
+    return { dir: path.join(dir, 'processed'), s3Prefix: 'music/processed/', base };
+  }
+  if (dir.includes('/visuals')) {
+    const root = dir.replace(/\/incoming\/?$/, '');
+    return { dir: path.join(root, '.processed'), s3Prefix: 'visuals/processed/', base };
+  }
+  return null;
+}
+
+// Удалить все processed-версии файла (локально + S3)
+async function deleteProcessed(dir, name) {
+  const info = findProcessed(dir, name);
+  if (!info) return [];
+  const deleted = [];
+  try {
+    const files = fs.readdirSync(info.dir);
+    for (const f of files) {
+      const fBase = f.replace(/\.[^.]+$/, '');
+      if (fBase !== info.base) continue;
+      // Удалить локально
+      try { fs.unlinkSync(path.join(info.dir, f)); } catch (e) {}
+      // Удалить из S3
+      if (s3.S3_ENABLED) {
+        try { await s3.remove(info.s3Prefix + f); } catch (e) {}
+      }
+      deleted.push(f);
+      console.log(`[fileManager] cascade delete processed: ${f}`);
+    }
+  } catch (e) { /* processed dir may not exist */ }
+  return deleted;
+}
+
 function fileManager(dir) {
   const router = express.Router();
 
@@ -102,7 +138,10 @@ function fileManager(dir) {
         }
       }
 
-      res.json({ deleted: name, ...(s3ok !== null && { s3: s3ok }) });
+      // Каскадное удаление processed-версии (локально + S3)
+      const processedDeleted = await deleteProcessed(dir, name);
+
+      res.json({ deleted: name, ...(s3ok !== null && { s3: s3ok }), ...(processedDeleted.length > 0 && { processedDeleted }) });
     } catch (e) {
       res.status(500).json({ error: e.message });
     }
