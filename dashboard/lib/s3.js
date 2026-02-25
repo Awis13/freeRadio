@@ -32,7 +32,7 @@ function tenantKey(key) {
   return `tenants/${TENANT_ID}/${key}`;
 }
 
-// Stream upload
+// Stream upload (from file)
 async function upload(localPath, s3Key) {
   const s3 = getClient();
   if (!s3) return;
@@ -41,6 +41,18 @@ async function upload(localPath, s3Key) {
     Bucket: S3_BUCKET,
     Key: tenantKey(s3Key),
     Body: body
+  }));
+  console.log(`[s3] uploaded ${s3Key}`);
+}
+
+// Buffer upload (атомарный — без повторного чтения файла)
+async function uploadBuffer(buffer, s3Key) {
+  const s3 = getClient();
+  if (!s3) return;
+  await s3.send(new PutObjectCommand({
+    Bucket: S3_BUCKET,
+    Key: tenantKey(s3Key),
+    Body: buffer
   }));
   console.log(`[s3] uploaded ${s3Key}`);
 }
@@ -144,7 +156,7 @@ async function syncDir(s3Prefix, localDir) {
 }
 
 module.exports = {
-  upload, download, list, remove, exists,
+  upload, uploadBuffer, download, list, remove, exists,
   ensureCached, syncDir, tenantKey,
   S3_ENABLED, TENANT_ID
 };

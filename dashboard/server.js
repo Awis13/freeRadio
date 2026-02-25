@@ -611,7 +611,10 @@ app.get('/api/s3/status', (req, res) => {
 });
 
 // --- Auto-restore: cue + resume Liquidsoap ---
+// Всегда запускается при boot (24/7 radio). Если Liquidsoap уже играет — просто ставит mode=live.
+// Если нет — ждёт autoplay, затем fallback cue+resume. bootAborted отменяет при /api/dj/stop.
 async function autoRestore() {
+  bootAborted = false;
   const MAX_RETRIES = 30;
   const RETRY_INTERVAL = 2000;
   const start = Date.now();
@@ -727,23 +730,20 @@ async function boot() {
   const bootMode = streamControl.getModeState().mode || 'standby';
   console.log(`[boot] streaming=true, broadcast=${!!restreamCfg.autoStart}, mode=${bootMode}`);
 
-  // 1. Restore конфигов и метаданных из S3
+  // 1-3. S3 restore (каждый шаг в try/catch — boot продолжается даже если S3 недоступен)
   if (s3.S3_ENABLED) {
-    await syncWatcher.init();
+    try { await syncWatcher.init(); } catch (e) {
+      console.error(`[boot] syncWatcher init failed: ${e.message}`);
+    }
+    try { await s3.syncDir('music/processed/', path.join(MUSIC_DIR, 'processed')); } catch (e) {
+      console.error(`[boot] music sync failed: ${e.message}`);
+    }
+    try { await s3.syncDir('visuals/processed/', path.join(VISUALS_DIR, '.processed')); } catch (e) {
+      console.error(`[boot] visuals sync failed: ${e.message}`);
+    }
+    const syncElapsed = ((Date.now() - start) / 1000).toFixed(1);
+    console.log(`[s3] boot sync completed in ${syncElapsed}s`);
   }
-
-  // 2. Скачать все processed аудио (критично для Liquidsoap)
-  if (s3.S3_ENABLED) {
-    await s3.syncDir('music/processed/', path.join(MUSIC_DIR, 'processed'));
-  }
-
-  // 3. Скачать все processed видео из S3
-  if (s3.S3_ENABLED) {
-    await s3.syncDir('visuals/processed/', path.join(VISUALS_DIR, '.processed'));
-  }
-
-  const syncElapsed = ((Date.now() - start) / 1000).toFixed(1);
-  if (s3.S3_ENABLED) console.log(`[s3] boot sync completed in ${syncElapsed}s`);
 
   // 4. Запуск pollers
   icecastPoller.start();

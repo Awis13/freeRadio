@@ -4,9 +4,6 @@ const fs = require('fs');
 const path = require('path');
 const s3 = require('./s3');
 
-const AUDIO_EXT = new Set(['.wav', '.mp3', '.flac', '.ogg', '.aac', '.m4a']);
-const VIDEO_EXT = new Set(['.mp4', '.mov', '.mkv']);
-
 // Определить S3 prefix по локальной директории
 function dirToS3Prefix(dir) {
   if (dir.includes('/music')) return 'music/raw/';
@@ -38,15 +35,24 @@ async function deleteProcessed(dir, name) {
       const fBase = f.replace(/\.[^.]+$/, '');
       if (fBase !== info.base) continue;
       // Удалить локально
-      try { fs.unlinkSync(path.join(info.dir, f)); } catch (e) {}
+      try {
+        fs.unlinkSync(path.join(info.dir, f));
+      } catch (e) {
+        console.error(`[fileManager] cascade delete local failed: ${f}: ${e.message}`);
+        continue; // не пушим в deleted, не пытаемся S3
+      }
       // Удалить из S3
       if (s3.S3_ENABLED) {
-        try { await s3.remove(info.s3Prefix + f); } catch (e) {}
+        try { await s3.remove(info.s3Prefix + f); } catch (e) {
+          console.error(`[fileManager] cascade delete S3 failed: ${f}: ${e.message}`);
+        }
       }
       deleted.push(f);
       console.log(`[fileManager] cascade delete processed: ${f}`);
     }
-  } catch (e) { /* processed dir may not exist */ }
+  } catch (e) {
+    if (e.code !== 'ENOENT') console.error(`[fileManager] deleteProcessed error: ${e.message}`);
+  }
   return deleted;
 }
 

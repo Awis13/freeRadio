@@ -16,6 +16,9 @@ const CONFIG_FILES = [
   'channel_strip.json', 'video_playlists.json'
 ];
 
+// Большие append-only файлы — stat-based detection вместо полного хэша
+const STAT_BASED_FILES = new Set(['play_history.jsonl']);
+
 // Метаданные от audio-analyzer
 const METADATA_FILES = [
   { local: path.join(MUSIC_DIR, '.analysis_map'), s3Key: 'music/.analysis_map' },
@@ -42,10 +45,21 @@ function md5(data) {
   return crypto.createHash('md5').update(data).digest('hex');
 }
 
-function fileHash(filePath) {
+// Атомарное чтение: читаем файл один раз, возвращаем buffer + hash
+function readAndHash(filePath) {
   try {
     const data = fs.readFileSync(filePath);
-    return md5(data);
+    return { data, hash: md5(data) };
+  } catch (e) {
+    return null;
+  }
+}
+
+// Stat-based change detection (для больших файлов типа play_history.jsonl)
+function fileSig(filePath) {
+  try {
+    const stat = fs.statSync(filePath);
+    return `${stat.size}:${stat.mtimeMs}`;
   } catch (e) {
     return null;
   }
@@ -72,15 +86,22 @@ async function init() {
 
   // Snapshot текущих хэшей (чтобы первый poll не перезалил всё)
   for (const name of CONFIG_FILES) {
-    const h = fileHash(path.join(SHARED_DIR, name));
-    if (h) _hashes.set('config/' + name, h);
+    const localPath = path.join(SHARED_DIR, name);
+    const hashKey = 'config/' + name;
+    if (STAT_BASED_FILES.has(name)) {
+      const sig = fileSig(localPath);
+      if (sig) _hashes.set(hashKey, sig);
+    } else {
+      const result = readAndHash(localPath);
+      if (result) _hashes.set(hashKey, result.hash);
+    }
   }
   for (const meta of METADATA_FILES) {
-    const h = fileHash(meta.local);
-    if (h) _hashes.set(meta.s3Key, h);
+    const result = readAndHash(meta.local);
+    if (result) _hashes.set(meta.s3Key, result.hash);
   }
 
-  // Первый скан processed файлов — заполнить _knownUploaded через s3.list()
+  // Заполнить _knownUploaded из S3 listing
   for (const pd of PROCESSED_DIRS) {
     try {
       const objects = await s3.list(pd.s3Prefix);
@@ -90,32 +111,25 @@ async function init() {
     } catch (e) {
       console.error(`[syncWatcher] init list ${pd.s3Prefix}: ${e.message}`);
     }
-    // Также добавить все локальные файлы, которые уже есть в S3
-    const localFiles = listLocalFiles(pd.local, pd.ext);
-    for (const f of localFiles) {
-      const key = pd.s3Prefix + f;
-      if (_knownUploaded.has(key)) continue;
-      // Файл есть локально, но нет в S3 — не добавляем в known, будет загружен
-    }
   }
 
   console.log(`[syncWatcher] initialized: ${_knownUploaded.size} known S3 objects, ${_hashes.size} config hashes`);
 }
 
-// --- Restore: скачать конфиги/метаданные из S3 если нет локально ---
+// --- Restore: скачать конфиги/метаданные из S3 если нет локально или пустые ---
 
 async function restoreConfigs() {
   let restored = 0;
 
-  // Конфиги
+  // Конфиги — restore если отсутствуют или пустые (crash/power loss)
   for (const name of CONFIG_FILES) {
     const localPath = path.join(SHARED_DIR, name);
-    if (fs.existsSync(localPath)) continue;
+    const stat = fs.statSync(localPath, { throwIfNoEntry: false });
+    if (stat && stat.size > 0) continue;
     try {
       await s3.download('config/' + name, localPath);
       restored++;
     } catch (e) {
-      // Нормально — файл может не существовать в S3 (новый tenant)
       if (e.name !== 'NoSuchKey' && e.$metadata?.httpStatusCode !== 404) {
         console.error(`[syncWatcher] restore config ${name}: ${e.message}`);
       }
@@ -139,12 +153,13 @@ async function restoreConfigs() {
       }
     }
   } catch (e) {
-    // S3 list может упасть — не критично
+    console.error(`[syncWatcher] overlay assets list: ${e.message}`);
   }
 
-  // Метаданные
+  // Метаданные — restore если отсутствуют или пустые
   for (const meta of METADATA_FILES) {
-    if (fs.existsSync(meta.local)) continue;
+    const stat = fs.statSync(meta.local, { throwIfNoEntry: false });
+    if (stat && stat.size > 0) continue;
     try {
       await s3.download(meta.s3Key, meta.local);
       restored++;
@@ -176,16 +191,16 @@ async function pollProcessed() {
   }
 }
 
-// --- Poll: метаданные → S3 ---
+// --- Poll: метаданные → S3 (атомарно: read once → hash → upload buffer) ---
 
 async function pollMetadata() {
   for (const meta of METADATA_FILES) {
-    const h = fileHash(meta.local);
-    if (!h) continue;
-    if (_hashes.get(meta.s3Key) === h) continue;
+    const result = readAndHash(meta.local);
+    if (!result) continue;
+    if (_hashes.get(meta.s3Key) === result.hash) continue;
     try {
-      await s3.upload(meta.local, meta.s3Key);
-      _hashes.set(meta.s3Key, h);
+      await s3.uploadBuffer(result.data, meta.s3Key);
+      _hashes.set(meta.s3Key, result.hash);
     } catch (e) {
       console.error(`[syncWatcher] upload metadata ${meta.s3Key}: ${e.message}`);
     }
@@ -198,51 +213,76 @@ async function pollConfigs() {
   for (const name of CONFIG_FILES) {
     const localPath = path.join(SHARED_DIR, name);
     const hashKey = 'config/' + name;
-    const h = fileHash(localPath);
-    if (!h) continue;
-    if (_hashes.get(hashKey) === h) continue;
-    try {
-      await s3.upload(localPath, 'config/' + name);
-      _hashes.set(hashKey, h);
-    } catch (e) {
-      console.error(`[syncWatcher] upload config ${name}: ${e.message}`);
+
+    if (STAT_BASED_FILES.has(name)) {
+      // Большие append-only файлы: stat-based detection + stream upload
+      const sig = fileSig(localPath);
+      if (!sig) continue;
+      if (_hashes.get(hashKey) === sig) continue;
+      try {
+        await s3.upload(localPath, 'config/' + name);
+        _hashes.set(hashKey, sig);
+      } catch (e) {
+        console.error(`[syncWatcher] upload config ${name}: ${e.message}`);
+      }
+    } else {
+      // Маленькие конфиги: атомарно read → hash → upload buffer
+      const result = readAndHash(localPath);
+      if (!result) continue;
+      if (_hashes.get(hashKey) === result.hash) continue;
+      try {
+        await s3.uploadBuffer(result.data, 'config/' + name);
+        _hashes.set(hashKey, result.hash);
+      } catch (e) {
+        console.error(`[syncWatcher] upload config ${name}: ${e.message}`);
+      }
     }
   }
 
   // Overlay assets
   const assetsDir = path.join(SHARED_DIR, 'overlay_assets');
-  if (fs.existsSync(assetsDir)) {
-    try {
-      const assets = fs.readdirSync(assetsDir).filter(f => !f.startsWith('.'));
-      for (const f of assets) {
-        const localPath = path.join(assetsDir, f);
-        const hashKey = 'config/overlay_assets/' + f;
-        const h = fileHash(localPath);
-        if (!h) continue;
-        if (_hashes.get(hashKey) === h) continue;
-        try {
-          await s3.upload(localPath, 'config/overlay_assets/' + f);
-          _hashes.set(hashKey, h);
-        } catch (e) {
-          console.error(`[syncWatcher] upload overlay asset ${f}: ${e.message}`);
-        }
+  try {
+    const assets = fs.readdirSync(assetsDir).filter(f => !f.startsWith('.'));
+    for (const f of assets) {
+      const localPath = path.join(assetsDir, f);
+      const hashKey = 'config/overlay_assets/' + f;
+      const result = readAndHash(localPath);
+      if (!result) continue;
+      if (_hashes.get(hashKey) === result.hash) continue;
+      try {
+        await s3.uploadBuffer(result.data, 'config/overlay_assets/' + f);
+        _hashes.set(hashKey, result.hash);
+      } catch (e) {
+        console.error(`[syncWatcher] upload overlay asset ${f}: ${e.message}`);
       }
-    } catch (e) {}
+    }
+  } catch (e) {
+    if (e.code !== 'ENOENT') console.error(`[syncWatcher] overlay assets poll: ${e.message}`);
   }
 }
 
-// --- Start/Stop ---
+// --- Start/Stop: setTimeout chains (гарантия — без overlapping) ---
+
+function schedulePoll(fn, interval, label) {
+  async function tick() {
+    try { await fn(); } catch (e) {
+      console.error(`[syncWatcher] ${label} poll error:`, e.message);
+    }
+    _timers.push(setTimeout(tick, interval));
+  }
+  _timers.push(setTimeout(tick, interval));
+}
 
 function start() {
   if (!s3.S3_ENABLED) return;
-  _timers.push(setInterval(() => pollProcessed().catch(e => console.error('[syncWatcher] processed poll error:', e.message)), 30000));
-  _timers.push(setInterval(() => pollMetadata().catch(e => console.error('[syncWatcher] metadata poll error:', e.message)), 60000));
-  _timers.push(setInterval(() => pollConfigs().catch(e => console.error('[syncWatcher] config poll error:', e.message)), 30000));
+  schedulePoll(pollProcessed, 30000, 'processed');
+  schedulePoll(pollMetadata, 60000, 'metadata');
+  schedulePoll(pollConfigs, 30000, 'configs');
   console.log('[syncWatcher] polling started (processed: 30s, metadata: 60s, configs: 30s)');
 }
 
 function stop() {
-  for (const t of _timers) clearInterval(t);
+  for (const t of _timers) clearTimeout(t);
   _timers = [];
   console.log('[syncWatcher] stopped');
 }
