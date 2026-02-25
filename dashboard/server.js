@@ -737,17 +737,9 @@ async function boot() {
     await s3.syncDir('music/processed/', path.join(MUSIC_DIR, 'processed'));
   }
 
-  // 3. Скачать видео активного профиля
+  // 3. Скачать все processed видео из S3
   if (s3.S3_ENABLED) {
-    try {
-      const { getActiveProfile } = require('./lib/visualProfile');
-      const active = getActiveProfile();
-      if (active && active.videos) {
-        await cacheManager.prefetchVideos(active.videos, VISUALS_DIR);
-      }
-    } catch (e) {
-      console.error(`[boot] prefetch videos: ${e.message}`);
-    }
+    await s3.syncDir('visuals/processed/', path.join(VISUALS_DIR, '.processed'));
   }
 
   const syncElapsed = ((Date.now() - start) / 1000).toFixed(1);
