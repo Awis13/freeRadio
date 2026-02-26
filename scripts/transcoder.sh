@@ -28,7 +28,7 @@ transcode_video() {
     duration=$(get_video_duration "$input_file")
     log "  Duration: ${duration}s"
 
-    # Определяем FPS исходника и считаем GOP (2 секунды keyframes)
+    # Detect source FPS and compute GOP (2 second keyframes)
     local src_fps
     src_fps=$(ffprobe -v error -select_streams v:0 -show_entries stream=r_frame_rate -of csv=p=0 "$input_file" 2>/dev/null | head -1)
     local fps_num=${src_fps%/*}
@@ -36,7 +36,7 @@ transcode_video() {
     local gop_size=$((fps_num * 1))
     log "  Source: ${fps_num}fps, GOP: ${gop_size} (1s keyframes)"
 
-    # Определяем наличие аудио в исходнике
+    # Detect audio in source
     local has_audio audio_args audio_label
     has_audio=$(ffprobe -v error -select_streams a:0 -show_entries stream=codec_type -of csv=p=0 "$input_file" 2>/dev/null)
     if [ -n "$has_audio" ]; then
@@ -49,8 +49,8 @@ transcode_video() {
         log "  Audio: none in source"
     fi
 
-    # Streaming-ready: нативный FPS, CBR 6Mbps, H.264 High
-    # Выход готов к -c:v copy в стримере (0% CPU/GPU на вещание)
+    # Streaming-ready: native FPS, CBR 6Mbps, H.264 High
+    # Output ready for -c:v copy in streamer (0% CPU/GPU on broadcast)
     if ffmpeg -y -hide_banner -loglevel error \
         -hwaccel qsv -hwaccel_output_format nv12 \
         -i "$input_file" \
@@ -107,7 +107,7 @@ mkdir -p "$OUTPUT_DIR"
 mkdir -p "$MUSIC_OUTPUT_DIR"
 mkdir -p "$(dirname $LOG_FILE)"
 
-# Чистим недоделанные транскоды от предыдущих запусков
+# Clean up incomplete transcodes from previous runs
 rm -f "${OUTPUT_DIR}"/.transcoding_*
 rm -f "${MUSIC_OUTPUT_DIR}"/.transcoding_*
 
@@ -125,14 +125,14 @@ while true; do
         [[ "$filename" == *.part ]] && continue
         [[ "$filename" == *.tmp ]] && continue
 
-        # Уже обработан
+        # Already processed
         [ -f "$output_file" ] && continue
 
-        # Файл ещё пишется (< 10MB)
+        # File still being written (< 10MB)
         size=$(stat -c%s "$file" 2>/dev/null || echo 0)
         [ "$size" -lt 1000000 ] && continue
 
-        # Ждём свободный слот
+        # Wait for free slot
         while [ $(jobs -rp | wc -l) -ge $MAX_PARALLEL ]; do
             sleep 2
         done
@@ -141,7 +141,7 @@ while true; do
         transcode_video "$file" &
     done
 
-    # Аудио файлы
+    # Audio files
     for file in "$MUSIC_DIR"/*.wav "$MUSIC_DIR"/*.mp3 "$MUSIC_DIR"/*.flac "$MUSIC_DIR"/*.ogg "$MUSIC_DIR"/*.aac "$MUSIC_DIR"/*.m4a; do
         [ -f "$file" ] || continue
 
@@ -153,14 +153,14 @@ while true; do
         [[ "$filename" == *.part ]] && continue
         [[ "$filename" == *.tmp ]] && continue
 
-        # Уже обработан
+        # Already processed
         [ -f "$output_file" ] && continue
 
-        # Файл ещё пишется (< 1MB)
+        # File still being written (< 1MB)
         size=$(stat -c%s "$file" 2>/dev/null || echo 0)
         [ "$size" -lt 1000000 ] && continue
 
-        # Ждём свободный слот
+        # Wait for free slot
         while [ $(jobs -rp | wc -l) -ge $MAX_PARALLEL ]; do
             sleep 2
         done
@@ -169,7 +169,7 @@ while true; do
         process_audio "$file" &
     done
 
-    # Ждём завершения текущих задач
+    # Wait for current tasks to finish
     wait
     sleep 5
 done

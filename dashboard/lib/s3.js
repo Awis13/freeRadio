@@ -4,7 +4,7 @@ const path = require('path');
 const { pipeline } = require('stream/promises');
 const { Readable } = require('stream');
 
-// Конфигурация через env vars
+// Configuration via env vars
 const S3_ENDPOINT = process.env.S3_ENDPOINT;
 const S3_ACCESS_KEY = process.env.S3_ACCESS_KEY;
 const S3_SECRET_KEY = process.env.S3_SECRET_KEY;
@@ -27,7 +27,7 @@ function getClient() {
   return client;
 }
 
-// Полный S3 ключ с tenant prefix
+// Full S3 key with tenant prefix
 function tenantKey(key) {
   return `tenants/${TENANT_ID}/${key}`;
 }
@@ -45,7 +45,7 @@ async function upload(localPath, s3Key) {
   console.log(`[s3] uploaded ${s3Key}`);
 }
 
-// Buffer upload (атомарный — без повторного чтения файла)
+// Buffer upload (atomic — no re-reading file)
 async function uploadBuffer(buffer, s3Key) {
   const s3 = getClient();
   if (!s3) return;
@@ -70,7 +70,7 @@ async function download(s3Key, localPath) {
   }));
   await pipeline(res.Body, fs.createWriteStream(tmpPath));
   fs.renameSync(tmpPath, localPath);
-  console.log(`[s3] downloaded ${s3Key} → ${localPath}`);
+  console.log(`[s3] downloaded ${s3Key} -> ${localPath}`);
 }
 
 // List objects by prefix
@@ -88,7 +88,7 @@ async function list(prefix) {
     }));
     if (res.Contents) {
       for (const obj of res.Contents) {
-        // Убираем tenant prefix из ключа
+        // Strip tenant prefix from key
         result.push({
           key: obj.Key.slice(fullPrefix.length - prefix.length),
           size: obj.Size,
@@ -112,7 +112,7 @@ async function remove(s3Key) {
   console.log(`[s3] deleted ${s3Key}`);
 }
 
-// Head object — проверить существование
+// Head object — check existence
 async function exists(s3Key) {
   const s3 = getClient();
   if (!s3) return false;
@@ -128,13 +128,13 @@ async function exists(s3Key) {
   }
 }
 
-// Скачать если нет локально
+// Download if not available locally
 async function ensureCached(s3Key, localPath) {
   if (fs.existsSync(localPath)) return;
   await download(s3Key, localPath);
 }
 
-// Скачать все недостающие файлы из S3 prefix в локальную директорию
+// Download all missing files from S3 prefix to local directory
 async function syncDir(s3Prefix, localDir) {
   const objects = await list(s3Prefix);
   let downloaded = 0;

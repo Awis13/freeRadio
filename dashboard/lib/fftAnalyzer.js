@@ -1,16 +1,16 @@
 "use strict";
 const { spawn } = require("child_process");
 
-// --- Параметры, совпадающие с клиентским AnalyserNode ---
+// --- Parameters matching client-side AnalyserNode ---
 const FFT_SIZE = 2048;
 const BIN_COUNT = FFT_SIZE / 2; // 1024
 const SAMPLE_RATE = 48000;
-const HOP_SIZE = 512;           // 75% overlap → ~94fps
+const HOP_SIZE = 512;           // 75% overlap -> ~94fps
 const MIN_DB = -100;
 const MAX_DB = -30;
 const DB_RANGE = MAX_DB - MIN_DB;
 const WAVE_SIZE = 512;
-const SMOOTHING = 0;  // Chrome AnalyserNode(0.82@375Hz) пересчитанный на ~63fps
+const SMOOTHING = 0;  // Chrome AnalyserNode(0.82@375Hz) recalculated for ~63fps
 
 // Hanning window
 const hannWindow = new Float32Array(FFT_SIZE);
@@ -54,7 +54,7 @@ function fft(re, im, N) {
   }
 }
 
-// Бинарный фрейм: [0x01][1024 spectrum][512 waveL][512 waveR] = 2049 bytes
+// Binary frame: [0x01][1024 spectrum][512 waveL][512 waveR] = 2049 bytes
 const FRAME_SIZE = 1 + BIN_COUNT + WAVE_SIZE + WAVE_SIZE;
 
 class FftAnalyzer {
@@ -62,7 +62,7 @@ class FftAnalyzer {
     this.proc = null;
     this.running = false;
     this.subscribers = new Set();
-    // Sliding window для перекрывающихся FFT
+    // Sliding window for overlapping FFTs
     this.winL = new Float32Array(FFT_SIZE);
     this.winR = new Float32Array(FFT_SIZE);
     this.winFilled = 0;
@@ -106,7 +106,7 @@ class FftAnalyzer {
     ]);
 
     let pcmBuf = Buffer.alloc(0);
-    const hopBytes = HOP_SIZE * 2 * 2; // samples × 2 bytes × 2 channels
+    const hopBytes = HOP_SIZE * 2 * 2; // samples x 2 bytes x 2 channels
 
     this.proc.stdout.on("data", (chunk) => {
       pcmBuf = Buffer.concat([pcmBuf, chunk]);
@@ -135,18 +135,18 @@ class FftAnalyzer {
 
   _addHop(pcm) {
     if (this.subscribers.size === 0) {
-      // Всё равно двигаем окно чтобы не рассинхронизироваться
+      // Still advance window to stay in sync
       this.winFilled = 0;
       return;
     }
 
     if (this.winFilled >= FFT_SIZE) {
-      // Сдвинуть окно влево на HOP_SIZE (50% overlap)
+      // Shift window left by HOP_SIZE (50% overlap)
       this.winL.copyWithin(0, HOP_SIZE);
       this.winR.copyWithin(0, HOP_SIZE);
     }
 
-    // Записать новые семплы в конец окна
+    // Write new samples to end of window
     const writeStart = this.winFilled >= FFT_SIZE ? FFT_SIZE - HOP_SIZE : this.winFilled;
     for (let i = 0; i < HOP_SIZE; i++) {
       this.winL[writeStart + i] = pcm.readInt16LE(i * 4) / 32768;
@@ -154,13 +154,13 @@ class FftAnalyzer {
     }
 
     this.winFilled = Math.min(this.winFilled + HOP_SIZE, FFT_SIZE);
-    if (this.winFilled < FFT_SIZE) return; // ещё не набрали полное окно
+    if (this.winFilled < FFT_SIZE) return; // haven't filled a full window yet
 
     this._processWindow();
   }
 
   _processWindow() {
-    // Mono mix + Hanning window → FFT
+    // Mono mix + Hanning window -> FFT
     const re = new Float64Array(FFT_SIZE);
     const im = new Float64Array(FFT_SIZE);
     for (let i = 0; i < FFT_SIZE; i++) {
@@ -169,7 +169,7 @@ class FftAnalyzer {
 
     fft(re, im, FFT_SIZE);
 
-    // Magnitude → dB → byte (0-255) + smoothing (как Chrome AnalyserNode)
+    // Magnitude -> dB -> byte (0-255) + smoothing (like Chrome AnalyserNode)
     const spectrum = new Uint8Array(BIN_COUNT);
     for (let i = 0; i < BIN_COUNT; i++) {
       const mag = Math.sqrt(re[i] * re[i] + im[i] * im[i]) / BIN_COUNT;
@@ -180,7 +180,7 @@ class FftAnalyzer {
       spectrum[i] = Math.max(0, Math.min(255, Math.round(val)));
     }
 
-    // Time domain L/R — последние WAVE_SIZE семплов из окна
+    // Time domain L/R — last WAVE_SIZE samples from window
     const waveL = Buffer.alloc(WAVE_SIZE);
     const waveR = Buffer.alloc(WAVE_SIZE);
     const offset = FFT_SIZE - WAVE_SIZE;
@@ -189,7 +189,7 @@ class FftAnalyzer {
       waveR[i] = Math.max(-128, Math.min(127, Math.round(this.winR[offset + i] * 127))) & 0xFF;
     }
 
-    // Бинарный фрейм → подписчикам
+    // Binary frame -> subscribers
     const buf = Buffer.alloc(FRAME_SIZE);
     buf[0] = 0x01;
     buf.set(spectrum, 1);

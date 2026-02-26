@@ -7,7 +7,7 @@ const MUSIC_DIR = process.env.MUSIC_DIR || '/music';
 const VISUALS_DIR = process.env.VISUALS_DIR || '/visuals';
 const SHARED_DIR = '/shared';
 
-// 17 конфиг-файлов для бэкапа в S3
+// 17 config files to back up to S3
 const CONFIG_FILES = [
   'playlists.json', 'schedule.json', 'track_metadata.json', 'play_history.jsonl',
   'visual_profiles.json', 'active_visual_profile.json', 'overlays.json',
@@ -16,22 +16,22 @@ const CONFIG_FILES = [
   'channel_strip.json', 'video_playlists.json'
 ];
 
-// Большие append-only файлы — stat-based detection вместо полного хэша
+// Large append-only files — stat-based detection instead of full hash
 const STAT_BASED_FILES = new Set(['play_history.jsonl']);
 
-// Метаданные от audio-analyzer
+// Metadata from audio-analyzer
 const METADATA_FILES = [
   { local: path.join(MUSIC_DIR, '.analysis_map'), s3Key: 'music/.analysis_map' },
   { local: path.join(MUSIC_DIR, '.bpm_map'), s3Key: 'music/.bpm_map' }
 ];
 
-// Директории с processed файлами
+// Directories with processed files
 const PROCESSED_DIRS = [
   { local: path.join(MUSIC_DIR, 'processed'), s3Prefix: 'music/processed/', ext: /\.(wav|mp3|flac)$/i },
   { local: path.join(VISUALS_DIR, '.processed'), s3Prefix: 'visuals/processed/', ext: /\.(mp4|mov|mkv)$/i }
 ];
 
-// Пропускаемые файлы
+// Files to skip
 const SKIP_PATTERN = /^(\.transcoding_|_standby_|.*\.s3tmp$)/;
 
 // In-memory state
@@ -45,7 +45,7 @@ function md5(data) {
   return crypto.createHash('md5').update(data).digest('hex');
 }
 
-// Атомарное чтение: читаем файл один раз, возвращаем buffer + hash
+// Atomic read: read file once, return buffer + hash
 function readAndHash(filePath) {
   try {
     const data = fs.readFileSync(filePath);
@@ -55,7 +55,7 @@ function readAndHash(filePath) {
   }
 }
 
-// Stat-based change detection (для больших файлов типа play_history.jsonl)
+// Stat-based change detection (for large files like play_history.jsonl)
 function fileSig(filePath) {
   try {
     const stat = fs.statSync(filePath);
@@ -75,16 +75,16 @@ function listLocalFiles(dir, extPattern) {
   }
 }
 
-// --- Init: restore конфигов из S3 + snapshot хэшей ---
+// --- Init: restore configs from S3 + snapshot hashes ---
 
 async function init() {
   if (!s3.S3_ENABLED) return;
   console.log('[syncWatcher] initializing...');
 
-  // Restore конфигов из S3
+  // Restore configs from S3
   await restoreConfigs();
 
-  // Snapshot текущих хэшей (чтобы первый poll не перезалил всё)
+  // Snapshot current hashes (so first poll doesn't re-upload everything)
   for (const name of CONFIG_FILES) {
     const localPath = path.join(SHARED_DIR, name);
     const hashKey = 'config/' + name;
@@ -101,7 +101,7 @@ async function init() {
     if (result) _hashes.set(meta.s3Key, result.hash);
   }
 
-  // Заполнить _knownUploaded из S3 listing
+  // Populate _knownUploaded from S3 listing
   for (const pd of PROCESSED_DIRS) {
     try {
       const objects = await s3.list(pd.s3Prefix);
@@ -116,12 +116,12 @@ async function init() {
   console.log(`[syncWatcher] initialized: ${_knownUploaded.size} known S3 objects, ${_hashes.size} config hashes`);
 }
 
-// --- Restore: скачать конфиги/метаданные из S3 если нет локально или пустые ---
+// --- Restore: download configs/metadata from S3 if missing or empty locally ---
 
 async function restoreConfigs() {
   let restored = 0;
 
-  // Конфиги — restore если отсутствуют или пустые (crash/power loss)
+  // Configs — restore if missing or empty (crash/power loss)
   for (const name of CONFIG_FILES) {
     const localPath = path.join(SHARED_DIR, name);
     const stat = fs.statSync(localPath, { throwIfNoEntry: false });
@@ -156,7 +156,7 @@ async function restoreConfigs() {
     console.error(`[syncWatcher] overlay assets list: ${e.message}`);
   }
 
-  // Метаданные — restore если отсутствуют или пустые
+  // Metadata — restore if missing or empty
   for (const meta of METADATA_FILES) {
     const stat = fs.statSync(meta.local, { throwIfNoEntry: false });
     if (stat && stat.size > 0) continue;
@@ -173,7 +173,7 @@ async function restoreConfigs() {
   if (restored > 0) console.log(`[syncWatcher] restored ${restored} files from S3`);
 }
 
-// --- Poll: processed файлы → S3 ---
+// --- Poll: processed files -> S3 ---
 
 async function pollProcessed() {
   for (const pd of PROCESSED_DIRS) {
@@ -191,7 +191,7 @@ async function pollProcessed() {
   }
 }
 
-// --- Poll: метаданные → S3 (атомарно: read once → hash → upload buffer) ---
+// --- Poll: metadata -> S3 (atomic: read once -> hash -> upload buffer) ---
 
 async function pollMetadata() {
   for (const meta of METADATA_FILES) {
@@ -207,7 +207,7 @@ async function pollMetadata() {
   }
 }
 
-// --- Poll: конфиги → S3 ---
+// --- Poll: configs -> S3 ---
 
 async function pollConfigs() {
   for (const name of CONFIG_FILES) {
@@ -215,7 +215,7 @@ async function pollConfigs() {
     const hashKey = 'config/' + name;
 
     if (STAT_BASED_FILES.has(name)) {
-      // Большие append-only файлы: stat-based detection + stream upload
+      // Large append-only files: stat-based detection + stream upload
       const sig = fileSig(localPath);
       if (!sig) continue;
       if (_hashes.get(hashKey) === sig) continue;
@@ -226,7 +226,7 @@ async function pollConfigs() {
         console.error(`[syncWatcher] upload config ${name}: ${e.message}`);
       }
     } else {
-      // Маленькие конфиги: атомарно read → hash → upload buffer
+      // Small configs: atomic read -> hash -> upload buffer
       const result = readAndHash(localPath);
       if (!result) continue;
       if (_hashes.get(hashKey) === result.hash) continue;
@@ -261,7 +261,7 @@ async function pollConfigs() {
   }
 }
 
-// --- Start/Stop: setTimeout chains (гарантия — без overlapping) ---
+// --- Start/Stop: setTimeout chains (guaranteed non-overlapping) ---
 
 function schedulePoll(fn, interval, label) {
   async function tick() {

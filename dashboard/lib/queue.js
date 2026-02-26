@@ -31,7 +31,7 @@ function createQueueRouter(musicDir, getBpmMap) {
       if (!filename) return res.status(400).json({ error: 'no filename' });
       const filePath = toProcessedPath(filename);
 
-      // S3: скачать если нет локально
+      // S3: download if not available locally
       if (s3.S3_ENABLED) {
         const base = path.basename(filename, path.extname(filename));
         await s3.ensureCached(`music/processed/${base}.wav`, filePath);
@@ -81,7 +81,7 @@ function createQueueRouter(musicDir, getBpmMap) {
         try { await liq.skip(); } catch (e) {}
       }
 
-      // S3: prefetch первые 5 треков
+      // S3: prefetch first 5 tracks
       const batch = tracks.slice(0, 5);
       if (s3.S3_ENABLED) {
         await prefetchTracks(batch, musicDir);

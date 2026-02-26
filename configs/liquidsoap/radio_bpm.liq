@@ -37,12 +37,12 @@ dj_playing = ref(false)
 def on_track_handler(m) =
   filename = m["filename"] ?? ""
   title = m["title"] ?? ""
-  # Внутренние данные для cross/beat-align обновляем всегда
+  # Internal data for cross/beat-align always updated
   current_track := next_track()
   next_track := filename
   prev_track_start := curr_track_start()
   curr_track_start := time()
-  # Title и файл для UI — только когда играем
+  # Title and file for UI — only when playing
   if dj_playing() then
     current_title := title
     file.write(data=filename, "/shared/current_audio.txt")
@@ -155,11 +155,11 @@ end
 
 
 # ---- ANALYSIS DATA ----
-# Формат .analysis_map:
+# Format .analysis_map:
 # filepath|bpm|duration|intro_end|outro_start|mix_in|mix_out|first_beat
-# Индексы: 0     |1  |2       |3        |4          |5     |6      |7
+# Indices: 0     |1  |2       |3        |4          |5     |6      |7
 
-# Универсальный читатель полей из .analysis_map
+# Generic field reader from .analysis_map
 def get_analysis_field(filename, field_index) =
   result = ref(0.0)
 
@@ -189,7 +189,7 @@ def get_analysis_field(filename, field_index) =
   result()
 end
 
-# Читатели конкретных полей
+# Field-specific readers
 def get_analysis_bpm(filename) = get_analysis_field(filename, 1) end
 def get_track_duration(filename) = get_analysis_field(filename, 2) end
 def get_intro_end(filename) = get_analysis_field(filename, 3) end
@@ -262,7 +262,7 @@ end
 
 # ---- TRANSITION ----
 
-# Максимальный cross buffer (секунды). Определяет максимально доступный overlap.
+# Max cross buffer (seconds). Determines max available overlap.
 cross_buffer = 5.0
 
 # --- Mode: Smart (BPM-aware, 2-3 bars at techno BPMs, beat-aligned, sin curves, compression) ---
@@ -334,7 +334,7 @@ def smart_mix(a, b) =
   elsif mode == "crossfade" then
     do_crossfade(a, b)
   else
-    # --- Читаем ВСЕ данные анализа для обоих треков ---
+    # --- Read ALL analysis data for both tracks ---
     old_bpm = get_analysis_bpm(old_name_str)
     new_bpm = get_analysis_bpm(new_name_str)
     if old_bpm == 0.0 then
@@ -372,9 +372,9 @@ radio = mksafe(radio)
 
 processed = radio
 
-# ---- CHANNEL STRIP (серверная обработка звука) ----
+# ---- CHANNEL STRIP (server-side audio processing) ----
 # Gate → EQ(3-band) → Compressor → Limiter → Output Gain
-# Все параметры — ref() getter functions, меняются мгновенно через HTTP без перезапуска.
+# All parameters are ref() getter functions, changed instantly via HTTP without restart.
 
 strip_bypass = ref(true)
 
@@ -410,7 +410,7 @@ strip_lim_release = ref(200.0)
 # Output
 strip_output_gain = ref(1.0)
 
-# DSP цепочка
+# DSP chain
 # strip_gated = gate(
 #   threshold={strip_gate_threshold()},
 #   attack={strip_gate_attack()},
@@ -452,7 +452,7 @@ strip_output_gain = ref(1.0)
 
 # strip_gained = amplify(override=null(), {strip_output_gain()}, strip_limited)
 
-# Channel strip BYPASSED — Phase 2/3 (gate/eq/comp/limit убраны из source graph)
+# Channel strip BYPASSED — Phase 2/3 (gate/eq/comp/limit removed from source graph)
 # strip_out = switch(track_sensitive=false, [
 #   ({not strip_bypass()}, strip_gained),
 #   ({true}, processed)
@@ -460,14 +460,14 @@ strip_output_gain = ref(1.0)
 strip_out = processed
 
 # ---- CHANNEL STRIP PERSISTENCE ----
-# Загружаем настройки из JSON при старте
+# Load settings from JSON on startup
 def strip_load_config() =
   path = "/shared/channel_strip.json"
   if file.exists(path) then
     data = file.contents(path)
     log("STRIP: loading config from #{path}")
 
-    # Парсим каждый параметр через regex
+    # Parse each parameter via regex
     let extract = fun(key, default_val) -> begin
       pat = '"#{key}"\\s*:\\s*(-?[0-9.]+)'
       m = string.extract(pattern=pat, data)
@@ -519,7 +519,7 @@ strip_load_config()
 
 # ---- CHANNEL STRIP HTTP ENDPOINTS ----
 
-# GET /strip/config — текущие параметры
+# GET /strip/config — current parameters
 harbor.http.register(port=7000, method="GET", "/strip/config",
   fun(_, resp) -> begin
     resp.content_type("application/json")
@@ -606,7 +606,7 @@ harbor.http.register(port=7000, method="POST", "/strip/config",
   end
 )
 
-# GET /strip/metering — данные для метров в UI
+# GET /strip/metering — metering data for UI
 harbor.http.register(port=7000, method="GET", "/strip/metering",
   fun(_, resp) -> begin
     # Channel strip bypassed (Phase 2/3)
@@ -628,7 +628,7 @@ end)
 voice_src = amplify({ voice_gain() }, voice_src)
 
 # Duck music when voice_queue is actively playing, full volume otherwise
-# strip_out вместо processed — обработанная музыка
+# strip_out instead of processed — processed music
 ducked_music = amplify({ if source.is_ready(voice_queue) then voice_duck() else 1.0 end }, strip_out)
 final = fallback(track_sensitive=false, [add(normalize=false, [ducked_music, voice_src]), strip_out])
 
@@ -727,9 +727,9 @@ gated = switch(track_sensitive=false, transitions=[
 gated = mksafe(gated)
 
 # ---- AUTOPLAY ----
-# Автоматически открыть gate через 8с после старта (cross buffer заполняется за ~5с,
-# + 3с margin на медленный I/O). Если dashboard или пользователь вызвал /playback/resume
-# раньше — таймер ничего не делает. /playback/stop отменяет autoplay.
+# Auto-open gate 8s after start (cross buffer fills in ~5s,
+# + 3s margin for slow I/O). If dashboard or user calls /playback/resume
+# earlier — timer does nothing. /playback/stop cancels autoplay.
 autoplay_cancelled = ref(false)
 
 thread.run(delay=8.0, fun() -> begin
@@ -793,7 +793,7 @@ harbor.http.register(port=7000, method="POST", "/playback/cue",
 harbor.http.register(port=7000, method="POST", "/playback/resume",
   fun(_, resp) -> begin
     dj_playing := true
-    # Metadata пишет dashboard (cuedTrackPath) — НЕ next_track() (это из music rotation)
+    # Metadata written by dashboard (cuedTrackPath) — NOT next_track() (that's from music rotation)
     log("PLAYBACK: gate opened")
     resp.content_type("application/json")
     resp.header("access-control-allow-origin", "*")

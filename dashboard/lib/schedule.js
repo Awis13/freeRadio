@@ -16,7 +16,7 @@ let getBpmMapFn = () => ({});
 let visualsDir = '/visuals';
 let broadcastFn = null;
 
-// Конвертация имени файла в путь к обработанному .wav (как в queue.js)
+// Convert filename to processed .wav path (same as queue.js)
 function toProcessedPath(filename) {
   const base = path.basename(filename, path.extname(filename));
   return PROCESSED_DIR + '/' + base + '.wav';
@@ -35,7 +35,7 @@ function saveSchedule(data) {
   fs.writeFileSync(SCHEDULE_FILE, JSON.stringify(data, null, 2));
 }
 
-// Получить текущее время в настроенной таймзоне (через Intl.DateTimeFormat)
+// Get current time in configured timezone (via Intl.DateTimeFormat)
 function getNowInTimezone(timezone) {
   try {
     const now = new Date();
@@ -51,12 +51,12 @@ function getNowInTimezone(timezone) {
     const year = parseInt(parts.year);
     const month = parseInt(parts.month);
     const day = parseInt(parts.day);
-    // formatToParts возвращает '24' для полуночи — корректируем дату
+    // formatToParts returns '24' for midnight — adjust date
     let hours = parseInt(parts.hour);
     const minutes = parseInt(parts.minute);
     let correctedDay = day, correctedMonth = month, correctedYear = year;
     if (hours === 24) {
-      // Полночь: дата в parts — предыдущий день, нужен следующий
+      // Midnight: date in parts is previous day, need next
       const next = new Date(year, month - 1, day + 1);
       correctedYear = next.getFullYear();
       correctedMonth = next.getMonth() + 1;
@@ -69,7 +69,7 @@ function getNowInTimezone(timezone) {
     const dateStr = correctedYear + '-' + String(correctedMonth).padStart(2, '0') + '-' + String(correctedDay).padStart(2, '0');
     return { weekday, timeStr, dateStr };
   } catch (e) {
-    // Fallback на серверное время если таймзона невалидна
+    // Fallback to server time if timezone is invalid
     const now = new Date();
     return {
       weekday: (now.getDay() + 6) % 7,
@@ -96,12 +96,12 @@ function getCurrentSlot() {
   const { weekday, timeStr, dateStr } = getNowInTimezone(tz);
 
   // One-time events first (higher priority), sorted by priority (lower = higher)
-  // Для overnight events (end <= start) проверяем также вчерашнюю дату
+  // For overnight events (end <= start) also check yesterday's date
   const yesterday = prevDate(dateStr);
   const events = Object.values(data.events || {})
     .filter(ev => {
       if (ev.date === dateStr && isTimeInRange(timeStr, ev.startTime, ev.endTime)) return true;
-      // Overnight event начавшийся вчера: end <= start, текущее время < end
+      // Overnight event started yesterday: end <= start, current time < end
       if (ev.endTime <= ev.startTime && ev.date === yesterday && timeStr < ev.endTime) return true;
       return false;
     })
@@ -118,7 +118,7 @@ function getCurrentSlot() {
     };
   }
 
-  // Weekly slots (с учётом overnight: слот day=1 22:00-06:00 активен в day=2 03:00)
+  // Weekly slots (with overnight support: slot day=1 22:00-06:00 active at day=2 03:00)
   for (const ws of Object.values(data.weekly || {})) {
     const isOvernight = ws.endTime <= ws.startTime;
     const matchSameDay = ws.day === weekday && isTimeInRange(timeStr, ws.startTime, ws.endTime);
@@ -171,13 +171,13 @@ function getNextSlot() {
   // Check one-time events (future ones)
   const DAYS = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
   for (const ev of Object.values(data.events || {})) {
-    // Будущий или сегодня но не начавшийся
+    // Future or today but not started yet
     if (ev.date < dateStr) continue;
     if (ev.date === dateStr) {
-      if (ev.startTime <= timeStr && isTimeInRange(timeStr, ev.startTime, ev.endTime)) continue; // уже активен
-      if (ev.startTime <= timeStr) continue; // уже прошёл сегодня
+      if (ev.startTime <= timeStr && isTimeInRange(timeStr, ev.startTime, ev.endTime)) continue; // already active
+      if (ev.startTime <= timeStr) continue; // already passed today
     }
-    // Сколько минут до старта
+    // Minutes until start
     const evDate = new Date(ev.date + 'T' + ev.startTime + ':00');
     const nowApprox = new Date(dateStr + 'T' + timeStr + ':00');
     const diffMs = evDate - nowApprox;
@@ -204,7 +204,7 @@ function getNextSlot() {
   }
 }
 
-// Предыдущая дата (YYYY-MM-DD) — для overnight event matching
+// Previous date (YYYY-MM-DD) — for overnight event matching
 function prevDate(dateStr) {
   const d = new Date(dateStr + 'T12:00:00');
   d.setDate(d.getDate() - 1);
@@ -219,7 +219,7 @@ function isTimeInRange(current, start, end) {
   return current >= start && current < end;
 }
 
-// Проверка перекрытия слотов (с учётом overnight cross-day)
+// Check slot overlap (with overnight cross-day support)
 function slotsOverlap(a, b) {
   function toMinutes(t) {
     const p = t.split(':');
@@ -235,20 +235,20 @@ function slotsOverlap(a, b) {
   const as = toMinutes(a.startTime), ae = toMinutes(a.endTime);
   const bs = toMinutes(b.startTime), be = toMinutes(b.endTime);
 
-  // Тот же день: оба слота начинаются в этот день
+  // Same day: both slots start on this day
   if (a.day === b.day) {
     const aEnd = isOvernight(a) ? ae + 1440 : ae;
     const bEnd = isOvernight(b) ? be + 1440 : be;
     if (rangesOverlap(as, aEnd, bs, bEnd)) return true;
   }
 
-  // A overnight и B на следующий день (утренняя часть A перекрывает B)
+  // A overnight and B on next day (morning part of A overlaps B)
   if (isOvernight(a) && (a.day + 1) % 7 === b.day) {
     const bEnd = isOvernight(b) ? be + 1440 : be;
     if (rangesOverlap(0, ae, bs, bEnd)) return true;
   }
 
-  // B overnight и A на следующий день (утренняя часть B перекрывает A)
+  // B overnight and A on next day (morning part of B overlaps A)
   if (isOvernight(b) && (b.day + 1) % 7 === a.day) {
     const aEnd = isOvernight(a) ? ae + 1440 : ae;
     if (rangesOverlap(as, aEnd, 0, be)) return true;
@@ -257,7 +257,7 @@ function slotsOverlap(a, b) {
   return false;
 }
 
-// Очистка прошедших one-time events (timezone-aware)
+// Clean up past one-time events (timezone-aware)
 function cleanupPastEvents(data) {
   const tz = (data.settings && data.settings.timezone) || 'Europe/Moscow';
   const today = getNowInTimezone(tz).dateStr;
@@ -341,7 +341,7 @@ async function executeScheduleTick() {
     }
   }
 
-  // Refill queue if running low (с дедупликацией)
+  // Refill queue if running low (with deduplication)
   if (currentPlaylistId) {
     try {
       const queueResult = await liq.getQueueLength();
@@ -350,7 +350,7 @@ async function executeScheduleTick() {
         const tracks = resolvePlaylist(currentPlaylistId, MUSIC_DIR, getBpmMapFn());
         if (tracks.length > 0) {
           const needed = 5 - len;
-          // Fisher-Yates shuffle копии, берём первые needed
+          // Fisher-Yates shuffle a copy, take first needed
           const shuffled = tracks.slice();
           for (let i = shuffled.length - 1; i > 0; i--) {
             const j = Math.floor(Math.random() * (i + 1));
@@ -375,7 +375,7 @@ function startExecutor(getBpmMap, vDir, broadcast) {
   if (broadcast) broadcastFn = broadcast;
   console.log('[schedule] Executor started (interval: 30s)');
 
-  // Очистка прошедших событий при старте
+  // Clean up past events on start
   const data = loadSchedule();
   const cleaned = cleanupPastEvents(data);
   if (cleaned > 0) {
@@ -453,7 +453,7 @@ function createScheduleRouter() {
     const data = loadSchedule();
     const newSlot = { day: parseInt(day), startTime, endTime };
 
-    // Проверка перекрытия
+    // Check overlap
     const overlapping = Object.values(data.weekly || {}).filter(ws => slotsOverlap(ws, newSlot));
     if (overlapping.length > 0) {
       return res.status(409).json({
@@ -480,7 +480,7 @@ function createScheduleRouter() {
     }
     if (ws.day !== undefined) ws.day = parseInt(ws.day);
 
-    // Проверка перекрытия (исключая себя)
+    // Check overlap (excluding self)
     const overlapping = Object.values(data.weekly)
       .filter(other => other.id !== ws.id && slotsOverlap(other, ws));
     if (overlapping.length > 0) {
@@ -536,7 +536,7 @@ function createScheduleRouter() {
     res.json({ ok: true });
   });
 
-  // POST /api/schedule/cleanup — ручная очистка прошедших событий
+  // POST /api/schedule/cleanup — manual cleanup of past events
   router.post('/cleanup', (req, res) => {
     const data = loadSchedule();
     const cleaned = cleanupPastEvents(data);
@@ -549,7 +549,7 @@ function createScheduleRouter() {
 
 module.exports = { createScheduleRouter, startExecutor, onTrackChange, getCurrentSlot };
 
-// Экспорт внутренних функций для юнит-тестов
+// Export internal functions for unit tests
 module.exports._test = {
   isTimeInRange, slotsOverlap, getNowInTimezone, getCurrentSlot,
   getNextSlot, cleanupPastEvents, prevDate, loadSchedule, saveSchedule

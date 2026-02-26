@@ -3,7 +3,7 @@ const path = require('path');
 const { execSync } = require('child_process');
 const s3 = require('./s3');
 
-// Размер директории в байтах
+// Directory size in bytes
 function getCacheSize(dir) {
   try {
     const output = execSync(`du -sb "${dir}" 2>/dev/null`).toString().trim();
@@ -13,7 +13,7 @@ function getCacheSize(dir) {
   }
 }
 
-// LRU eviction — удалить файлы по atime пока size > maxBytes
+// LRU eviction — delete files by atime while size > maxBytes
 function evictOldest(dir, maxBytes) {
   if (!fs.existsSync(dir)) return 0;
   const files = [];
@@ -25,7 +25,7 @@ function evictOldest(dir, maxBytes) {
       if (stat.isFile()) files.push({ path: fp, name, atime: stat.atimeMs, size: stat.size });
     } catch (e) {}
   }
-  // Сортируем по atime (самые старые первые)
+  // Sort by atime (oldest first)
   files.sort((a, b) => a.atime - b.atime);
 
   let currentSize = files.reduce((sum, f) => sum + f.size, 0);
@@ -42,7 +42,7 @@ function evictOldest(dir, maxBytes) {
   return evicted;
 }
 
-// Batch prefetch аудио файлов
+// Batch prefetch audio files
 async function prefetchTracks(filenames, musicDir) {
   if (!s3.S3_ENABLED || !filenames || filenames.length === 0) return;
   const processedDir = path.join(musicDir, 'processed');
@@ -58,7 +58,7 @@ async function prefetchTracks(filenames, musicDir) {
   }
 }
 
-// Batch prefetch видео файлов (processed)
+// Batch prefetch video files (processed)
 async function prefetchVideos(filenames, visualsDir) {
   if (!s3.S3_ENABLED || !filenames || filenames.length === 0) return;
   const processedDir = path.join(visualsDir, '.processed');

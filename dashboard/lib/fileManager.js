@@ -4,14 +4,14 @@ const fs = require('fs');
 const path = require('path');
 const s3 = require('./s3');
 
-// Определить S3 prefix по локальной директории
+// Determine S3 prefix from local directory
 function dirToS3Prefix(dir) {
   if (dir.includes('/music')) return 'music/raw/';
   if (dir.includes('/visuals')) return 'visuals/incoming/';
   return '';
 }
 
-// Найти processed-версию файла (transcoder меняет расширение: mp3→wav, mov→mp4)
+// Find processed version of a file (transcoder changes extension: mp3->wav, mov->mp4)
 function findProcessed(dir, name) {
   const base = name.replace(/\.[^.]+$/, '');
   if (dir.includes('/music')) {
@@ -24,7 +24,7 @@ function findProcessed(dir, name) {
   return null;
 }
 
-// Удалить все processed-версии файла (локально + S3)
+// Delete all processed versions of a file (local + S3)
 async function deleteProcessed(dir, name) {
   const info = findProcessed(dir, name);
   if (!info) return [];
@@ -34,14 +34,14 @@ async function deleteProcessed(dir, name) {
     for (const f of files) {
       const fBase = f.replace(/\.[^.]+$/, '');
       if (fBase !== info.base) continue;
-      // Удалить локально
+      // Delete locally
       try {
         fs.unlinkSync(path.join(info.dir, f));
       } catch (e) {
         console.error(`[fileManager] cascade delete local failed: ${f}: ${e.message}`);
-        continue; // не пушим в deleted, не пытаемся S3
+        continue; // don't push to deleted, don't try S3
       }
-      // Удалить из S3
+      // Delete from S3
       if (s3.S3_ENABLED) {
         try { await s3.remove(info.s3Prefix + f); } catch (e) {
           console.error(`[fileManager] cascade delete S3 failed: ${f}: ${e.message}`);
@@ -99,7 +99,7 @@ function fileManager(dir) {
     }
     const uploaded = req.files.map((f) => ({ name: f.filename, size: f.size }));
 
-    // S3 sync — await перед ответом
+    // S3 sync — await before responding
     const s3Results = [];
     if (s3.S3_ENABLED) {
       const prefix = dirToS3Prefix(dir);
@@ -131,7 +131,7 @@ function fileManager(dir) {
       }
       fs.unlinkSync(filepath);
 
-      // S3 sync — await перед ответом
+      // S3 sync — await before responding
       let s3ok = null;
       if (s3.S3_ENABLED) {
         const prefix = dirToS3Prefix(dir);
@@ -144,7 +144,7 @@ function fileManager(dir) {
         }
       }
 
-      // Каскадное удаление processed-версии (локально + S3)
+      // Cascade delete processed version (local + S3)
       const processedDeleted = await deleteProcessed(dir, name);
 
       res.json({ deleted: name, ...(s3ok !== null && { s3: s3ok }), ...(processedDeleted.length > 0 && { processedDeleted }) });

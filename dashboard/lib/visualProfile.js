@@ -150,7 +150,7 @@ function createVisualProfileRouter(visualsDir) {
     const result = activateProfile(req.params.id);
     if (!result) return res.status(404).json({ error: 'not found' });
 
-    // S3: prefetch видео активного профиля в фоне
+    // S3: prefetch active profile videos in background
     if (result.videos && result.videos.length > 0) {
       prefetchVideos(result.videos, visualsDir).catch(e =>
         console.error(`[s3] prefetch profile videos failed: ${e.message}`)

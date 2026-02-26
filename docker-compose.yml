@@ -10,7 +10,7 @@ services:
       - ./scripts:/scripts:ro
     restart: unless-stopped
 
-  # 1. Аудио-сервер
+  # 1. Audio server
   icecast:
     image: infiniteproject/icecast
     container_name: s23-icecast
@@ -59,7 +59,7 @@ services:
       - rave-net
     restart: unless-stopped
 
-  # 3. Стример (FFMPEG → HLS или RTMP + multi-streaming)
+  # 3. Streamer (FFMPEG → HLS or RTMP + multi-streaming)
   streamer:
     build:
       context: .
@@ -98,7 +98,7 @@ services:
       - rtmp-ingest
     restart: unless-stopped
 
-  # 3.5 Transcoder — автоматическая конвертация видео из incoming в готовый формат
+  # 3.5 Transcoder — auto-converts incoming videos to stream-ready format
   transcoder:
     image: linuxserver/ffmpeg:latest
     container_name: s23-transcoder

@@ -35,7 +35,7 @@ function resolveVideoPlaylist(playlistId, visualsDir) {
   const processedDir = path.join(visualsDir, '.processed');
 
   if (playlist.type === 'manual') {
-    // Сохраняем порядок, фильтруем несуществующие + path traversal
+    // Preserve order, filter out missing + path traversal
     return (playlist.tracks || []).filter(t => {
       const safe = path.basename(t);
       return safe && safe === t && fs.existsSync(path.join(processedDir, safe));
@@ -62,24 +62,24 @@ function resolveSmartVideoPlaylist(rules, visualsDir) {
   }
 
   return files.filter(name => {
-    // Фильтр по имени файла (regex)
+    // Filename filter (regex)
     if (rules.namePattern) {
       try {
         const re = new RegExp(rules.namePattern, 'i');
         if (!re.test(name)) return false;
       } catch (e) {
-        // Невалидный regex — пропускаем фильтр
+        // Invalid regex — skip filter
       }
     }
 
-    // Фильтр по тегам
+    // Tag filter
     if (rules.tags && rules.tags.length > 0) {
       const trackMeta = meta.tracks[name] || { tags: [] };
       const trackTags = trackMeta.tags || [];
       if (rules.tagMode === 'all') {
         if (!rules.tags.every(t => trackTags.includes(t))) return false;
       } else {
-        // 'any' mode (по умолчанию)
+        // 'any' mode (default)
         if (!rules.tags.some(t => trackTags.includes(t))) return false;
       }
     }
@@ -91,7 +91,7 @@ function resolveSmartVideoPlaylist(rules, visualsDir) {
 function createVideoPlaylistRouter(visualsDir) {
   const router = express.Router();
 
-  // GET /api/video-playlists — список всех
+  // GET /api/video-playlists — list all
   router.get('/', (req, res) => {
     const data = loadVideoPlaylists();
     const processedDir = path.join(visualsDir, '.processed');
@@ -104,7 +104,7 @@ function createVideoPlaylistRouter(visualsDir) {
     res.json(list);
   });
 
-  // POST /api/video-playlists — создать
+  // POST /api/video-playlists — create
   router.post('/', express.json(), (req, res) => {
     const { name, type, tracks, rules } = req.body;
     if (!name) return res.status(400).json({ error: 'name required' });
@@ -132,7 +132,7 @@ function createVideoPlaylistRouter(visualsDir) {
     res.json(playlist);
   });
 
-  // GET /api/video-playlists/:id — детали с resolved треками
+  // GET /api/video-playlists/:id — details with resolved tracks
   router.get('/:id', (req, res) => {
     const playlist = getVideoPlaylist(req.params.id);
     if (!playlist) return res.status(404).json({ error: 'not found' });
@@ -141,7 +141,7 @@ function createVideoPlaylistRouter(visualsDir) {
     res.json({ ...playlist, resolvedTracks: resolved, trackCount: resolved.length });
   });
 
-  // PUT /api/video-playlists/:id — обновить
+  // PUT /api/video-playlists/:id — update
   router.put('/:id', express.json(), (req, res) => {
     const data = loadVideoPlaylists();
     const existing = data.playlists[req.params.id];
@@ -184,7 +184,7 @@ function createVideoPlaylistRouter(visualsDir) {
     res.json({ ok: true });
   });
 
-  // POST /api/video-playlists/:id/reorder — перестановка треков { from, to }
+  // POST /api/video-playlists/:id/reorder — reorder tracks { from, to }
   router.post('/:id/reorder', express.json(), (req, res) => {
     const data = loadVideoPlaylists();
     const pl = data.playlists[req.params.id];
@@ -210,7 +210,7 @@ function createVideoPlaylistRouter(visualsDir) {
     res.json(pl);
   });
 
-  // POST /api/video-playlists/:id/load-queue — загрузить в очередь видео
+  // POST /api/video-playlists/:id/load-queue — load into video queue
   router.post('/:id/load-queue', (req, res) => {
     const playlist = getVideoPlaylist(req.params.id);
     if (!playlist) return res.status(404).json({ error: 'not found' });
@@ -235,7 +235,7 @@ function createVideoPlaylistRouter(visualsDir) {
     res.json({ ok: true, loaded: resolved.length, videos: resolved });
   });
 
-  // POST /api/video-playlists/:id/activate-profile — установить как shuffle профиль
+  // POST /api/video-playlists/:id/activate-profile — set as shuffle profile
   router.post('/:id/activate-profile', (req, res) => {
     const playlist = getVideoPlaylist(req.params.id);
     if (!playlist) return res.status(404).json({ error: 'not found' });

@@ -330,7 +330,7 @@ app.post('/api/dj/cue', async (req, res) => {
     const track = files[Math.floor(Math.random() * files.length)];
     const fullPath = path.join(musicDir, track);
 
-    // S3: скачать трек если нет локально
+    // S3: download track if not cached locally
     if (s3.S3_ENABLED) {
       await s3.ensureCached(`music/processed/${track}`, fullPath);
     }
@@ -608,20 +608,20 @@ const bootMode = streamControl.getModeState().mode || 'standby';
 console.log(`[boot] streaming=true, broadcast=${!!restreamCfg.autoStart}, mode=${bootMode}`);
 
 
-// S3 boot sync: скачать все processed файлы + метаданные перед auto-restore
+// S3 boot sync: download all processed files + metadata before auto-restore
 if (s3.S3_ENABLED) {
   (async () => {
     const start = Date.now();
     try {
-      // Синк processed аудио (критично для Liquidsoap random mode)
+      // Sync processed audio (critical for Liquidsoap random mode)
       await s3.syncDir('music/processed/', path.join(MUSIC_DIR, 'processed'));
-      // Синк метаданных
+      // Sync metadata
       for (const meta of ['.analysis_map', '.bpm_map']) {
         try {
           await s3.ensureCached(`music/${meta}`, path.join(MUSIC_DIR, meta));
         } catch (e) {}
       }
-      // Синк processed видео активного профиля
+      // Sync processed videos for active profile
       const { getActiveProfile } = require('./lib/visualProfile');
       const active = getActiveProfile();
       if (active && active.videos) {
@@ -733,7 +733,7 @@ if (s3.S3_ENABLED) {
     const track = files[Math.floor(Math.random() * files.length)];
     const fullPath = path.join(musicDir, track);
 
-    // S3: скачать трек для cue если нет локально
+    // S3: download track for cue if not cached locally
     if (s3.S3_ENABLED) {
       try { await s3.ensureCached(`music/processed/${track}`, fullPath); } catch (e) {}
     }
@@ -761,7 +761,7 @@ rtmpHealthPoller.start();
 // Start schedule executor daemon
 startExecutor(getBpmMap, VISUALS_DIR);
 
-// S3: фоновая задача — evict старых видео при переполнении кэша (каждые 60с)
+// S3: background task — evict old videos when cache overflows (every 60s)
 if (s3.S3_ENABLED) {
   setInterval(() => {
     const processedDir = path.join(VISUALS_DIR, '.processed');
