@@ -1,8 +1,32 @@
 # STUDIO 23 — TODO
 
-> Last reviewed: 2026-02-23
-> Tests: 364/364 green (65 pytest + 175 vitest + 124 bats)
-> Phase: Dashboard stabilization COMPLETE. Next: Platform (Phase 1)
+> Last reviewed: 2026-02-26
+> Phase: S3 integration done. Next: Control Plane real infra integration
+
+## Architecture Decisions (brainstorm 2026-02-23)
+
+### Infrastructure
+- **Тупые ноды**: Hetzner auction i9/64GB (~€40), Proxmox, никакой логики
+- **LXC-per-tenant**: 1536MB RAM limit, unprivileged, AppArmor. ~40 tenants/нода
+- **CPU ≈ 0**: QSV copy mode, bottleneck только RAM
+- **No overselling, No cluster**: standalone Proxmox, overcommit=0
+
+### Networking
+- **Tailscale mesh** между нодами и control plane
+- **Cloudflare DNS API** — A-record при provisioning
+- **Caddy на каждой ноде** — TLS, reverse proxy к LXC
+
+### Control Plane (Go + Postgres + Caddy)
+- **Go 1.24** + chi + pgx + golang-migrate. Repo: `github.com/Awis13/controlplane`
+- **Dev env**: OrbStack Ubuntu 25.04, Docker compose (Go app + Postgres 17)
+- **Мультипроектность**: projects table, каждый проект = template + ports + stripe plan
+- **Auth**: Bearer token middleware. **Encryption**: AES-256-GCM для Proxmox API tokens
+- **PostgreSQL** с миграциями embedded в binary
+
+### Frontend стек
+- **Админка**: htmx + Go templates, встроена в binary
+- **Лендинг**: static HTML + Tailwind + vanilla JS
+- **Auth**: Clerk (hosted signup/login), JWT в Go middleware
 
 ## In Progress
 
@@ -10,39 +34,51 @@
 
 ## Up Next
 
-### Phase 1 — Platform (multi-tenant)
-- [ ] Go API control plane — Proxmox REST API для LXC provisioning, tenant CRUD, health checks. Single binary, goroutine-per-tenant. (large)
-- [ ] Stripe + Coinbase Commerce billing — subscription management, webhook handlers, usage metering. (large)
-- [ ] Next.js platform frontend — landing page, Clerk auth, tenant onboarding, dashboard iframe wrapper. (large)
-- [ ] Nginx reverse proxy + Let's Encrypt — subdomain per tenant, TLS termination. (medium)
-- [ ] CI/CD pipeline — GitHub Actions: test → build → deploy. Currently tests run only locally. (medium)
+### Phase 1 — Remaining Infra
+- [ ] **Real Proxmox integration** — подключить provisioning к реальному Proxmox через Tailscale. Код есть (Control Plane PR #3), нужна интеграция с живой инфрой. (large)
+- [ ] **Cloudflare DNS integration** — при создании tenant → A-record. При удалении → delete. (small)
+- [ ] **LXC template** — золотой образ STUDIO 23 из текущего LXC 100. (medium)
+- [ ] **Caddy auto-config на нодах** — SSH → update Caddyfile → reload при создании/удалении tenant. (small)
+- [ ] **Health polling** — goroutine pool, `health_path` каждые 30s, статус в DB. (medium)
+- [ ] **Admin UI (htmx)** — Go templates: список нод, tenants, health. Встроено в binary. (medium)
+
+### Phase 2 — Billing + Public Launch
+- [ ] **Stripe integration** — checkout → webhook → provision. Cancel → stop. (large)
+- [ ] **Landing page** — static HTML + Tailwind. (medium)
+- [ ] **Clerk auth** — JWT validation middleware в Go. (medium)
+- [ ] **Onboarding flow** — checkout → waiting → redirect на tenant dashboard. (medium)
 
 ## Backlog
 
-- [ ] Structured logging — replace 22 console.log statements in dashboard with JSON logger (pino). Needed for multi-tenant log aggregation. (small)
-- [ ] Health endpoint — `GET /api/health` checking HLS segment freshness, Icecast, RTMP status. Needed for platform health monitoring. (small)
-- [ ] HTTPS for dashboard — self-signed for dev, Let's Encrypt for prod. Currently HTTP only. (small)
-- [ ] Hardcoded test line numbers in bats — `tests/bash/test_stream_entry.bats` uses awk NR ranges that break on any code addition. Replace with marker-based stripping (`# TEST_STRIP_BEGIN/END`). (small)
-- [ ] Talk Over mode — voice + music with auto-ducking, Phase 2 feature. Voice ducking currently snaps back instantly (no fade). (medium)
-- [ ] Channel Strip DSP GUI — Gate → EQ → Comp → Limiter. Code scaffolded in radio_bpm.liq (commented out), HTTP endpoints exist. Phase 2/3. (large)
+- [ ] FK violation (non-existent project_id/node_id) → 422 instead of 500. (small)
+- [ ] Pagination on list endpoints (limit/offset). (small)
+- [ ] PATCH/PUT endpoints for node/tenant updates. (small)
+- [ ] Go tests — handler unit tests with mocked stores. (medium)
+- [ ] CI/CD — GitHub Actions: test Go + deploy binary. (medium)
+- [ ] Health endpoint в STUDIO 23 dashboard `GET /api/health`. (small)
+- [ ] freeRadio: рефакторинг server.js (767 строк). (medium)
+- [ ] Pentest LXC isolation — blocking перед launch. (small)
 
 ## Known Issues
 
-### FFT Analyzer на Safari (WebKit bug 180696)
-- `MediaElementSource` + HLS не поддерживается. Server-side FFT disabled, скрыт на iOS. Ждём Apple.
-
-### STREAM_KEYS_SECRET rotation
-- При пересоздании `.env` старые RTMP ключи (AES-256-GCM) становятся нечитаемыми. Workaround: заново ввести ключи в дашборде.
+- **FFT Analyzer на Safari** (WebKit bug 180696) — ждём Apple
+- **STREAM_KEYS_SECRET rotation** — пересоздание `.env` ломает старые RTMP ключи
 
 ## Done
 
-- [x] Pipeline audit: -bf 0 encode path + JSON injection protection — PR #10 (2026-02-23)
-- [x] CSP compliance: inline handlers → addEventListener — PR #9 (2026-02-23)
-- [x] Overnight schedule slots + 56 тестов — PR #8 (2026-02-23)
-- [x] Schedule audit: timezone, overlap, priority — PR #7 (2026-02-23)
-- [x] Auto-play on boot, ARM→PLAY GUI, XSS sanitization — PR #5-6 (2026-02-23)
+- [x] S3 full lifecycle — source of truth, boot sync, каскадные удаления, atomic uploads (2026-02-26)
+- [x] Drag-and-drop upload с progress bar (2026-02-26)
+- [x] i18n — все русские комментарии и строки переведены на English (2026-02-26)
+- [x] Pipeline audit — `-bf 0` + JSON injection protection (2026-02-24, PR #10)
+- [x] CSP compliance — inline handlers removed (2026-02-24, PR #9)
+- [x] Control Plane: tenant provisioning — 86 tests (2026-02-24, CP PR #3)
+- [x] Control Plane: Proxmox API client — 42 tests (2026-02-24, CP PR #2)
 
 ## Dropped
 
-- **radio.liq** — заменён на `radio_bpm.liq` (BPM-aware mixing)
-- **DSP chain в Liquidsoap** — loudnorm перенесён в transcoder stage
+- **radio.liq** → `radio_bpm.liq`
+- **DSP chain в Liquidsoap** → transcoder loudnorm
+- **Proxmox cluster** → standalone ноды
+- **Node.js / SQLite для control plane** → Go + Postgres
+- **React/Vue для админки** → htmx + Go templates
+- **Next.js для лендинга (MVP)** → static HTML + Tailwind
