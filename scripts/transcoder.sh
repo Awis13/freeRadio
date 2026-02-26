@@ -171,5 +171,5 @@ while true; do
 
     # Ждём завершения текущих задач
     wait
-    sleep 30
+    sleep 5
 done

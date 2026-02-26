@@ -35,7 +35,6 @@ const liqClient = require('./lib/liqClient');
 const channelStrip = require("./lib/channelStrip");
 const s3 = require('./lib/s3');
 const cacheManager = require('./lib/cacheManager');
-const syncWatcher = require('./lib/syncWatcher');
 // const { FftAnalyzer } = require("./lib/fftAnalyzer"); // DISABLED: WebKit bug 180696
 
 const PORT = process.env.PORT || 9090;
@@ -330,6 +329,12 @@ app.post('/api/dj/cue', async (req, res) => {
     if (files.length === 0) return res.status(404).json({ error: 'No tracks found' });
     const track = files[Math.floor(Math.random() * files.length)];
     const fullPath = path.join(musicDir, track);
+
+    // S3: скачать трек если нет локально
+    if (s3.S3_ENABLED) {
+      await s3.ensureCached(`music/processed/${track}`, fullPath);
+    }
+
     cuedTrackPath = fullPath;
     const result = await liqClient.cueTrack(fullPath);
     res.json({ ok: true, track, data: result.data });
@@ -593,28 +598,49 @@ app.post('/api/restream/settings', (req, res) => {
 // --- Overlay assets serving ---
 app.use('/overlay-assets', express.static('/shared/overlay_assets'));
 
-// S3 status endpoint
-app.get('/api/s3/status', (req, res) => {
-  if (!s3.S3_ENABLED) return res.json({ enabled: false });
-  const musicSize = cacheManager.getCacheSize(MUSIC_DIR);
-  const visualsSize = cacheManager.getCacheSize(path.join(VISUALS_DIR, '.processed'));
-  res.json({
-    enabled: true,
-    tenantId: s3.TENANT_ID,
-    cache: {
-      musicBytes: musicSize,
-      visualsBytes: visualsSize,
-      totalMB: Math.round((musicSize + visualsSize) / 1024 / 1024),
-      maxMB: S3_CACHE_MAX_MB
-    }
-  });
-});
+// --- Start ---
+// Local HLS streaming always starts on boot (preview mode).
+// autoStart controls whether RTMP broadcast is active on boot.
+const restreamCfg = restreamSettings.getSettings();
+streamControl.setControlState(true, !!restreamCfg.autoStart);
+// Don't reset mode — preserve from file
+const bootMode = streamControl.getModeState().mode || 'standby';
+console.log(`[boot] streaming=true, broadcast=${!!restreamCfg.autoStart}, mode=${bootMode}`);
 
-// --- Auto-restore: cue + resume Liquidsoap ---
-// Всегда запускается при boot (24/7 radio). Если Liquidsoap уже играет — просто ставит mode=live.
-// Если нет — ждёт autoplay, затем fallback cue+resume. bootAborted отменяет при /api/dj/stop.
-async function autoRestore() {
-  bootAborted = false;
+
+// S3 boot sync: скачать все processed файлы + метаданные перед auto-restore
+if (s3.S3_ENABLED) {
+  (async () => {
+    const start = Date.now();
+    try {
+      // Синк processed аудио (критично для Liquidsoap random mode)
+      await s3.syncDir('music/processed/', path.join(MUSIC_DIR, 'processed'));
+      // Синк метаданных
+      for (const meta of ['.analysis_map', '.bpm_map']) {
+        try {
+          await s3.ensureCached(`music/${meta}`, path.join(MUSIC_DIR, meta));
+        } catch (e) {}
+      }
+      // Синк processed видео активного профиля
+      const { getActiveProfile } = require('./lib/visualProfile');
+      const active = getActiveProfile();
+      if (active && active.videos) {
+        await cacheManager.prefetchVideos(active.videos, VISUALS_DIR);
+      }
+      const elapsed = ((Date.now() - start) / 1000).toFixed(1);
+      console.log(`[s3] boot sync completed in ${elapsed}s`);
+    } catch (e) {
+      console.error(`[s3] boot sync failed: ${e.message}`);
+    }
+  })();
+}
+
+// Auto-restore: ALWAYS runs at boot (24/7 radio).
+// Liquidsoap has an autoplay timer (8s) — it is the primary authority.
+// Dashboard only observes and syncs mode state.
+// /playback/stop during boot cancels autoplay (via autoplay_cancelled ref in Liquidsoap).
+// bootAborted flag is declared above, set by /api/dj/stop.
+(async () => {
   const MAX_RETRIES = 30;
   const RETRY_INTERVAL = 2000;
   const start = Date.now();
@@ -707,6 +733,11 @@ async function autoRestore() {
     const track = files[Math.floor(Math.random() * files.length)];
     const fullPath = path.join(musicDir, track);
 
+    // S3: скачать трек для cue если нет локально
+    if (s3.S3_ENABLED) {
+      try { await s3.ensureCached(`music/processed/${track}`, fullPath); } catch (e) {}
+    }
+
     await liqClient.cueTrack(fullPath);
     await new Promise(resolve => setTimeout(resolve, 6000));
     if (bootAborted) { console.log('[boot] Aborted by user during buffer wait'); return; }
@@ -718,76 +749,55 @@ async function autoRestore() {
   } catch (e) {
     console.log(`[boot] Auto-restore cue/resume failed: ${e.message}`);
   }
+})();
+
+icecastPoller.start();
+trackPoller.start();
+videoPoller.start();
+ffmpegPoller.start();
+bpmPoller.start();
+rtmpHealthPoller.start();
+
+// Start schedule executor daemon
+startExecutor(getBpmMap, VISUALS_DIR);
+
+// S3: фоновая задача — evict старых видео при переполнении кэша (каждые 60с)
+if (s3.S3_ENABLED) {
+  setInterval(() => {
+    const processedDir = path.join(VISUALS_DIR, '.processed');
+    const maxBytes = S3_CACHE_MAX_MB * 1024 * 1024;
+    const currentSize = cacheManager.getCacheSize(processedDir);
+    if (currentSize > maxBytes) {
+      cacheManager.evictOldest(processedDir, maxBytes);
+    }
+  }, 60000);
+  console.log(`[s3] cache eviction enabled (max ${S3_CACHE_MAX_MB} MB for visuals)`);
 }
 
-// --- Boot sequence ---
-async function boot() {
-  const start = Date.now();
-
-  // Stream control: always start HLS, autoStart controls RTMP
-  const restreamCfg = restreamSettings.getSettings();
-  streamControl.setControlState(true, !!restreamCfg.autoStart);
-  const bootMode = streamControl.getModeState().mode || 'standby';
-  console.log(`[boot] streaming=true, broadcast=${!!restreamCfg.autoStart}, mode=${bootMode}`);
-
-  // 1-3. S3 restore (каждый шаг в try/catch — boot продолжается даже если S3 недоступен)
-  if (s3.S3_ENABLED) {
-    try { await syncWatcher.init(); } catch (e) {
-      console.error(`[boot] syncWatcher init failed: ${e.message}`);
+// S3 status endpoint
+app.get('/api/s3/status', (req, res) => {
+  if (!s3.S3_ENABLED) return res.json({ enabled: false });
+  const musicSize = cacheManager.getCacheSize(MUSIC_DIR);
+  const visualsSize = cacheManager.getCacheSize(path.join(VISUALS_DIR, '.processed'));
+  res.json({
+    enabled: true,
+    tenantId: s3.TENANT_ID,
+    cache: {
+      musicBytes: musicSize,
+      visualsBytes: visualsSize,
+      totalMB: Math.round((musicSize + visualsSize) / 1024 / 1024),
+      maxMB: S3_CACHE_MAX_MB
     }
-    try { await s3.syncDir('music/processed/', path.join(MUSIC_DIR, 'processed')); } catch (e) {
-      console.error(`[boot] music sync failed: ${e.message}`);
-    }
-    try { await s3.syncDir('visuals/processed/', path.join(VISUALS_DIR, '.processed')); } catch (e) {
-      console.error(`[boot] visuals sync failed: ${e.message}`);
-    }
-    const syncElapsed = ((Date.now() - start) / 1000).toFixed(1);
-    console.log(`[s3] boot sync completed in ${syncElapsed}s`);
-  }
+  });
+});
 
-  // 4. Запуск pollers
-  icecastPoller.start();
-  trackPoller.start();
-  videoPoller.start();
-  ffmpegPoller.start();
-  bpmPoller.start();
-  rtmpHealthPoller.start();
-
-  // 5. Schedule executor
-  startExecutor(getBpmMap, VISUALS_DIR);
-
-  // 6. Фоновый sync TO S3
-  if (s3.S3_ENABLED) {
-    syncWatcher.start();
-  }
-
-  // 7. Cache eviction
-  if (s3.S3_ENABLED) {
-    setInterval(() => {
-      const processedDir = path.join(VISUALS_DIR, '.processed');
-      const maxBytes = S3_CACHE_MAX_MB * 1024 * 1024;
-      const currentSize = cacheManager.getCacheSize(processedDir);
-      if (currentSize > maxBytes) {
-        cacheManager.evictOldest(processedDir, maxBytes);
-      }
-    }, 60000);
-    console.log(`[s3] cache eviction enabled (max ${S3_CACHE_MAX_MB} MB for visuals)`);
-  }
-
-  // 8. Auto-restore: cue + resume (файлы уже на месте)
-  await autoRestore();
-}
-
-// --- Start: listen first, then boot ---
+// Keep-alive: prevent connection close race condition during concurrent requests
 server.keepAliveTimeout = 61000;
 server.headersTimeout = 65000;
 
 server.listen(PORT, '0.0.0.0', () => {
   console.log(`[dashboard] http://0.0.0.0:${PORT}`);
   console.log(`[dashboard] mode=${OUTPUT_MODE} hls=${HLS_DIR}`);
-
-  // Boot sequence (async, API already accepting requests)
-  boot().catch(e => console.error(`[boot] fatal: ${e.message}`));
 });
 
 // --- HTTPS (for getUserMedia / secure context) ---
