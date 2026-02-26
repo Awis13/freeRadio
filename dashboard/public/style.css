@@ -274,27 +274,92 @@ video {
 }
 .file-del:hover { background: rgba(255,179,179,0.1); }
 
-.upload-row {
-  display: flex;
-  gap: 8px;
-  align-items: center;
-  padding: 8px 12px;
-  border-top: 1px solid var(--border);
-}
-
-.upload-btn {
-  background: var(--bg2);
-  border: 1px solid var(--border2);
-  color: var(--text);
+/* Drop Zone */
+.drop-zone {
+  border: 1px dashed var(--border2);
   border-radius: 6px;
-  padding: 4px 12px;
+  padding: 10px 12px;
   cursor: pointer;
-  font-size: 12px;
-  font-family: inherit;
+  transition: border-color 0.2s, background 0.2s;
+  margin: 0;
+  border-top: 1px dashed var(--border2);
 }
-.upload-btn:hover { background: var(--bg-hover); }
+.drop-zone:hover { border-color: var(--text2); }
+.drop-zone.drag-over {
+  border-color: var(--accent);
+  background: rgba(var(--accent-rgb), 0.05);
+}
 
-.upload-status { color: var(--text2); font-size: 11px; }
+.drop-zone-prompt {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  font-size: 11px;
+  color: var(--text2);
+}
+.drop-zone-icon { font-size: 14px; }
+.drop-zone-browse {
+  background: none;
+  border: none;
+  color: var(--accent);
+  text-decoration: underline;
+  cursor: pointer;
+  font-family: inherit;
+  font-size: 11px;
+  padding: 0;
+}
+
+.drop-zone-queue {
+  max-height: 160px;
+  overflow-y: auto;
+}
+
+/* Upload Item (pipeline row) */
+.upload-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 0;
+  font-size: 11px;
+}
+.upload-item + .upload-item { border-top: 1px solid var(--border); }
+.upload-item-name {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text);
+}
+.upload-item-size { color: var(--text2); min-width: 50px; text-align: right; }
+
+.upload-item-progress {
+  width: 60px;
+  height: 3px;
+  background: var(--border);
+  border-radius: 2px;
+  overflow: hidden;
+}
+.upload-item-progress-fill {
+  height: 100%;
+  background: var(--accent);
+  transition: width 0.2s;
+  width: 0%;
+}
+.upload-item-status {
+  font-size: 9px;
+  font-weight: bold;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  padding: 1px 5px;
+  border-radius: 3px;
+  white-space: nowrap;
+  min-width: 65px;
+  text-align: center;
+}
+.upload-item-status.uploading { color: var(--blue); border: 1px solid var(--blue); }
+.upload-item-status.ready { color: var(--green); border: 1px solid var(--green); }
+.upload-item-status.error { color: var(--red); border: 1px solid var(--red); }
 
 /* Debug log */
 .dbg-body { padding: 0; }
@@ -1559,7 +1624,7 @@ canvas {
   display: none;
 }
 
-/* Transport SKIP — нейтральная кнопка в transport controls */
+/* Transport SKIP — neutral button in transport controls */
 .btn-broadcast.btn-skip {
   background: var(--bg);
   color: var(--text);
@@ -1776,7 +1841,7 @@ canvas {
    ============================ */
 .mode-selector-bar {
   display: grid;
-  grid-template-columns: 1fr;  /* Phase 1: только Radio */
+  grid-template-columns: 1fr;  /* Phase 1: Radio only */
   gap: 8px;
   margin-bottom: 12px;
 }
@@ -1796,7 +1861,7 @@ canvas {
   background: rgba(255,255,255,0.02);
 }
 
-/* Цветовое кодирование активных карт */
+/* Color coding for active cards */
 .mode-card.mode-radio.active {
   border-color: var(--accent);
   background: rgba(var(--accent-rgb), 0.06);
@@ -1810,7 +1875,7 @@ canvas {
   background: rgba(239, 68, 68, 0.06);
 }
 
-/* Заблокированные карты во время эфира */
+/* Locked cards during broadcast */
 .mode-card.mode-locked {
   opacity: 0.35;
   pointer-events: none;
@@ -1853,7 +1918,7 @@ canvas {
   line-height: 1.2;
 }
 
-/* Суб-пиллы внутри карт */
+/* Sub-pills inside cards */
 .mode-sub-pills {
   display: flex;
   gap: 4px;
@@ -1878,26 +1943,26 @@ canvas {
   border-color: var(--text2);
 }
 
-/* Активный суб-пилл в Radio */
+/* Active sub-pill in Radio */
 .mode-card.mode-radio .mode-sub-pill.active {
   border-color: var(--accent);
   color: var(--accent);
   background: rgba(var(--accent-rgb), 0.1);
 }
-/* Активный суб-пилл в Talk Over */
+/* Active sub-pill in Talk Over */
 .mode-card.mode-talkover .mode-sub-pill.active {
   border-color: var(--yellow);
   color: var(--yellow);
   background: rgba(234, 179, 8, 0.1);
 }
 
-/* Неактивные карты: суб-пиллы затемнены */
+/* Inactive cards: sub-pills dimmed */
 .mode-card:not(.active) .mode-sub-pills {
   opacity: 0.4;
   pointer-events: none;
 }
 
-/* AFK fallback в Takeover карте */
+/* AFK fallback in Takeover card */
 .mode-afk-label {
   font-size: 10px;
   color: var(--text2);
@@ -2027,7 +2092,7 @@ canvas {
   min-width: 0;
 }
 
-/* Channel strip — горизонтальная полоса: btn/label + meter + fader + value */
+/* Channel strip — horizontal row: btn/label + meter + fader + value */
 .mm-channel {
   display: flex;
   align-items: center;
@@ -2067,7 +2132,7 @@ canvas {
   background: #dc2626;
 }
 
-/* MON button — зелёный когда активен */
+/* MON button — green when active */
 .mm-mon-btn.active {
   border-color: var(--accent);
   background: rgba(196, 255, 203, 0.15);
@@ -2200,7 +2265,7 @@ canvas {
   cursor: pointer;
 }
 
-/* Показывать monitor-mixer только в Talk Over */
+/* Show monitor-mixer only in Talk Over */
 .studio-layout.mode-talkover #monitor-mixer {
   display: block;
 }
@@ -2223,28 +2288,28 @@ canvas {
    ============================ */
 
 /* === RADIO ONLY ===
-   PTT виден (голосовые вставки поверх музыки)
-   Live Mode Bar скрыт (нет OBS/mic streaming)
-   Channel strip виден для visual-radio, скрыт для video-playlist (звук из файла) */
+   PTT visible (voice drops over music)
+   Live Mode Bar hidden (no OBS/mic streaming)
+   Channel strip visible for visual-radio, hidden for video-playlist (audio from file) */
 .studio-layout.mode-radio #live-mode-bar { display: none !important; }
 .studio-layout.mode-radio.submode-video-playlist #channel-strip-panel { display: none !important; }
 
 /* === TALK OVER ===
-   PTT скрыт (не voice drops, а непрерывный эфир через микшер)
-   Channel strip (микшер) виден — это основной инструмент Talk Over
-   Live Mode Bar только если source=obs */
+   PTT hidden (continuous broadcast via mixer, not voice drops)
+   Channel strip (mixer) visible — main Talk Over tool
+   Live Mode Bar only if source=obs */
 .studio-layout.mode-talkover #ptt-bar { display: none !important; }
 .studio-layout.mode-talkover:not(.submode-obs) #live-mode-bar { display: none !important; }
 .studio-layout.mode-talkover.submode-obs #live-mode-bar { display: block !important; }
 
 /* === FULL TAKEOVER ===
-   OBS заменяет всё — скрыть PTT, микшер, очередь, библиотеки */
+   OBS replaces everything — hide PTT, mixer, queue, libraries */
 .studio-layout.mode-takeover #ptt-bar { display: none !important; }
 .studio-layout.mode-takeover #channel-strip-panel { display: none !important; }
 .studio-layout.mode-takeover .studio-queue-area { display: none !important; }
 .studio-layout.mode-takeover .studio-files { display: none !important; }
 
-/* Responsive: карты в stack на маленьких экранах */
+/* Responsive: cards stacked on small screens */
 @media (max-width: 700px) {
   .mode-selector-bar {
     grid-template-columns: 1fr;
@@ -2915,7 +2980,7 @@ canvas {
    CHANNEL STRIP (horizontal grid — main area)
    ============================ */
 
-/* --- Toolbar в header панели --- */
+/* --- Toolbar in panel header --- */
 .channel-strip-toolbar {
   gap: 8px;
 }
@@ -2961,7 +3026,7 @@ canvas {
   color: var(--accent);
 }
 
-/* --- Bypass dimming — весь strip тусклый когда bypass включён --- */
+/* --- Bypass dimming — entire strip dimmed when bypass is on --- */
 .channel-strip.bypassed {
   opacity: 0.35;
   pointer-events: none;
@@ -2969,7 +3034,7 @@ canvas {
   transition: opacity 0.3s, filter 0.3s;
 }
 
-/* --- Compact meters (видны когда панель свёрнута) --- */
+/* --- Compact meters (visible when panel is collapsed) --- */
 .strip-compact-meters {
   display: none;
   align-items: center;
@@ -2977,7 +3042,7 @@ canvas {
   margin-left: 4px;
 }
 
-/* Когда body скрыт (нет .collapsed), показываем compact meters */
+/* When body is visible (no .collapsed), show compact meters */
 .panel-collapsible:not(.collapsed) .strip-compact-meters {
   display: flex;
 }
@@ -3021,7 +3086,7 @@ canvas {
   font-weight: 600;
 }
 
-/* --- Knob (вертикальный: label → slider → value) --- */
+/* --- Knob (vertical: label -> slider -> value) --- */
 .strip-knob {
   display: flex;
   flex-direction: column;
@@ -3088,7 +3153,7 @@ canvas {
   padding: 4px 6px 2px;
 }
 
-/* --- Gate LED (маленький, для compact) --- */
+/* --- Gate LED (small, for compact view) --- */
 .strip-led {
   width: 8px;
   height: 8px;

@@ -15,12 +15,8 @@
   var statTime = document.getElementById('stat-time');
   var musicList = document.getElementById('music-list');
   var musicCount = document.getElementById('music-count');
-  var musicInput = document.getElementById('music-input');
-  var musicStatus = document.getElementById('music-upload-status');
   var visualsList = document.getElementById('visuals-list');
   var visualsCount = document.getElementById('visuals-count');
-  var visualsInput = document.getElementById('visuals-input');
-  var visualsStatus = document.getElementById('visuals-upload-status');
   var logEl = document.getElementById('log');
   var dbgClear = document.getElementById('dbg-clear');
   var dbgPause = document.getElementById('dbg-pause');
@@ -35,7 +31,7 @@
   var trackStartedAt = 0;
   var trackDuration = 0;
   var trackMixDur = 0;
-  var lastAudioMsg = null; // кэш последнего audio сообщения (для replay после ARM→PLAY)
+  var lastAudioMsg = null; // cached last audio message (for replay after ARM→PLAY)
   var queueList = document.getElementById('queue-list');
   var skipBtn = document.getElementById('skip-btn');
   var clearQueueBtn = document.getElementById('clear-queue-btn');
@@ -279,7 +275,7 @@
     return name;
   }
 
-  // Экранирование HTML-спецсимволов для безопасной вставки в innerHTML
+  // Escape HTML special chars for safe innerHTML insertion
   function escapeHtml(str) {
     if (typeof str !== 'string') return str;
     return str
@@ -304,7 +300,7 @@
   var isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
   var isSafari = /^((?!chrome|android).)*safari/i.test(navigator.userAgent) || isIOS;
 
-  // Safari/iOS: прячем анализатор (WebKit bug 180696)
+  // Safari/iOS: hide analyzer (WebKit bug 180696)
   if (isSafari) {
     var _aw = document.getElementById('analyzer-wrap');
     if (_aw) _aw.style.display = 'none';
@@ -509,8 +505,8 @@
       hlsInstance = null;
     }
 
-    // Сбросить stale буферы video-элемента после destroy HLS
-    // Без этого readyState/videoWidth/currentTime сохраняют старые значения
+    // Reset stale video element buffers after HLS destroy
+    // Without this, readyState/videoWidth/currentTime retain old values
     studioPlayer.removeAttribute("src");
     studioPlayer.load();
 
@@ -535,8 +531,8 @@
 
     hlsInstance.on(Hls.Events.ERROR, function (_, data) {
       if (data.fatal) {
-        // ARM/ARMED: пайплайн перезапускается (flush stale mbuffer), HLS сегменты обновляются.
-        // Вместо игнорирования — recovery с задержкой, чтобы дождаться свежих сегментов.
+        // ARM/ARMED: pipeline restarting (flush stale mbuffer), HLS segments updating.
+        // Instead of ignoring — recover with delay to wait for fresh segments.
         if (broadcastState && (broadcastState.streamMode === 'armed' || broadcastState.arming)) {
           log('HLS FATAL during ARM/ARMED: ' + data.details + ' (recovering in 2s)');
           hlsInstance.destroy();
@@ -579,7 +575,7 @@
     });
 
     hlsInstance.on(Hls.Events.MANIFEST_PARSED, function () {
-      // Не убирать overlay во время ARM — checkReady уберёт когда видео реально появится
+      // Don't hide overlay during ARM — checkReady will hide it when video actually appears
       if (broadcastState && broadcastState.arming) { log('HLS MANIFEST_PARSED (arming, keep overlay)'); tryPlay('manifest'); return; }
       hideLoading('manifest');
       log('HLS MANIFEST_PARSED → play()');
@@ -684,7 +680,7 @@
     ws.onopen = function () {
       log('ws: connected');
       wsReconnectDelay = 1000;
-      // Подписаться на server-side FFT если Safari анализатор активен
+      // Subscribe to server-side FFT if Safari analyzer is active
       if (azServerFFT) {
         ws.send(JSON.stringify({type: 'fft-subscribe'}));
       }
@@ -703,7 +699,7 @@
     ws.binaryType = 'arraybuffer';
     ws.onmessage = function (evt) {
       if (typeof evt.data !== 'string') {
-        // Бинарный FFT фрейм от сервера
+        // Binary FFT frame from server
         handleFftFrame(new Uint8Array(evt.data));
         return;
       }
@@ -720,7 +716,7 @@
     switch (msg.type) {
       case 'init':
         bpmMap = msg.data.bpm || {};
-        // Установить broadcast state ДО updateAudio (race condition fix)
+        // Set broadcast state BEFORE updateAudio (race condition fix)
         if (msg.data.streamControl) {
           broadcastState.streaming = msg.data.streamControl.streaming;
           broadcastState.broadcast = !!msg.data.streamControl.broadcast;
@@ -794,12 +790,6 @@
           updateLiveModeUI();
           updateModeUI();
           log('live: ' + msg.data.obsStatus);
-        }
-        break;
-      case 'schedule-slot':
-        if (msg.data) {
-          log('schedule: slot changed → ' + (msg.data.label || msg.data.slotId || 'default'));
-          loadScheduleCurrent();
         }
         break;
     }
@@ -930,6 +920,7 @@
 
   // --- File Management ---
   function loadFileList(type) {
+    if (!type) return;
     authFetch('/api/' + type)
       .then(function (r) { return r.json(); })
       .then(function (files) {
@@ -997,37 +988,132 @@
       .catch(function (e) { showError('Delete failed: ' + e); });
   }
 
-  function uploadFiles(type, input, statusEl) {
-    var files = input.files;
-    if (!files || !files.length) return;
+  // --- Drop Zone upload system ---
 
-    var formData = new FormData();
-    for (var i = 0; i < files.length; i++) {
-      formData.append('files', files[i]);
+  function initDropZone(el) {
+    var input = el.querySelector('.drop-zone-input');
+    var browseBtn = el.querySelector('.drop-zone-browse');
+    var queueEl = el.querySelector('.drop-zone-queue');
+    var type = el.dataset.type;
+    var acceptStr = el.dataset.accept || '';
+    var acceptExts = acceptStr.split(',').map(function(e) { return e.trim().toLowerCase(); });
+
+    browseBtn.addEventListener('click', function(e) {
+      e.stopPropagation();
+      input.click();
+    });
+    el.addEventListener('click', function(e) {
+      if (e.target === el || e.target.closest('.drop-zone-prompt')) input.click();
+    });
+
+    el.addEventListener('dragenter', function(e) { e.preventDefault(); el.classList.add('drag-over'); });
+    el.addEventListener('dragover', function(e) { e.preventDefault(); el.classList.add('drag-over'); });
+    el.addEventListener('dragleave', function(e) {
+      if (!el.contains(e.relatedTarget)) el.classList.remove('drag-over');
+    });
+    el.addEventListener('drop', function(e) {
+      e.preventDefault();
+      el.classList.remove('drag-over');
+      handleFiles(e.dataTransfer.files);
+    });
+
+    input.addEventListener('change', function() {
+      handleFiles(input.files);
+      input.value = '';
+    });
+
+    function handleFiles(files) {
+      for (var i = 0; i < files.length; i++) {
+        var f = files[i];
+        var ext = '.' + f.name.split('.').pop().toLowerCase();
+        if (acceptExts.length && acceptExts[0] && acceptExts.indexOf(ext) === -1) {
+          log('skipped ' + f.name + ' (unsupported format)');
+          continue;
+        }
+        uploadOneFile(type, f, queueEl);
+      }
     }
-
-    statusEl.textContent = 'Uploading ' + files.length + ' file(s)...';
-    log('uploading ' + files.length + ' file(s) to ' + type);
-
-    authFetch('/api/' + type, { method: 'POST', body: formData })
-      .then(function (r) { return r.json(); })
-      .then(function (data) {
-        var count = data.uploaded ? data.uploaded.length : 0;
-        statusEl.textContent = 'Uploaded ' + count + ' file(s)';
-        log('uploaded ' + count + ' file(s) to ' + type);
-        loadFileList(type);
-        setTimeout(function () { statusEl.textContent = ''; }, 3000);
-      })
-      .catch(function (e) {
-        statusEl.textContent = 'Upload failed';
-        showError('Upload failed: ' + e);
-      });
-
-    input.value = '';
   }
 
-  musicInput.onchange = function () { uploadFiles('music', musicInput, musicStatus); };
-  visualsInput.onchange = function () { uploadFiles('visuals', visualsInput, visualsStatus); };
+  function uploadOneFile(type, file, queueEl) {
+    var item = document.createElement('div');
+    item.className = 'upload-item';
+    var nameSpan = document.createElement('span');
+    nameSpan.className = 'upload-item-name';
+    nameSpan.textContent = file.name;
+    var sizeSpan = document.createElement('span');
+    sizeSpan.className = 'upload-item-size';
+    sizeSpan.textContent = fmtSize(file.size);
+    var progressDiv = document.createElement('div');
+    progressDiv.className = 'upload-item-progress';
+    var fill = document.createElement('div');
+    fill.className = 'upload-item-progress-fill';
+    progressDiv.appendChild(fill);
+    var badge = document.createElement('span');
+    badge.className = 'upload-item-status uploading';
+    badge.textContent = '0%';
+
+    item.appendChild(nameSpan);
+    item.appendChild(sizeSpan);
+    item.appendChild(progressDiv);
+    item.appendChild(badge);
+    queueEl.appendChild(item);
+
+    var isOverlay = (type === 'overlay-assets');
+    var endpoint = isOverlay ? '/api/overlays/assets' : '/api/' + type;
+    var fieldName = isOverlay ? 'file' : 'files';
+
+    var formData = new FormData();
+    formData.append(fieldName, file);
+
+    var xhr = new XMLHttpRequest();
+    xhr.open('POST', endpoint, true);
+    if (authToken) xhr.setRequestHeader('Authorization', 'Bearer ' + authToken);
+
+    xhr.upload.onprogress = function(e) {
+      if (e.lengthComputable) {
+        var pct = Math.round(e.loaded / e.total * 100);
+        fill.style.width = pct + '%';
+        badge.textContent = pct + '%';
+      }
+    };
+
+    xhr.onload = function() {
+      if (xhr.status >= 200 && xhr.status < 300) {
+        fill.style.width = '100%';
+        badge.className = 'upload-item-status ready';
+        badge.textContent = 'OK';
+        log('uploaded ' + file.name + ' to ' + type);
+        if (type === 'overlay-assets') loadOverlayAssets();
+        loadFileList(type === 'overlay-assets' ? null : type);
+        setTimeout(function() {
+          item.style.transition = 'opacity 0.4s';
+          item.style.opacity = '0';
+          setTimeout(function() { if (item.parentNode) item.parentNode.removeChild(item); }, 500);
+        }, 3000);
+      } else if (xhr.status === 401) {
+        showLoginOverlay();
+        badge.className = 'upload-item-status error';
+        badge.textContent = 'AUTH';
+      } else {
+        badge.className = 'upload-item-status error';
+        badge.textContent = 'ERROR';
+        showError('Upload failed: ' + xhr.statusText);
+      }
+    };
+
+    xhr.onerror = function() {
+      badge.className = 'upload-item-status error';
+      badge.textContent = 'ERROR';
+      showError('Upload failed: network error');
+    };
+
+    xhr.send(formData);
+    log('uploading ' + file.name + ' to ' + type);
+  }
+
+
+  document.querySelectorAll('.drop-zone').forEach(initDropZone);
 
   setInterval(function () { loadFileList('music'); }, 30000);
   setInterval(function () { loadFileList('visuals'); }, 30000);
@@ -1433,11 +1519,8 @@
         '<div class="form-group"><label>Tag Mode</label>' +
         '<select id="smart-tag-mode"><option value="any"' + (rules.tagMode !== 'all' ? ' selected' : '') + '>Any</option>' +
         '<option value="all"' + (rules.tagMode === 'all' ? ' selected' : '') + '>All</option></select></div>' +
-        '<button class="btn-primary" data-action="updateSmartRules" data-id="' + escapeHtml(pl.id) + '">Update Rules</button>';
+        '<button class="btn-primary" onclick="updateSmartRules(\'' + escapeHtml(pl.id) + '\')">Update Rules</button>';
       rulesDiv.innerHTML = html;
-      rulesDiv.querySelector('[data-action="updateSmartRules"]').addEventListener('click', function() {
-        window.updateSmartRules(pl.id);
-      });
       contentEl.appendChild(rulesDiv);
 
       var tracksDiv = document.createElement('div');
@@ -1828,8 +1911,6 @@
     setTimeout(function() {
       var sel = document.getElementById('schedule-default-playlist');
       sel.value = s.defaultPlaylistId || '';
-      var vsel = document.getElementById('schedule-default-video-playlist');
-      if (vsel) vsel.value = s.defaultVideoPlaylistId || '';
     }, 500);
   }
 
@@ -1867,11 +1948,9 @@
   }
 
   document.getElementById('save-schedule-settings').onclick = function() {
-    var vsel = document.getElementById('schedule-default-video-playlist');
     var settings = {
       timezone: document.getElementById('schedule-timezone').value,
       defaultPlaylistId: document.getElementById('schedule-default-playlist').value || null,
-      defaultVideoPlaylistId: vsel ? (vsel.value || null) : null,
       enabled: document.getElementById('schedule-enabled').checked
     };
     authFetch('/api/schedule', {
@@ -2354,68 +2433,42 @@
       var header = document.createElement('div');
       header.className = 'overlay-layer-header';
       header.innerHTML =
-        '<label class="checkbox-label"><input type="checkbox" ' + (layer.enabled ? 'checked' : '') + '> ' +
+        '<label class="checkbox-label"><input type="checkbox" ' + (layer.enabled ? 'checked' : '') + ' onchange="toggleOverlayLayer(' + idx + ', this.checked)"> ' +
         '<span class="overlay-type-badge">' + escapeHtml(layer.type) + '</span></label>' +
-        '<button class="file-del">x</button>';
-      header.querySelector('input[type="checkbox"]').addEventListener('change', function() {
-        window.toggleOverlayLayer(idx, this.checked);
-      });
-      header.querySelector('button.file-del').addEventListener('click', function() {
-        window.removeOverlayLayer(idx);
-      });
+        '<button class="file-del" onclick="removeOverlayLayer(' + idx + ')">x</button>';
       div.appendChild(header);
 
       var body = document.createElement('div');
       body.className = 'overlay-layer-body';
 
-      // Хелпер: создаёт input с data-атрибутами для event delegation
-      function field(label, type, value, prop, parser, placeholder) {
-        return '<div class="form-group"><label>' + label + '</label>' +
-          '<input type="' + type + '" value="' + escapeHtml('' + value) + '"' +
-          ' data-layer="' + idx + '" data-prop="' + prop + '"' +
-          (parser ? ' data-parse="' + parser + '"' : '') +
-          (placeholder ? ' placeholder="' + escapeHtml(placeholder) + '"' : '') +
-          '></div>';
-      }
-
       if (layer.type === 'now_playing' || layer.type === 'scrolling_now_playing' || layer.type === 'static_text' || layer.type === 'clock' || layer.type === 'scrolling_text') {
         var isScrolling = layer.type === 'scrolling_text' || layer.type === 'scrolling_now_playing';
         body.innerHTML =
           '<div class="overlay-props">' +
-          (layer.type === 'static_text' || layer.type === 'scrolling_text' ? field('Text', 'text', layer.text || '', 'text') : '') +
+          (layer.type === 'static_text' || layer.type === 'scrolling_text' ? '<div class="form-group"><label>Text</label><input type="text" value="' + escapeHtml(layer.text || '') + '" onchange="updateOverlayLayer(' + idx + ', \'text\', this.value)"></div>' : '') +
           (layer.type === 'scrolling_now_playing' ? '<div class="form-group"><label>Source</label><span class="text-secondary">Current track (auto)</span></div>' : '') +
-          (isScrolling ? field('Speed (px/sec)', 'number', layer.speed || 100, 'speed', 'int') : '') +
-          (layer.type === 'clock' ? field('Format', 'text', layer.format || '%H:%M', 'format') : '') +
+          (isScrolling ? '<div class="form-group"><label>Speed (px/sec)</label><input type="number" value="' + escapeHtml('' + (layer.speed || 100)) + '" onchange="updateOverlayLayer(' + idx + ', \'speed\', parseInt(this.value))"></div>' : '') +
+          (layer.type === 'clock' ? '<div class="form-group"><label>Format</label><input type="text" value="' + escapeHtml(layer.format || '%H:%M') + '" onchange="updateOverlayLayer(' + idx + ', \'format\', this.value)"></div>' : '') +
           '<div class="overlay-pos-grid">' +
-          field('Font Size', 'number', layer.fontsize || 28, 'fontsize', 'int') +
-          field('Color', 'text', layer.fontcolor || 'white', 'fontcolor') +
-          field('X', 'text', layer.x || '20', 'x') +
-          field('Y', 'text', layer.y || '20', 'y') +
+          '<div class="form-group"><label>Font Size</label><input type="number" value="' + escapeHtml('' + (layer.fontsize || 28)) + '" onchange="updateOverlayLayer(' + idx + ', \'fontsize\', parseInt(this.value))"></div>' +
+          '<div class="form-group"><label>Color</label><input type="text" value="' + escapeHtml(layer.fontcolor || 'white') + '" onchange="updateOverlayLayer(' + idx + ', \'fontcolor\', this.value)"></div>' +
+          '<div class="form-group"><label>X</label><input type="text" value="' + escapeHtml('' + (layer.x || '20')) + '" onchange="updateOverlayLayer(' + idx + ', \'x\', this.value)"></div>' +
+          '<div class="form-group"><label>Y</label><input type="text" value="' + escapeHtml('' + (layer.y || '20')) + '" onchange="updateOverlayLayer(' + idx + ', \'y\', this.value)"></div>' +
           '</div>' +
-          field('Box Color', 'text', layer.boxcolor || '', 'boxcolor', null, 'black@0.6') +
+          '<div class="form-group"><label>Box Color</label><input type="text" value="' + escapeHtml(layer.boxcolor || '') + '" placeholder="black@0.6" onchange="updateOverlayLayer(' + idx + ', \'boxcolor\', this.value)"></div>' +
           '</div>';
       } else if (layer.type === 'logo') {
         body.innerHTML =
           '<div class="overlay-props">' +
-          field('Asset', 'text', layer.asset || '', 'asset', null, 'logo.png') +
+          '<div class="form-group"><label>Asset</label><input type="text" value="' + escapeHtml(layer.asset || '') + '" onchange="updateOverlayLayer(' + idx + ', \'asset\', this.value)" placeholder="logo.png"></div>' +
           '<div class="overlay-pos-grid">' +
-          field('X', 'text', layer.x || 'W-w-20', 'x') +
-          field('Y', 'text', layer.y || '20', 'y') +
+          '<div class="form-group"><label>X</label><input type="text" value="' + escapeHtml('' + (layer.x || 'W-w-20')) + '" onchange="updateOverlayLayer(' + idx + ', \'x\', this.value)"></div>' +
+          '<div class="form-group"><label>Y</label><input type="text" value="' + escapeHtml('' + (layer.y || '20')) + '" onchange="updateOverlayLayer(' + idx + ', \'y\', this.value)"></div>' +
           '</div>' +
           '</div>';
       }
       div.appendChild(body);
       container.appendChild(div);
-    });
-
-    // Event delegation: все input[data-layer] change events
-    container.addEventListener('change', function(e) {
-      var input = e.target;
-      if (!input.dataset || input.dataset.layer === undefined) return;
-      var layerIdx = parseInt(input.dataset.layer);
-      var prop = input.dataset.prop;
-      var value = input.dataset.parse === 'int' ? parseInt(input.value) : input.value;
-      window.updateOverlayLayer(layerIdx, prop, value);
     });
   }
 
@@ -2534,17 +2587,6 @@
       })
       .catch(function() {});
   }
-
-  document.getElementById('overlay-asset-input').onchange = function() {
-    var file = this.files[0];
-    if (!file) return;
-    var formData = new FormData();
-    formData.append('file', file);
-    authFetch('/api/overlays/assets', { method: 'POST', body: formData })
-      .then(function() { loadOverlayAssets(); })
-      .catch(function(e) { showError('Upload failed: ' + e); });
-    this.value = '';
-  };
 
   // ============================
   // ANALYTICS
@@ -2887,7 +2929,7 @@
   var playerOverlayText = document.getElementById('player-overlay-text');
   var modeHint = document.getElementById('transport-mode-hint');
   // State: streaming=ffmpeg running, broadcast=RTMP active, streamMode=standby|armed|live
-  // uiMode/uiSubMode — фронтенд режим (radio/talkover/takeover)
+  // uiMode/uiSubMode — frontend mode (radio/talkover/takeover)
   var broadcastState = { streaming: false, broadcast: false, streamMode: 'standby', standbyVisual: null, visualMode: 'visual-radio', arming: false, liveMode: { source: 'obs', afkFallback: 'visual-radio', obsStatus: 'offline', ingestKey: '' }, uiMode: 'radio', uiSubMode: 'visual-radio' };
   var armAborted = false;
 
@@ -2968,7 +3010,7 @@
 
     skipBtn.disabled = !(phase === 'playing' || phase === 'live');
 
-    // Обновить mode cards UI
+    // Update mode cards UI
     updateModeUI();
 
     // Mode-aware queue
@@ -3009,27 +3051,27 @@
   // MODE CARD STATE MACHINE
   // ============================
 
-  // Маппинг UI → backend visual_mode
+  // Map UI → backend visual_mode
   function applyUiMode(mode, subMode) {
     var oldUi = broadcastState.uiMode;
     var oldSub = broadcastState.uiSubMode;
     broadcastState.uiMode = mode;
     broadcastState.uiSubMode = subMode;
 
-    // Сохраняем в localStorage для восстановления после перезагрузки
+    // Persist in localStorage for restore after reload
     try {
       localStorage.setItem('studio23_uiMode', mode);
       localStorage.setItem('studio23_uiSubMode', subMode);
     } catch(e) {}
 
-    // Определяем backend visual_mode
+    // Determine backend visual_mode
     var apiMode;
     switch (mode) {
       case 'radio':
-        apiMode = subMode; // 'visual-radio' или 'video-playlist'
+        apiMode = subMode; // 'visual-radio' or 'video-playlist'
         break;
       case 'talkover':
-        apiMode = 'visual-radio'; // Фаза 1: музыка продолжает играть
+        apiMode = 'visual-radio'; // Phase 1: music keeps playing
         break;
       case 'takeover':
         apiMode = 'live';
@@ -3040,7 +3082,7 @@
 
     log('UI MODE ' + oldUi + '/' + oldSub + ' → ' + mode + '/' + subMode + ' (api: ' + apiMode + ')');
 
-    // Отправляем если visual_mode изменился
+    // Send if visual_mode changed
     if (apiMode !== broadcastState.visualMode) {
       broadcastState.visualMode = apiMode;
 
@@ -3065,7 +3107,7 @@
     updateBroadcastUI();
   }
 
-  // Обратный маппинг: backend → UI mode (при загрузке/WS)
+  // Reverse map: backend → UI mode (on load/WS)
   function deriveUiMode() {
     var vm = broadcastState.visualMode;
 
@@ -3075,36 +3117,36 @@
       return;
     }
 
-    // Фаза 1: Talk Over не имеет бэкенд-представления
-    // Восстанавливаем из localStorage
-    // Phase 1: только radio mode — игнорируем talkover/takeover из localStorage
+    // Phase 1: Talk Over has no backend representation
+    // Restore from localStorage
+    // Phase 1: radio mode only — ignore talkover/takeover from localStorage
     broadcastState.uiMode = 'radio';
     broadcastState.uiSubMode = vm || 'visual-radio';
   }
 
-  // Обновить UI: подсветка карт, CSS классы, блокировка
+  // Update UI: card highlighting, CSS classes, locking
   function updateModeUI() {
     var mode = broadcastState.uiMode;
     var subMode = broadcastState.uiSubMode;
     var layout = document.querySelector('.studio-layout');
     if (!layout) return;
 
-    // Убираем все mode/submode классы
+    // Remove all mode/submode classes
     layout.classList.remove('mode-radio', 'mode-talkover', 'mode-takeover');
     layout.classList.remove('submode-visual-radio', 'submode-video-playlist', 'submode-browser-mic', 'submode-obs');
 
-    // Ставим текущие
+    // Set current
     layout.classList.add('mode-' + mode);
     if (subMode) layout.classList.add('submode-' + subMode);
 
-    // Подсветка карт
+    // Highlight cards
     var cards = document.querySelectorAll('.mode-card');
     cards.forEach(function(card) {
       var isActive = card.dataset.mode === mode;
       card.classList.toggle('active', isActive);
     });
 
-    // Подсветка суб-пиллов в активной карте
+    // Highlight sub-pills in active card
     var activeCard = document.querySelector('.mode-card[data-mode="' + mode + '"]');
     if (activeCard) {
       var pills = activeCard.querySelectorAll('.mode-sub-pill');
@@ -3113,18 +3155,18 @@
       });
     }
 
-    // Блокировка карт во время эфира
+    // Lock cards while on air
     var locked = broadcastState.streamMode !== 'standby';
     cards.forEach(function(card) {
       card.classList.toggle('mode-locked', locked && !card.classList.contains('active'));
     });
 
-    // Live Mode Bar: показывать в talkover/obs и takeover
+    // Live Mode Bar: show in talkover/obs and takeover
     var showLive = (mode === 'talkover' && subMode === 'obs') || mode === 'takeover';
     if (liveModeSettings) liveModeSettings.style.display = showLive ? '' : 'none';
     if (showLive) updateLiveModeUI();
 
-    // AFK fallback select в Takeover карте — синхронизировать с liveMode
+    // AFK fallback select in Takeover card — sync with liveMode
     var takeoverAfk = document.getElementById('takeover-afk-fallback');
     if (takeoverAfk && broadcastState.liveMode) {
       takeoverAfk.value = broadcastState.liveMode.afkFallback || 'visual-radio';
@@ -3134,15 +3176,15 @@
   // Mode card click handlers
   document.querySelectorAll('.mode-card').forEach(function(card) {
     card.addEventListener('click', function(e) {
-      // Не переключаем если кликнули по sub-pill, select или label
+      // Don't switch if clicked on sub-pill, select, or label
       if (e.target.closest('.mode-sub-pill') || e.target.closest('select') || e.target.closest('.mode-afk-label')) return;
-      // Не переключаем во время эфира
+      // Don't switch while on air
       if (broadcastState.streamMode !== 'standby') return;
 
       var mode = card.dataset.mode;
       if (mode === broadcastState.uiMode) return;
 
-      // Дефолтный sub-mode для каждой карты
+      // Default sub-mode for each card
       var defaults = { radio: 'visual-radio', talkover: 'browser-mic', takeover: 'obs' };
       applyUiMode(mode, defaults[mode]);
     });
@@ -3155,14 +3197,14 @@
       var card = pill.closest('.mode-card');
       var mode = card.dataset.mode;
       var subMode = pill.dataset.submode;
-      // Не переключаем во время эфира (кроме если карта уже активна)
+      // Don't switch while on air (unless card is already active)
       if (broadcastState.streamMode !== 'standby' && mode !== broadcastState.uiMode) return;
       if (broadcastState.streamMode !== 'standby') return;
       applyUiMode(mode, subMode);
     });
   });
 
-  // AFK fallback select в Takeover карте
+  // AFK fallback select in Takeover card
   var takeoverAfkSelect = document.getElementById('takeover-afk-fallback');
   if (takeoverAfkSelect) {
     takeoverAfkSelect.addEventListener('change', function(e) {
@@ -3189,15 +3231,15 @@
     updateBroadcastUI();
     log('ARM: starting...');
 
-    // Убрать шум, замьютить — плеер стартанём позже (после API + cleanup)
+    // Stop noise, mute — player starts later (after API + cleanup)
     stopStaticNoise();
     setPlayerMuted(true);
-    // Loading screen на всё время ARMING — скрываем stuttery видео
+    // Loading screen for entire ARMING duration — hide stuttery video
     showLoading('Arming...', 'arm', 20000);
 
-    // ARM = только видео-пайплайн. Аудио стартует при PLAY.
+    // ARM = video pipeline only. Audio starts on PLAY.
 
-    // API calls: запуск FFmpeg + режим armed
+    // API calls: start FFmpeg + set armed mode
     authFetch('/api/stream/control', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -3217,8 +3259,8 @@
         broadcastState.streamMode = 'armed';
         log('ARM: APIs done, waiting for server cleanup...');
 
-        // Задержка 3с: даём серверу подхватить streaming:true,
-        // вычистить stale HLS-сегменты и начать FFmpeg
+        // 3s delay: let server pick up streaming:true,
+        // flush stale HLS segments and start FFmpeg
         setTimeout(function() {
           if (armAborted) {
             broadcastState.arming = false;
@@ -3229,7 +3271,7 @@
           log('ARM: starting player (server had 3s to clean up)');
           restartPlayer('arm');
 
-        // Детектим реальное видео (не чёрный экран) через canvas pixel check
+        // Detect real video (not black screen) via canvas pixel check
         var armCanvas = document.createElement('canvas');
         armCanvas.width = 16;
         armCanvas.height = 16;
@@ -3243,7 +3285,7 @@
             for (var i = 0; i < data.length; i += 4) {
               sum += data[i] + data[i+1] + data[i+2];
             }
-            return (sum / (16 * 16 * 3)) < 10; // средняя яркость < 10 = чёрный
+            return (sum / (16 * 16 * 3)) < 10; // avg brightness < 10 = black
           } catch(e) { return true; }
         }
 
@@ -3273,7 +3315,7 @@
             log('ARM: ready (safety timeout — video may still be loading)');
           }
         }, 15000);
-        }, 3000); // конец setTimeout задержки запуска плеера
+        }, 3000); // end of setTimeout player start delay
       })
       .catch(function(e) {
         if (e.message !== 'aborted') showError('Arm failed: ' + e);
@@ -3317,7 +3359,7 @@
       btnPlay.disabled = true;
       playTransitionLock = true;
 
-      // Cue трек → ждём cross buffer → resume → mode live (последовательно)
+      // Cue track → wait for cross buffer → resume → mode live (sequential)
       authFetch('/api/dj/cue', { method: 'POST' })
         .then(function() {
           showLoading('Cueing track...', 'pill', 7000);
@@ -3342,7 +3384,7 @@
           playerMuteBtn.title = 'Mute';
           playerMuteBtn.classList.add('unmuted');
           log('PLAY: gate open, track from beginning');
-          // Replay кэшированный audio — updateAudio пропустил его во время armed
+          // Replay cached audio — updateAudio skipped it during armed
           if (lastAudioMsg) updateAudio(lastAudioMsg);
         })
         .catch(function(e) {
@@ -3388,14 +3430,14 @@
         broadcastState.streaming = true;
         broadcastState.streamMode = 'live';
         updateBroadcastUI();
-        // Убрать static noise сразу — видео появится когда HLS подключится
+        // Stop static noise immediately — video appears when HLS connects
         stopStaticNoise();
         log('PLAY: pipeline live, waiting for content...');
-        // Replay кэшированный audio — мог прийти пока streamMode был standby
+        // Replay cached audio — may have arrived while streamMode was standby
         if (lastAudioMsg) updateAudio(lastAudioMsg);
-        // Дать pipeline 3с: gate уже открыт, Liquidsoap играет трек с 0:00,
-        // FFmpeg пишет первые HLS-сегменты с музыкой. После рестарта player
-        // подхватит свежие сегменты и начнёт с начала трека.
+        // Give pipeline 3s: gate already open, Liquidsoap playing track from 0:00,
+        // FFmpeg writing first HLS segments with music. After player restart
+        // it picks up fresh segments and starts from track beginning.
         setTimeout(function() {
           restartPlayer('play');
           var unmuteDone = false;
@@ -3419,7 +3461,7 @@
             studioPlayer.removeEventListener('canplay', onReady);
             doUnmute();
           });
-          // Safety: unmute через 4с в любом случае
+          // Safety: unmute after 4s regardless
           setTimeout(doUnmute, 4000);
         }, 3000);
       })
@@ -3509,7 +3551,7 @@
 
   // --- Live Mode UI ---
   function updateLiveModeUI() {
-    if (!liveAfkFallback) return; // Phase 1: Live Mode Bar скрыт
+    if (!liveAfkFallback) return; // Phase 1: Live Mode Bar hidden
     var lm = broadcastState.liveMode;
     // Source pills
     liveSourcePills.forEach(function(pill) {
@@ -3614,7 +3656,7 @@
       .catch(function(e) { log('visuals-processed: error: ' + e); });
   }
 
-  // Batch-poll: 1 запрос вместо 4 (экономим connection pool для HLS)
+  // Batch-poll: 1 request instead of 4 (save connection pool for HLS)
   function loadBroadcastState() {
     authFetch('/api/status').then(function(r) { return r.json(); })
       .then(function(data) {
@@ -3821,7 +3863,7 @@
   var stripMeteringInterval = null;
   var stripLoaded = false;
 
-  // Все слайдеры channel strip
+  // All channel strip sliders
   var STRIP_PARAMS = [
     { id: "strip-gate-threshold", key: "gate_threshold", unit: " dB" },
     { id: "strip-gate-attack", key: "gate_attack", unit: " ms" },
@@ -3842,7 +3884,7 @@
     { id: "strip-output-gain", key: "output_gain", unit: " dB", fmt: function(v) { return (20 * Math.log10(Math.max(0.001, parseFloat(v)))).toFixed(1); } }
   ];
 
-  // Обновить отображение значения слайдера
+  // Update slider value display
   function stripUpdateVal(param) {
     var el = document.getElementById(param.id);
     var valEl = document.getElementById(param.id + "-val");
@@ -3852,7 +3894,7 @@
     valEl.textContent = display + param.unit;
   }
 
-  // Загрузить конфиг из сервера
+  // Load config from server
   function stripLoadConfig() {
     authFetch("/api/channel-strip")
       .then(function(r) { return r.json(); })
@@ -3890,7 +3932,7 @@
     }
   }
 
-  // Отправить изменения с debounce
+  // Send changes with debounce
   function stripSendConfig(params) {
     clearTimeout(stripDebounce);
     stripDebounce = setTimeout(function() {
@@ -3909,7 +3951,7 @@
     stripSendConfig({ bypass: bypass });
     stripPreset.value = "";
     log("strip: bypass=" + bypass);
-    // Запустить/остановить metering
+    // Start/stop metering
     if (!bypass) stripStartMetering();
     else stripStopMetering();
   };
@@ -3935,7 +3977,7 @@
       .catch(function(e) { showError("Strip preset failed: " + e); });
   };
 
-  // Слайдеры — oninput
+  // Sliders — oninput
   STRIP_PARAMS.forEach(function(param) {
     var el = document.getElementById(param.id);
     if (!el) return;
@@ -3992,7 +4034,7 @@
       clearInterval(stripMeteringInterval);
       stripMeteringInterval = null;
     }
-    // Сброс LED и GR meter
+    // Reset LED and GR meter
     if (stripGateLed) stripGateLed.className = "strip-led-large";
     if (stripCompGr) {
       var fill = stripCompGr.querySelector(".strip-gr-vertical-fill");
@@ -4008,7 +4050,7 @@
 
   if (stripBypass) {
     stripLoadConfig();
-    // Запустить metering если strip активен
+    // Start metering if strip is active
     setTimeout(function() {
       if (stripLoaded && stripBypass && !stripBypass.checked) stripStartMetering();
     }, 2000);
@@ -4400,7 +4442,7 @@
   var micActive = false;
 
   // Monitor mixer state
-  var monitorMusicGain = 1.0;   // Music fader (0-1), дефолт 100%
+  var monitorMusicGain = 1.0;   // Music fader (0-1), default 100%
   var mmMasterGain = 1.0;       // Master fader (0-1)
   var mmMeterRAF = null;
   var duckEnabled = false;
@@ -4412,8 +4454,8 @@
     medium: { attack: 0.05,  release: 0.30 },
     slow:   { attack: 0.10,  release: 0.60 }
   };
-  var duckThreshold = 0.05;     // RMS порог для срабатывания duck
-  var duckActive = false;       // Текущее состояние (музыка приглушена или нет)
+  var duckThreshold = 0.05;     // RMS threshold for duck trigger
+  var duckActive = false;       // Current state (music ducked or not)
 
   // DOM refs — Monitor Mixer
   var mmPanel = document.getElementById('monitor-mixer');
@@ -4443,7 +4485,7 @@
   var mmMasterMeterCanvas = document.getElementById('mm-master-meter');
   var mmMasterMeterCtx = mmMasterMeterCanvas ? mmMasterMeterCanvas.getContext('2d') : null;
 
-  // Перечисление аудио-устройств
+  // Enumerate audio devices
   function enumerateMicDevices() {
     if (!navigator.mediaDevices || !navigator.mediaDevices.enumerateDevices) return;
     navigator.mediaDevices.enumerateDevices().then(function(devices) {
@@ -4476,7 +4518,7 @@
     });
   }
 
-  // Включить микрофон
+  // Enable microphone
   function startMic() {
     if (micActive) return;
     if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
@@ -4484,7 +4526,7 @@
       return;
     }
 
-    // Гарантировать azAudioCtx + azGainNode для music meter
+    // Ensure azAudioCtx + azGainNode for music meter
     if (!azInited) azInit();
 
     var constraints = { audio: true };
@@ -4497,7 +4539,7 @@
       micStream = stream;
       micActive = true;
 
-      // AudioContext для мониторинга и метра
+      // AudioContext for monitoring and metering
       micAudioCtx = new (window.AudioContext || window.webkitAudioContext)();
       micSourceNode = micAudioCtx.createMediaStreamSource(stream);
       micGainNode = micAudioCtx.createGain();
@@ -4509,11 +4551,11 @@
       micSourceNode.connect(micGainNode);
       micGainNode.connect(micAnalyser);
 
-      // Применить текущий gain из mic fader
+      // Apply current gain from mic fader
       var gainVal = mmMicFader ? parseInt(mmMicFader.value) / 100 : 1;
       micGainNode.gain.value = gainVal;
 
-      // Монитор node (по умолчанию muted — включается кнопкой MON)
+      // Monitor node (muted by default — enabled via MON button)
       micMonitorNode = micAudioCtx.createGain();
       micMonitorNode.gain.value = micMonitorActive ? mmMasterGain : 0;
       micAnalyser.connect(micMonitorNode);
@@ -4525,7 +4567,7 @@
       // UI
       updateMonitorUI();
       startMonitorMeters();
-      enumerateMicDevices(); // Обновить список (теперь с labels)
+      enumerateMicDevices(); // Refresh list (now with labels)
 
       log('monitor: mic started (input: ' + (selectedInput || 'default') + ')');
     }).catch(function(e) {
@@ -4534,12 +4576,12 @@
     });
   }
 
-  // Выключить микрофон
+  // Disable microphone
   function stopMic() {
     micActive = false;
     micMonitorActive = false;
 
-    // Остановить streaming если шёл
+    // Stop streaming if active
     if (micStreaming) stopMicStreaming();
 
     if (mmMeterRAF) {
@@ -4553,13 +4595,13 @@
     if (micAudioCtx) { micAudioCtx.close().catch(function(){}); micAudioCtx = null; }
     if (micStream) { micStream.getTracks().forEach(function(t) { t.stop(); }); micStream = null; }
 
-    // Снять duck если был активен
+    // Release duck if active
     if (duckActive && azGainNode && azAudioCtx && !studioPlayer.muted) {
       azGainNode.gain.setTargetAtTime(monitorMusicGain * mmMasterGain, azAudioCtx.currentTime, 0.05);
       duckActive = false;
     }
 
-    // Очистить все meter canvases
+    // Clear all meter canvases
     clearMeterCanvas(mmMicMeterCtx, mmMicMeterCanvas);
     clearMeterCanvas(mmMusicMeterCtx, mmMusicMeterCanvas);
     clearMeterCanvas(mmMasterMeterCtx, mmMasterMeterCanvas);
@@ -4573,7 +4615,7 @@
     ctx.clearRect(0, 0, canvas.width, canvas.height);
   }
 
-  // MON — мониторинг mic в наушниках
+  // MON — mic monitoring in headphones
   function toggleMicMonitor() {
     if (!micActive || !micMonitorNode) return;
     micMonitorActive = !micMonitorActive;
@@ -4582,7 +4624,7 @@
     log('monitor: mic listen ' + (micMonitorActive ? 'ON' : 'OFF'));
   }
 
-  // Применить output device на оба AudioContext
+  // Apply output device to both AudioContexts
   function applyMonitorOutput() {
     var outputId = micOutputSelect ? micOutputSelect.value : '';
     if (!outputId) return;
@@ -4600,7 +4642,7 @@
     }
   }
 
-  // Рисовать один meter на canvas (переиспользуемый)
+  // Draw a single meter on canvas (reusable)
   function drawMeter(ctx, canvas, rms, peak) {
     if (!ctx || !canvas) return;
     var w = canvas.width;
@@ -4624,7 +4666,7 @@
     }
   }
 
-  // Вычислить RMS и peak из analyser data
+  // Compute RMS and peak from analyser data
   function computeLevels(analyser, dataArr) {
     if (!analyser) return { rms: 0, peak: 0 };
     analyser.getByteFrequencyData(dataArr);
@@ -4639,7 +4681,7 @@
     };
   }
 
-  // Комбинированный цикл метров + auto-duck
+  // Combined meter loop + auto-duck
   function startMonitorMeters() {
     if (mmMeterRAF) cancelAnimationFrame(mmMeterRAF);
     var micData = micAnalyser ? new Uint8Array(micAnalyser.frequencyBinCount) : null;
@@ -4658,7 +4700,7 @@
         drawMeter(mmMicMeterCtx, mmMicMeterCanvas, micLevel.rms, micLevel.peak);
       }
 
-      // MUSIC meter — читаем из azMain (analyzer главного стрима)
+      // MUSIC meter — read from azMain (main stream analyzer)
       if (azMain && musicData && !studioPlayer.muted) {
         musicLevel = computeLevels(azMain, musicData);
         var scaledRms = musicLevel.rms * monitorMusicGain;
@@ -4670,25 +4712,25 @@
         mmMusicMeterCtx.fillRect(0, 0, mmMusicMeterCanvas.width, mmMusicMeterCanvas.height);
       }
 
-      // MASTER meter — приближённая сумма (mic и music в разных контекстах)
+      // MASTER meter — approximate sum (mic and music in separate contexts)
       var masterRms = Math.min(1, micLevel.rms + musicLevel.rms * monitorMusicGain * 0.7);
       var masterPeak = Math.min(1, Math.max(micLevel.peak, musicLevel.peak * monitorMusicGain));
       masterRms *= mmMasterGain;
       masterPeak *= mmMasterGain;
       drawMeter(mmMasterMeterCtx, mmMasterMeterCanvas, masterRms, masterPeak);
 
-      // AUTO-DUCK — envelope follower через setTargetAtTime
+      // AUTO-DUCK — envelope follower via setTargetAtTime
       if (duckEnabled && micActive && azGainNode && azAudioCtx && !studioPlayer.muted) {
         var speeds = duckSpeeds[duckSpeed] || duckSpeeds.medium;
         if (micLevel.rms > duckThreshold) {
-          // Голос детектирован — приглушить музыку
+          // Voice detected — duck music
           if (!duckActive) {
             var duckedGain = monitorMusicGain * mmMasterGain * duckMultiplier;
             azGainNode.gain.setTargetAtTime(duckedGain, azAudioCtx.currentTime, speeds.attack);
             duckActive = true;
           }
         } else {
-          // Голос пропал — восстановить
+          // Voice gone — restore
           if (duckActive) {
             var normalGain = monitorMusicGain * mmMasterGain;
             azGainNode.gain.setTargetAtTime(normalGain, azAudioCtx.currentTime, speeds.release);
@@ -4700,7 +4742,7 @@
     draw();
   }
 
-  // Обновить UI элементы Monitor Mixer
+  // Update Monitor Mixer UI elements
   function updateMonitorUI() {
     if (mmMicBtn) {
       mmMicBtn.textContent = micActive ? 'MIC OFF' : 'MIC ON';
@@ -4750,7 +4792,7 @@
   if (mmDuckBtn) {
     mmDuckBtn.addEventListener('click', function() {
       duckEnabled = !duckEnabled;
-      // Снять duck если выключаем
+      // Release duck if disabling
       if (!duckEnabled && duckActive && azGainNode && azAudioCtx && !studioPlayer.muted) {
         azGainNode.gain.setTargetAtTime(monitorMusicGain * mmMasterGain, azAudioCtx.currentTime, 0.05);
         duckActive = false;
@@ -4780,16 +4822,16 @@
     });
   }
 
-  // Master fader → обновить music и mic monitor gain
+  // Master fader → update music and mic monitor gain
   if (mmMasterFader) {
     mmMasterFader.addEventListener('input', function() {
       mmMasterGain = parseInt(mmMasterFader.value) / 100;
       if (mmMasterVal) mmMasterVal.textContent = parseInt(mmMasterFader.value) + '%';
-      // Обновить music gain
+      // Update music gain
       if (azGainNode && azAudioCtx && !studioPlayer.muted) {
         azGainNode.gain.setValueAtTime(monitorMusicGain * mmMasterGain, azAudioCtx.currentTime);
       }
-      // Обновить mic monitor gain
+      // Update mic monitor gain
       if (micMonitorNode && micMonitorActive) {
         micMonitorNode.gain.value = mmMasterGain;
       }
@@ -4828,14 +4870,14 @@
     });
   }
 
-  // Инициализация устройств
+  // Initialize devices
   enumerateMicDevices();
   if (navigator.mediaDevices && navigator.mediaDevices.addEventListener) {
     navigator.mediaDevices.addEventListener('devicechange', enumerateMicDevices);
   }
 
   // ============================================================
-  // BROWSER MIC STREAMING — continuous chunks для Talk Over и Live/AFK
+  // BROWSER MIC STREAMING — continuous chunks for Talk Over and Live/AFK
   // ============================================================
 
   function startMicStreaming() {
@@ -4890,14 +4932,14 @@
     log('mic: streaming stopped');
   }
 
-  // Авто-старт/стоп streaming: когда mic ON + стрим в эфире
+  // Auto-start/stop streaming: when mic ON + stream is on air
   function checkMicStreaming() {
     var isTalkover = broadcastState.uiMode === 'talkover';
     var isLiveBrowserMic = broadcastState.visualMode === 'live' &&
                            broadcastState.liveMode.source === 'browser-mic';
     var isOnAir = broadcastState.streamMode === 'live' || broadcastState.streamMode === 'armed';
 
-    // Стримить если: (talkover + mic вкл + в эфире) ИЛИ (live/browser-mic + в эфире)
+    // Stream if: (talkover + mic on + on air) OR (live/browser-mic + on air)
     var shouldStream = (isTalkover && micActive && isOnAir) ||
                        (isLiveBrowserMic && isOnAir && micActive);
 
@@ -4908,7 +4950,7 @@
     }
   }
 
-  // Проверять состояние mic streaming периодически
+  // Check mic streaming state periodically
   setInterval(checkMicStreaming, 2000);
 
   // ============================================================
@@ -5108,15 +5150,15 @@
   }
 
 
-  // --- Server-side FFT: виртуальный AnalyserNode для Safari ---
+  // --- Server-side FFT: virtual AnalyserNode for Safari ---
   var azServerFFT = false;
 
   function AzServerAnalyser(binCount) {
     this.frequencyBinCount = binCount;
     this.fftSize = binCount * 2;
     this.smoothingTimeConstant = 0;
-    this._freq = new Float32Array(binCount);       // текущее (плавное)
-    this._freqTarget = new Uint8Array(binCount);   // целевое от сервера
+    this._freq = new Float32Array(binCount);       // current (smoothed)
+    this._freqTarget = new Uint8Array(binCount);   // target from server
     this._time = new Float32Array(binCount * 2);
     this._timeTarget = new Float32Array(binCount * 2);
   }
@@ -5139,18 +5181,18 @@
     for (var i = 0; i < len; i++) dst[i] = tm[i];
   };
 
-  // --- Pre-allocated circular buffer для FFT (zero-alloc в горячем пути) ---
-  var AZ_RING_CAP = 600;       // ~6.4 сек при 94fps
+  // --- Pre-allocated circular buffer for FFT (zero-alloc in hot path) ---
+  var AZ_RING_CAP = 600;       // ~6.4 sec at 94fps
   var azRingSpec = new Array(AZ_RING_CAP);
   var azRingWL  = new Array(AZ_RING_CAP);
   var azRingWR  = new Array(AZ_RING_CAP);
   var azRingTs  = new Float64Array(AZ_RING_CAP);
-  var azRingHead = 0;          // следующая позиция записи
-  var azRingLen  = 0;          // сколько заполнено
+  var azRingHead = 0;          // next write position
+  var azRingLen  = 0;          // how many filled
   var azMeasuredDelay = null;
   var azLastDelayCheck = 0;
 
-  // Pre-allocate все слоты один раз
+  // Pre-allocate all slots once
   for (var _ri = 0; _ri < AZ_RING_CAP; _ri++) {
     azRingSpec[_ri] = new Uint8Array(1024);
     azRingWL[_ri]   = new Float32Array(512);
@@ -5160,7 +5202,7 @@
   function handleFftFrame(buf) {
     if (buf[0] !== 0x01 || !azServerFFT) return;
 
-    // Писать в pre-allocated слот — НОЛЬ аллокаций
+    // Write to pre-allocated slot — ZERO allocations
     var slot = azRingHead;
     var sp = azRingSpec[slot];
     for (var i = 0; i < 1024 && (1 + i) < buf.length; i++) sp[i] = buf[1 + i];
@@ -5209,7 +5251,7 @@
     var delay = (azMeasuredDelay || 4) + azSyncOffset;
     var targetTs = Date.now() - delay * 1000;
 
-    // Поиск с конца circular buffer (новейшие → старые)
+    // Search from end of circular buffer (newest → oldest)
     for (var j = 1; j <= azRingLen; j++) {
       var idx = (azRingHead - j + AZ_RING_CAP) % AZ_RING_CAP;
       if (azRingTs[idx] <= targetTs) {
@@ -5235,10 +5277,10 @@
     azR.smoothingTimeConstant = 0.75;
   }
 
-  // --- Sync delay для Safari stream decode ---
-  // Измеряется ОДИН раз при старте (seekable + pipeline offset).
-  // Пользователь подстраивает через ±sync кнопки, сохраняется в localStorage.
-  var azFixedDelay = null; // null = ещё не измерен
+  // --- Sync delay for Safari stream decode ---
+  // Measured ONCE at startup (seekable + pipeline offset).
+  // User adjusts via +/-sync buttons, saved in localStorage.
+  var azFixedDelay = null; // null = not yet measured
   var azSyncOffset = parseFloat(localStorage.getItem('az-sync-offset')) || 0;
 
   function azGetHlsDelay() {
@@ -5264,24 +5306,25 @@
     localStorage.setItem('az-sync-offset', azSyncOffset);
     var total = (azFixedDelay || 4) + azSyncOffset;
     log('ANALYZER: sync offset=' + azSyncOffset.toFixed(1) + 's, total=' + total.toFixed(1) + 's');
-    // Обновить UI
+    // Update UI
     var lbl = document.getElementById('az-sync-label');
     if (lbl) lbl.textContent = (azSyncOffset >= 0 ? '+' : '') + azSyncOffset.toFixed(1) + 's';
   }
 
   // Safari fallback: fetch Icecast → decodeAudioData → feed AnalyserNode.
-  // Ring buffer: данные складываются с timestamp, проигрываются с задержкой =  // Safari fallback: fetch Icecast → decodeAudioData → feed AnalyserNode.
-  // Каждый чанк задерживается через setTimeout на hlsDelay, затем start(0).
-  // Без contiguous scheduling — AnalyserNode-у не нужна гладкая стыковка.
-  var azStreamGen = 0; // поколение стрима для отмены stale setTimeout'ов
+  // Ring buffer: data stored with timestamp, played back with delay.
+  // Safari fallback: fetch Icecast → decodeAudioData → feed AnalyserNode.
+  // Each chunk delayed via setTimeout by hlsDelay, then start(0).
+  // No contiguous scheduling — AnalyserNode doesn't need smooth splicing.
+  var azStreamGen = 0; // stream generation for cancelling stale setTimeouts
 
   function azStartStreamDecode() {
-    var gen = ++azStreamGen; // новое поколение — старые setTimeout'ы не сработают
+    var gen = ++azStreamGen; // new generation — old setTimeouts won't fire
     azStreamAbort = new AbortController();
     log('ANALYZER: stream decode active (v3 setTimeout)');
 
     function playChunk(buf) {
-      if (gen !== azStreamGen) return; // stale — стрим уже перезапущен
+      if (gen !== azStreamGen) return; // stale — stream already restarted
       var src = azAudioCtx.createBufferSource();
       src.buffer = buf;
       src.connect(azMain);
@@ -5294,7 +5337,7 @@
         src.connect(azL);
         src.connect(azR);
       }
-      src.start(0); // сразу — задержка уже отработана в setTimeout
+      src.start(0); // immediately — delay already handled in setTimeout
     }
 
     authFetch('/api/audio-stream', { signal: azStreamAbort.signal }).then(function(resp) {
@@ -5349,8 +5392,8 @@
     if (azInited) return;
 
       if (isSafari) {
-        // Safari: WebKit bug 180696 — createMediaElementSource не работает с HLS.
-        // Прячем анализатор полностью.
+        // Safari: WebKit bug 180696 — createMediaElementSource doesn't work with HLS.
+        // Hide analyzer completely.
         var awrap = document.getElementById('analyzer-wrap');
         if (awrap) awrap.style.display = 'none';
         log('ANALYZER: Safari — hidden (WebKit bug 180696)');
@@ -5391,7 +5434,7 @@
     if (!muted && !userInteracted) return; // never unmute without user gesture
     studioPlayer.muted = muted;
     if (azGainNode && azAudioCtx) {
-      // Использовать monitorMusicGain * mmMasterGain вместо хардкод 1
+      // Use monitorMusicGain * mmMasterGain instead of hardcoded 1
       azGainNode.gain.setValueAtTime(muted ? 0 : monitorMusicGain * mmMasterGain, azAudioCtx.currentTime);
     }
   }
