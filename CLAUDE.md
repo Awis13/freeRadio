@@ -144,3 +144,18 @@ Services communicate through two mechanisms:
 - Container memory limits: streamer 1536m, transcoder 512m
 - The `linuxserver/ffmpeg:latest` image is used for both streamer and transcoder (has full QSV support)
 - Streamer Dockerfile only adds `mbuffer` on top of the ffmpeg image
+
+## Security (post-audit 2026-02-27)
+
+- Dashboard runs as non-root `app` user via su-exec entrypoint
+- WebSocket auth: first-message exchange (not URL query param)
+- Rate limiting: 300 req/15min on /api/ (express-rate-limit)
+- Security headers: CSP, X-Frame-Options DENY, X-Content-Type-Options, Referrer-Policy
+- Overlay drawtext fields sanitized against shell injection (sanitizeOverlayField + escapeDrawtext)
+- stream_entry.sh uses array-based ffmpeg exec (no eval)
+- streamKeys.js: hard fail if STREAM_KEYS_SECRET not set (no fallback key)
+- /api/rtmp-urls requires Bearer auth (streamer passes DASHBOARD_TOKEN)
+- Icecast (8000) and RTMP ingest (1935) bound to 127.0.0.1
+- .env file permissions: 0600
+- Overlay asset upload: path.basename() + character sanitization
+- no-new-privileges on dashboard container
