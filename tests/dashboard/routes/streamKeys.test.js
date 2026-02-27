@@ -2,57 +2,25 @@
  * tests/dashboard/routes/streamKeys.test.js
  *
  * Unit tests for dashboard/routes/streamKeys.js — RTMP key management.
- *
- * Strategy: use createRequire to access the SAME module instance that the
- * route module uses via CJS require(). Then vi.spyOn patches the actual
- * functions the route handler calls.
  */
 
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { createRequire } from 'module';
+import { mockRes, getRouteHandler, spy, restoreSpies } from '../helpers.js';
 
 const require = createRequire(import.meta.url);
 
-// Load modules via CJS require — same cache as the route module
 const createStreamKeysRouter = require('../../../dashboard/routes/streamKeys');
 const streamKeys = require('../../../dashboard/lib/streamKeys');
 
-// ─── Helpers ──────────────────────────────────────────────────
-
-let spies = [];
-
-function mockRes() {
-  const res = { statusCode: 200, body: null };
-  res.json = vi.fn((data) => { res.body = data; return res; });
-  res.status = vi.fn((code) => { res.statusCode = code; return res; });
-  return res;
-}
-
-function getRouteHandler(router, method, routePath) {
-  for (const layer of router.stack) {
-    if (layer.route && layer.route.path === routePath) {
-      const match = layer.route.stack.find(s => s.method === method);
-      if (match) return match.handle;
-    }
-  }
-  throw new Error(`No handler for ${method.toUpperCase()} ${routePath}`);
-}
-
-beforeEach(() => {
-  spies.forEach(s => s.mockRestore());
-  spies = [];
-});
-
-afterEach(() => {
-  spies.forEach(s => s.mockRestore());
-  spies = [];
-});
+beforeEach(() => restoreSpies());
+afterEach(() => restoreSpies());
 
 // ─── GET / ────────────────────────────────────────────────────
 
 describe('GET /', () => {
   it('returns platforms and maxPlatforms', () => {
-    spies.push(vi.spyOn(streamKeys, 'getPlatforms').mockReturnValue({ youtube: { enabled: true } }));
+    spy(vi.spyOn(streamKeys, 'getPlatforms').mockReturnValue({ youtube: { enabled: true } }));
 
     const router = createStreamKeysRouter();
     const handler = getRouteHandler(router, 'get', '/');
@@ -64,7 +32,7 @@ describe('GET /', () => {
   });
 
   it('returns empty platforms when none configured', () => {
-    spies.push(vi.spyOn(streamKeys, 'getPlatforms').mockReturnValue({}));
+    spy(vi.spyOn(streamKeys, 'getPlatforms').mockReturnValue({}));
 
     const router = createStreamKeysRouter();
     const handler = getRouteHandler(router, 'get', '/');
@@ -79,8 +47,8 @@ describe('GET /', () => {
 
 describe('POST /:platform', () => {
   it('creates a new platform', () => {
-    spies.push(vi.spyOn(streamKeys, 'getPlatforms').mockReturnValue({}));
-    spies.push(vi.spyOn(streamKeys, 'setPlatform').mockImplementation(() => {}));
+    spy(vi.spyOn(streamKeys, 'getPlatforms').mockReturnValue({}));
+    spy(vi.spyOn(streamKeys, 'setPlatform').mockImplementation(() => {}));
 
     const router = createStreamKeysRouter();
     const handler = getRouteHandler(router, 'post', '/:platform');
@@ -98,7 +66,7 @@ describe('POST /:platform', () => {
   });
 
   it('rejects when platform limit reached', () => {
-    spies.push(vi.spyOn(streamKeys, 'getPlatforms').mockReturnValue({
+    spy(vi.spyOn(streamKeys, 'getPlatforms').mockReturnValue({
       youtube: {}, kick: {}, twitch: {}
     }));
 
@@ -116,10 +84,10 @@ describe('POST /:platform', () => {
   });
 
   it('allows updating existing platform even at limit', () => {
-    spies.push(vi.spyOn(streamKeys, 'getPlatforms').mockReturnValue({
+    spy(vi.spyOn(streamKeys, 'getPlatforms').mockReturnValue({
       youtube: {}, kick: {}, twitch: {}
     }));
-    spies.push(vi.spyOn(streamKeys, 'setPlatform').mockImplementation(() => {}));
+    spy(vi.spyOn(streamKeys, 'setPlatform').mockImplementation(() => {}));
 
     const router = createStreamKeysRouter();
     const handler = getRouteHandler(router, 'post', '/:platform');
@@ -139,7 +107,7 @@ describe('POST /:platform', () => {
 
 describe('PATCH /:platform/enabled', () => {
   it('toggles platform enabled state', () => {
-    spies.push(vi.spyOn(streamKeys, 'setPlatformEnabled').mockReturnValue({ enabled: false }));
+    spy(vi.spyOn(streamKeys, 'setPlatformEnabled').mockReturnValue({ enabled: false }));
 
     const router = createStreamKeysRouter();
     const handler = getRouteHandler(router, 'patch', '/:platform/enabled');
@@ -162,7 +130,7 @@ describe('PATCH /:platform/enabled', () => {
   });
 
   it('returns 404 for unknown platform', () => {
-    spies.push(vi.spyOn(streamKeys, 'setPlatformEnabled').mockReturnValue(null));
+    spy(vi.spyOn(streamKeys, 'setPlatformEnabled').mockReturnValue(null));
 
     const router = createStreamKeysRouter();
     const handler = getRouteHandler(router, 'patch', '/:platform/enabled');
@@ -178,7 +146,7 @@ describe('PATCH /:platform/enabled', () => {
 
 describe('DELETE /:platform', () => {
   it('deletes a platform', () => {
-    spies.push(vi.spyOn(streamKeys, 'deletePlatform').mockImplementation(() => {}));
+    spy(vi.spyOn(streamKeys, 'deletePlatform').mockImplementation(() => {}));
 
     const router = createStreamKeysRouter();
     const handler = getRouteHandler(router, 'delete', '/:platform');

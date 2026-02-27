@@ -7,6 +7,7 @@
 
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { createRequire } from 'module';
+import { mockRes, getRouteHandler, spy, restoreSpies } from '../helpers.js';
 
 const require = createRequire(import.meta.url);
 
@@ -16,42 +17,14 @@ const s3 = require('../../../dashboard/lib/s3');
 const boot = require('../../../dashboard/lib/boot');
 const fs = require('fs');
 
-// ─── Helpers ──────────────────────────────────────────────────
-
-let spies = [];
-
-function mockRes() {
-  const res = { statusCode: 200, body: null };
-  res.json = vi.fn((data) => { res.body = data; return res; });
-  res.status = vi.fn((code) => { res.statusCode = code; return res; });
-  return res;
-}
-
-function getRouteHandler(router, method, routePath) {
-  for (const layer of router.stack) {
-    if (layer.route && layer.route.path === routePath) {
-      const match = layer.route.stack.find(s => s.method === method);
-      if (match) return match.handle;
-    }
-  }
-  throw new Error(`No handler for ${method.toUpperCase()} ${routePath}`);
-}
-
-beforeEach(() => {
-  spies.forEach(s => s.mockRestore());
-  spies = [];
-});
-
-afterEach(() => {
-  spies.forEach(s => s.mockRestore());
-  spies = [];
-});
+beforeEach(() => restoreSpies());
+afterEach(() => restoreSpies());
 
 // ─── POST /start ──────────────────────────────────────────────
 
 describe('POST /start', () => {
   it('calls liqClient.startPlayback and returns result', async () => {
-    spies.push(vi.spyOn(liqClient, 'startPlayback').mockResolvedValue({ data: { status: 'playing' } }));
+    spy(vi.spyOn(liqClient, 'startPlayback').mockResolvedValue({ data: { status: 'playing' } }));
 
     const router = createDjRouter('/music');
     const handler = getRouteHandler(router, 'post', '/start');
@@ -64,7 +37,7 @@ describe('POST /start', () => {
   });
 
   it('returns 500 on liqClient error', async () => {
-    spies.push(vi.spyOn(liqClient, 'startPlayback').mockRejectedValue(new Error('connection refused')));
+    spy(vi.spyOn(liqClient, 'startPlayback').mockRejectedValue(new Error('connection refused')));
 
     const router = createDjRouter('/music');
     const handler = getRouteHandler(router, 'post', '/start');
@@ -81,8 +54,8 @@ describe('POST /start', () => {
 
 describe('POST /cue', () => {
   it('reads processed dir, picks a track, cues it', async () => {
-    spies.push(vi.spyOn(fs.promises, 'readdir').mockResolvedValue(['track1.wav', 'track2.mp3', 'cover.jpg']));
-    spies.push(vi.spyOn(liqClient, 'cueTrack').mockResolvedValue({ data: { track: 'test' } }));
+    spy(vi.spyOn(fs.promises, 'readdir').mockResolvedValue(['track1.wav', 'track2.mp3', 'cover.jpg']));
+    spy(vi.spyOn(liqClient, 'cueTrack').mockResolvedValue({ data: { track: 'test' } }));
 
     const router = createDjRouter('/music');
     const handler = getRouteHandler(router, 'post', '/cue');
@@ -92,13 +65,12 @@ describe('POST /cue', () => {
 
     expect(liqClient.cueTrack).toHaveBeenCalled();
     expect(res.body.ok).toBe(true);
-    // Should pick wav or mp3, not jpg
     const cuedPath = liqClient.cueTrack.mock.calls[0][0];
     expect(cuedPath).toMatch(/\.(wav|mp3)$/);
   });
 
   it('returns 404 when no audio files found', async () => {
-    spies.push(vi.spyOn(fs.promises, 'readdir').mockResolvedValue(['cover.jpg', 'readme.txt']));
+    spy(vi.spyOn(fs.promises, 'readdir').mockResolvedValue(['cover.jpg', 'readme.txt']));
 
     const router = createDjRouter('/music');
     const handler = getRouteHandler(router, 'post', '/cue');
@@ -113,9 +85,9 @@ describe('POST /cue', () => {
   it('calls s3.ensureCached when S3 is enabled', async () => {
     const origEnabled = s3.S3_ENABLED;
     s3.S3_ENABLED = true;
-    spies.push(vi.spyOn(fs.promises, 'readdir').mockResolvedValue(['track.mp3']));
-    spies.push(vi.spyOn(liqClient, 'cueTrack').mockResolvedValue({ data: {} }));
-    spies.push(vi.spyOn(s3, 'ensureCached').mockResolvedValue());
+    spy(vi.spyOn(fs.promises, 'readdir').mockResolvedValue(['track.mp3']));
+    spy(vi.spyOn(liqClient, 'cueTrack').mockResolvedValue({ data: {} }));
+    spy(vi.spyOn(s3, 'ensureCached').mockResolvedValue());
 
     const router = createDjRouter('/music');
     const handler = getRouteHandler(router, 'post', '/cue');
@@ -132,10 +104,10 @@ describe('POST /cue', () => {
   });
 
   it('filters only audio extensions', async () => {
-    spies.push(vi.spyOn(fs.promises, 'readdir').mockResolvedValue([
+    spy(vi.spyOn(fs.promises, 'readdir').mockResolvedValue([
       'a.flac', 'b.ogg', 'c.aac', 'd.m4a', 'e.txt', 'f.mp4'
     ]));
-    spies.push(vi.spyOn(liqClient, 'cueTrack').mockResolvedValue({ data: {} }));
+    spy(vi.spyOn(liqClient, 'cueTrack').mockResolvedValue({ data: {} }));
 
     const router = createDjRouter('/music');
     const handler = getRouteHandler(router, 'post', '/cue');
@@ -152,8 +124,8 @@ describe('POST /cue', () => {
 
 describe('POST /resume', () => {
   it('calls resumePlayback', async () => {
-    spies.push(vi.spyOn(liqClient, 'resumePlayback').mockResolvedValue({ data: { status: 'playing' } }));
-    spies.push(vi.spyOn(fs, 'writeFileSync').mockImplementation(() => {}));
+    spy(vi.spyOn(liqClient, 'resumePlayback').mockResolvedValue({ data: { status: 'playing' } }));
+    spy(vi.spyOn(fs, 'writeFileSync').mockImplementation(() => {}));
 
     const router = createDjRouter('/music');
     const handler = getRouteHandler(router, 'post', '/resume');
@@ -170,10 +142,8 @@ describe('POST /resume', () => {
 
 describe('POST /stop', () => {
   it('sets bootAborted flag and calls stopPlayback', async () => {
-    // dj.js destructures setBootAborted — can't spy on it.
-    // Check the actual side effect via isBootAborted() instead.
     boot.setBootAborted(false);
-    spies.push(vi.spyOn(liqClient, 'stopPlayback').mockResolvedValue({ data: { status: 'stopped' } }));
+    spy(vi.spyOn(liqClient, 'stopPlayback').mockResolvedValue({ data: { status: 'stopped' } }));
 
     const router = createDjRouter('/music');
     const handler = getRouteHandler(router, 'post', '/stop');
@@ -188,7 +158,7 @@ describe('POST /stop', () => {
 
   it('returns 500 on stopPlayback error', async () => {
     boot.setBootAborted(false);
-    spies.push(vi.spyOn(liqClient, 'stopPlayback').mockRejectedValue(new Error('timeout')));
+    spy(vi.spyOn(liqClient, 'stopPlayback').mockRejectedValue(new Error('timeout')));
 
     const router = createDjRouter('/music');
     const handler = getRouteHandler(router, 'post', '/stop');

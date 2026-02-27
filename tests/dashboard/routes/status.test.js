@@ -6,6 +6,7 @@
 
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { createRequire } from 'module';
+import { mockRes, getRouteHandler, spy, restoreSpies } from '../helpers.js';
 
 const require = createRequire(import.meta.url);
 
@@ -18,28 +19,6 @@ const s3 = require('../../../dashboard/lib/s3');
 const cacheManager = require('../../../dashboard/lib/cacheManager');
 const fs = require('fs');
 
-// ─── Helpers ──────────────────────────────────────────────────
-
-let spies = [];
-
-function mockRes() {
-  const res = { statusCode: 200, body: null };
-  res.json = vi.fn((data) => { res.body = data; return res; });
-  res.status = vi.fn((code) => { res.statusCode = code; return res; });
-  res.set = vi.fn();
-  return res;
-}
-
-function getRouteHandler(router, method, routePath) {
-  for (const layer of router.stack) {
-    if (layer.route && layer.route.path === routePath) {
-      const match = layer.route.stack.find(s => s.method === method);
-      if (match) return match.handle;
-    }
-  }
-  throw new Error(`No handler for ${method.toUpperCase()} ${routePath}`);
-}
-
 const baseState = {
   outputMode: 'hls',
   audio: { title: 'Test Track', filename: 'test.mp3' },
@@ -51,15 +30,8 @@ const baseState = {
   rtmpHealth: { youtube: { ok: true } }
 };
 
-beforeEach(() => {
-  spies.forEach(s => s.mockRestore());
-  spies = [];
-});
-
-afterEach(() => {
-  spies.forEach(s => s.mockRestore());
-  spies = [];
-});
+beforeEach(() => restoreSpies());
+afterEach(() => restoreSpies());
 
 // ─── POST /auth/verify ────────────────────────────────────────
 
@@ -108,10 +80,10 @@ describe('POST /auth/verify', () => {
 
 describe('GET /status', () => {
   it('returns merged state with stream control, visual, and live mode', () => {
-    spies.push(vi.spyOn(streamControl, 'getControlState').mockReturnValue({ streaming: true, broadcast: false }));
-    spies.push(vi.spyOn(streamControl, 'getModeState').mockReturnValue({ mode: 'live' }));
-    spies.push(vi.spyOn(visualMode, 'getVisualMode').mockReturnValue({ mode: 'visual-radio' }));
-    spies.push(vi.spyOn(liveMode, 'getLiveMode').mockReturnValue({ source: 'obs' }));
+    spy(vi.spyOn(streamControl, 'getControlState').mockReturnValue({ streaming: true, broadcast: false }));
+    spy(vi.spyOn(streamControl, 'getModeState').mockReturnValue({ mode: 'live' }));
+    spy(vi.spyOn(visualMode, 'getVisualMode').mockReturnValue({ mode: 'visual-radio' }));
+    spy(vi.spyOn(liveMode, 'getLiveMode').mockReturnValue({ source: 'obs' }));
 
     const router = createStatusRouter(baseState);
     const handler = getRouteHandler(router, 'get', '/status');
@@ -131,7 +103,7 @@ describe('GET /status', () => {
 
 describe('GET /rtmp-urls', () => {
   it('returns empty array when broadcast is off', () => {
-    spies.push(vi.spyOn(streamControl, 'getControlState').mockReturnValue({ streaming: true, broadcast: false }));
+    spy(vi.spyOn(streamControl, 'getControlState').mockReturnValue({ streaming: true, broadcast: false }));
 
     const router = createStatusRouter(baseState);
     const handler = getRouteHandler(router, 'get', '/rtmp-urls');
@@ -142,8 +114,8 @@ describe('GET /rtmp-urls', () => {
   });
 
   it('returns RTMP URLs when broadcast is on', () => {
-    spies.push(vi.spyOn(streamControl, 'getControlState').mockReturnValue({ streaming: true, broadcast: true }));
-    spies.push(vi.spyOn(streamKeys, 'getEnabledRtmpUrls').mockReturnValue(['rtmp://yt/live/key1']));
+    spy(vi.spyOn(streamControl, 'getControlState').mockReturnValue({ streaming: true, broadcast: true }));
+    spy(vi.spyOn(streamKeys, 'getEnabledRtmpUrls').mockReturnValue(['rtmp://yt/live/key1']));
 
     const router = createStatusRouter(baseState);
     const handler = getRouteHandler(router, 'get', '/rtmp-urls');
@@ -171,10 +143,10 @@ describe('GET /rtmp-health', () => {
 
 describe('GET /visuals-processed', () => {
   it('returns list of processed visuals with sizes', async () => {
-    spies.push(vi.spyOn(fs.promises, 'readdir').mockResolvedValue([
+    spy(vi.spyOn(fs.promises, 'readdir').mockResolvedValue([
       'visual1.mp4', 'visual2.mov', '_standby_loop.mp4', 'readme.txt'
     ]));
-    spies.push(vi.spyOn(fs.promises, 'stat').mockResolvedValue({ size: 50000 }));
+    spy(vi.spyOn(fs.promises, 'stat').mockResolvedValue({ size: 50000 }));
 
     const router = createStatusRouter(baseState);
     const handler = getRouteHandler(router, 'get', '/visuals-processed');
@@ -188,7 +160,7 @@ describe('GET /visuals-processed', () => {
   });
 
   it('returns empty array when directory does not exist', async () => {
-    spies.push(vi.spyOn(fs.promises, 'readdir').mockRejectedValue(new Error('ENOENT')));
+    spy(vi.spyOn(fs.promises, 'readdir').mockRejectedValue(new Error('ENOENT')));
 
     const router = createStatusRouter(baseState);
     const handler = getRouteHandler(router, 'get', '/visuals-processed');
@@ -218,9 +190,9 @@ describe('GET /s3/status', () => {
   it('returns cache stats when S3 is enabled', () => {
     const orig = s3.S3_ENABLED;
     s3.S3_ENABLED = true;
-    spies.push(vi.spyOn(cacheManager, 'getCacheSize')
-      .mockReturnValueOnce(1024 * 1024 * 500)   // music: 500MB
-      .mockReturnValueOnce(1024 * 1024 * 300));  // visuals: 300MB
+    spy(vi.spyOn(cacheManager, 'getCacheSize')
+      .mockReturnValueOnce(1024 * 1024 * 500)
+      .mockReturnValueOnce(1024 * 1024 * 300));
 
     const router = createStatusRouter(baseState);
     const handler = getRouteHandler(router, 'get', '/s3/status');
