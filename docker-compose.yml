@@ -52,7 +52,7 @@ services:
     entrypoint: ["nginx"]
     command: ["-c", "/config/ingest.conf"]
     ports:
-      - "1935:1935"
+      - "127.0.0.1:1935:1935"
     volumes:
       - ./configs/nginx/ingest.conf:/config/ingest.conf:ro
     networks:
@@ -121,6 +121,8 @@ services:
   dashboard:
     build: ./dashboard
     container_name: s23-dashboard
+    security_opt:
+      - no-new-privileges:true
     ports:
       - "80:9090"
       - "443:9443"

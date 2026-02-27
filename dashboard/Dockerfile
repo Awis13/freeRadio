@@ -1,6 +1,6 @@
 FROM node:20-alpine
 
-RUN apk add --no-cache ffmpeg
+RUN apk add --no-cache ffmpeg su-exec
 
 WORKDIR /app
 
@@ -13,5 +13,7 @@ RUN npm ci --omit=dev 2>/dev/null || npm install --omit=dev
 
 COPY . .
 
+RUN addgroup -S app && adduser -S app -G app
+
 EXPOSE 9090
-CMD ["node", "server.js"]
+ENTRYPOINT ["/app/entrypoint.sh"]

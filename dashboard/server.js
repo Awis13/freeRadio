@@ -28,6 +28,7 @@ const s3 = require('./lib/s3');
 const cacheManager = require('./lib/cacheManager');
 const { setupWs, setupTlsWs, broadcast } = require('./lib/wsServer');
 const { boot } = require('./lib/boot');
+const rateLimit = require('express-rate-limit');
 const createDjRouter = require('./routes/dj');
 const createStreamKeysRouter = require('./routes/streamKeys');
 const createSettingsRouter = require('./routes/settings');
@@ -102,11 +103,6 @@ const rtmpHealthPoller = createRtmpHealthPoller((data) => {
 });
 
 // --- WebSocket ---
-function verifyWsClient(info) {
-  if (!DASHBOARD_TOKEN) return true;
-  const url = new URL(info.req.url, 'http://localhost');
-  return url.searchParams.get('token') === DASHBOARD_TOKEN;
-}
 
 function getInitState() {
   return {
@@ -120,13 +116,19 @@ function getInitState() {
   };
 }
 
-const wss = setupWs(server, verifyWsClient, getInitState);
+const wss = setupWs(server, null, getInitState);
 
 // --- Middleware ---
 app.use((req, res, next) => {
   res.setHeader("Content-Security-Policy", "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; media-src 'self' blob:; connect-src 'self' ws: wss:; worker-src 'self' blob:; font-src 'self'");
+  res.setHeader('X-Frame-Options', 'DENY');
+  res.setHeader('X-Content-Type-Options', 'nosniff');
+  res.setHeader('Referrer-Policy', 'strict-origin-when-cross-origin');
   next();
 });
+
+const apiLimiter = rateLimit({ windowMs: 15 * 60 * 1000, max: 300, standardHeaders: true });
+app.use('/api/', apiLimiter);
 
 app.use(express.static(path.join(__dirname, 'public'), {
   setHeaders: (res, filePath) => {
@@ -231,12 +233,16 @@ const TLS_CERT = process.env.TLS_CERT;
 const TLS_KEY = process.env.TLS_KEY;
 
 if (TLS_PORT && TLS_CERT && TLS_KEY && fs.existsSync(TLS_CERT) && fs.existsSync(TLS_KEY)) {
+  try {
   const tlsOpts = { cert: fs.readFileSync(TLS_CERT), key: fs.readFileSync(TLS_KEY) };
   const tlsServer = https.createServer(tlsOpts, app);
-  setupTlsWs(tlsServer, verifyWsClient, getInitState, wss);
+  setupTlsWs(tlsServer, null, getInitState, wss);
   tlsServer.listen(TLS_PORT, '0.0.0.0', () => {
     console.log(`[dashboard] https://0.0.0.0:${TLS_PORT}`);
   });
+  } catch (e) {
+    console.log(`[dashboard] TLS cert/key not readable, skipping HTTPS: ${e.message}`);
+  }
 } else {
   if (TLS_PORT) console.log('[dashboard] TLS configured but cert/key not found, skipping HTTPS');
 }
