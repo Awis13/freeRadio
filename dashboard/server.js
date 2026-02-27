@@ -179,7 +179,7 @@ app.use('/api/video-playlists', createVideoPlaylistRouter(VISUALS_DIR));
 app.use('/api/overlays', createOverlayRouter());
 app.use('/api/voice', createVoiceRouter(broadcast));
 app.use('/api/mixing', createMixingRouter(broadcast));
-app.use('/api/dj', createDjRouter());
+app.use('/api/dj', createDjRouter(MUSIC_DIR));
 app.use('/api/stream-keys', createStreamKeysRouter());
 app.use('/api', createSettingsRouter());
 app.use('/api/live', createLiveRouter());

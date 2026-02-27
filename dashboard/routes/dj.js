@@ -7,8 +7,9 @@ const { setBootAborted } = require('../lib/boot');
 
 let cuedTrackPath = null;
 
-function createDjRouter() {
+function createDjRouter(musicDir) {
   const router = express.Router();
+  const PROCESSED_DIR = path.join(musicDir, 'processed');
 
   router.post('/start', async (req, res) => {
     try {
@@ -34,11 +35,10 @@ function createDjRouter() {
 
   router.post('/cue', async (req, res) => {
     try {
-      const musicDir = '/music/processed';
-      const files = (await fs.promises.readdir(musicDir)).filter(f => /\.(wav|mp3|flac|ogg|aac|m4a)$/i.test(f));
+      const files = (await fs.promises.readdir(PROCESSED_DIR)).filter(f => /\.(wav|mp3|flac|ogg|aac|m4a)$/i.test(f));
       if (files.length === 0) return res.status(404).json({ error: 'No tracks found' });
       const track = files[Math.floor(Math.random() * files.length)];
-      const fullPath = path.join(musicDir, track);
+      const fullPath = path.join(PROCESSED_DIR, track);
 
       if (s3.S3_ENABLED) {
         await s3.ensureCached(`music/processed/${track}`, fullPath);

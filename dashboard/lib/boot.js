@@ -109,7 +109,7 @@ async function boot({ musicDir, visualsDir }) {
   // Phase 3: fallback — manual cue + resume
   if (_bootAborted) { console.log('[boot] Aborted by user'); return; }
   try {
-    const processedDir = '/music/processed';
+    const processedDir = path.join(musicDir, 'processed');
     const files = (await fs.promises.readdir(processedDir)).filter(f => /\.(wav|mp3|flac|ogg|aac|m4a)$/i.test(f));
     if (files.length === 0) {
       console.log('[boot] No tracks found, cannot auto-restore');
