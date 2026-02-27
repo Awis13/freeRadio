@@ -1,7 +1,8 @@
 # STUDIO 23 — TODO
 
-> Last reviewed: 2026-02-26
-> Phase: S3 integration done. Next: Control Plane real infra integration
+> Last reviewed: 2026-02-27
+> Current sprint: Стабилизация — рефакторинг server.js + код-ревью
+> Phase: S3 integration done. Next: stabilization + refactoring
 
 ## Architecture Decisions (brainstorm 2026-02-23)
 
@@ -34,30 +35,26 @@
 
 ## Up Next
 
-### Phase 1 — Remaining Infra
-- [ ] **Real Proxmox integration** — подключить provisioning к реальному Proxmox через Tailscale. Код есть (Control Plane PR #3), нужна интеграция с живой инфрой. (large)
-- [ ] **Cloudflare DNS integration** — при создании tenant → A-record. При удалении → delete. (small)
-- [ ] **LXC template** — золотой образ STUDIO 23 из текущего LXC 100. (medium)
-- [ ] **Caddy auto-config на нодах** — SSH → update Caddyfile → reload при создании/удалении tenant. (small)
-- [ ] **Health polling** — goroutine pool, `health_path` каждые 30s, статус в DB. (medium)
-- [ ] **Admin UI (htmx)** — Go templates: список нод, tenants, health. Встроено в binary. (medium)
+### Фаза 0: Закрыть хвосты
+- [ ] **Код-ревью PR #11** (S3 lifecycle) — codereview, фиксы, мерж в master. (small)
+- [ ] **Удалить syncWatcher.js** — `dashboard/lib/syncWatcher.js` мёртвый код (убран в a8c67e5). (small)
 
-### Phase 2 — Billing + Public Launch
-- [ ] **Stripe integration** — checkout → webhook → provision. Cancel → stop. (large)
-- [ ] **Landing page** — static HTML + Tailwind. (medium)
-- [ ] **Clerk auth** — JWT validation middleware в Go. (medium)
-- [ ] **Onboarding flow** — checkout → waiting → redirect на tenant dashboard. (medium)
+### Фаза 1: Рефакторинг server.js (839 → ~150 строк)
+- [ ] **Создать `dashboard/routes/`** — вынести 42 inline-роута: `dj.js`, `streamKeys.js`, `settings.js`, `status.js`, `videoQueue.js`, `live.js`. (medium)
+- [ ] **Вынести boot logic** в `dashboard/lib/boot.js` — S3 sync + auto-restore (~120 строк). (medium)
+- [ ] **Вынести WebSocket** в `dashboard/lib/wsServer.js` — WS, broadcast, TLS (~60 строк). (small)
+- [ ] **Финализация server.js** — imports → app → middleware → mount → WS → boot → listen. (small)
+
+### Фаза 2: Тесты
+- [ ] **Тесты на роуты** — vitest, mock req/res. Минимум: dj, stream-keys, settings. (medium)
+- [ ] **Тест boot.js** — mock liqClient/probeStatus/S3. (medium)
 
 ## Backlog
 
-- [ ] FK violation (non-existent project_id/node_id) → 422 instead of 500. (small)
-- [ ] Pagination on list endpoints (limit/offset). (small)
-- [ ] PATCH/PUT endpoints for node/tenant updates. (small)
-- [ ] Go tests — handler unit tests with mocked stores. (medium)
-- [ ] CI/CD — GitHub Actions: test Go + deploy binary. (medium)
-- [ ] Health endpoint в STUDIO 23 dashboard `GET /api/health`. (small)
-- [ ] freeRadio: рефакторинг server.js (767 строк). (medium)
-- [ ] Pentest LXC isolation — blocking перед launch. (small)
+- [ ] app.js (5890 строк) — фронтенд-монолит. Рефакторить при изменении UI. (large)
+- [ ] STREAM_KEYS_SECRET rotation — migration path для смены `.env`. (medium)
+- [ ] Health endpoint `GET /api/health` — для Control Plane интеграции. (small)
+- [ ] Рефакторинг server.js — **MOVED TO UP NEXT** (medium)
 
 ## Known Issues
 
@@ -66,13 +63,13 @@
 
 ## Done
 
+- [x] audio-analyzer Dockerfile (2026-02-27)
 - [x] S3 full lifecycle — source of truth, boot sync, каскадные удаления, atomic uploads (2026-02-26)
 - [x] Drag-and-drop upload с progress bar (2026-02-26)
 - [x] i18n — все русские комментарии и строки переведены на English (2026-02-26)
 - [x] Pipeline audit — `-bf 0` + JSON injection protection (2026-02-24, PR #10)
 - [x] CSP compliance — inline handlers removed (2026-02-24, PR #9)
 - [x] Control Plane: tenant provisioning — 86 tests (2026-02-24, CP PR #3)
-- [x] Control Plane: Proxmox API client — 42 tests (2026-02-24, CP PR #2)
 
 ## Dropped
 

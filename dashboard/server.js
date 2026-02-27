@@ -608,10 +608,12 @@ const bootMode = streamControl.getModeState().mode || 'standby';
 console.log(`[boot] streaming=true, broadcast=${!!restreamCfg.autoStart}, mode=${bootMode}`);
 
 
-// S3 boot sync: download all processed files + metadata before auto-restore
-if (s3.S3_ENABLED) {
-  (async () => {
-    const start = Date.now();
+// Boot sequence: S3 sync (if enabled) → auto-restore (always).
+// Sequential: auto-restore waits for S3 sync to finish so files are available.
+(async () => {
+  // Phase 0: S3 boot sync
+  if (s3.S3_ENABLED) {
+    const syncStart = Date.now();
     try {
       // Sync processed audio (critical for Liquidsoap random mode)
       await s3.syncDir('music/processed/', path.join(MUSIC_DIR, 'processed'));
@@ -619,7 +621,9 @@ if (s3.S3_ENABLED) {
       for (const meta of ['.analysis_map', '.bpm_map']) {
         try {
           await s3.ensureCached(`music/${meta}`, path.join(MUSIC_DIR, meta));
-        } catch (e) {}
+        } catch (e) {
+          console.error(`[s3] boot sync metadata ${meta} failed: ${e.message}`);
+        }
       }
       // Sync processed videos for active profile
       const { getActiveProfile } = require('./lib/visualProfile');
@@ -627,20 +631,19 @@ if (s3.S3_ENABLED) {
       if (active && active.videos) {
         await cacheManager.prefetchVideos(active.videos, VISUALS_DIR);
       }
-      const elapsed = ((Date.now() - start) / 1000).toFixed(1);
+      const elapsed = ((Date.now() - syncStart) / 1000).toFixed(1);
       console.log(`[s3] boot sync completed in ${elapsed}s`);
     } catch (e) {
       console.error(`[s3] boot sync failed: ${e.message}`);
     }
-  })();
-}
+  }
 
-// Auto-restore: ALWAYS runs at boot (24/7 radio).
-// Liquidsoap has an autoplay timer (8s) — it is the primary authority.
-// Dashboard only observes and syncs mode state.
-// /playback/stop during boot cancels autoplay (via autoplay_cancelled ref in Liquidsoap).
-// bootAborted flag is declared above, set by /api/dj/stop.
-(async () => {
+  // Auto-restore: ALWAYS runs at boot (24/7 radio).
+  // Liquidsoap has an autoplay timer (8s) — it is the primary authority.
+  // Dashboard only observes and syncs mode state.
+  // /playback/stop during boot cancels autoplay (via autoplay_cancelled ref in Liquidsoap).
+  // bootAborted flag is declared above, set by /api/dj/stop.
+  {
   const MAX_RETRIES = 30;
   const RETRY_INTERVAL = 2000;
   const start = Date.now();
@@ -735,7 +738,9 @@ if (s3.S3_ENABLED) {
 
     // S3: download track for cue if not cached locally
     if (s3.S3_ENABLED) {
-      try { await s3.ensureCached(`music/processed/${track}`, fullPath); } catch (e) {}
+      try { await s3.ensureCached(`music/processed/${track}`, fullPath); } catch (e) {
+        console.error(`[boot] S3 download for cue failed: ${e.message}`);
+      }
     }
 
     await liqClient.cueTrack(fullPath);
@@ -748,6 +753,7 @@ if (s3.S3_ENABLED) {
     console.log(`[boot] Auto-restored (fallback): cued ${track}, gate opened (${totalElapsed}s)`);
   } catch (e) {
     console.log(`[boot] Auto-restore cue/resume failed: ${e.message}`);
+  }
   }
 })();
 
