@@ -2,6 +2,8 @@ const path = require('path');
 const express = require('express');
 const liq = require('./liqClient');
 const { resolvePlaylist } = require('./playlist');
+const s3 = require('./s3');
+const { prefetchTracks } = require('./cacheManager');
 
 // Map original filename to processed WAV path (transcoder outputs all audio as .wav)
 function toProcessedPath(filename) {
@@ -28,6 +30,13 @@ function createQueueRouter(musicDir, getBpmMap) {
       const filename = (typeof req.body === 'string' ? req.body : JSON.stringify(req.body)).trim();
       if (!filename) return res.status(400).json({ error: 'no filename' });
       const filePath = toProcessedPath(filename);
+
+      // S3: download if not available locally
+      if (s3.S3_ENABLED) {
+        const base = path.basename(filename, path.extname(filename));
+        await s3.ensureCached(`music/processed/${base}.wav`, filePath);
+      }
+
       const result = await liq.pushTrack(filePath);
       res.json(result.data);
     } catch (e) {
@@ -72,8 +81,11 @@ function createQueueRouter(musicDir, getBpmMap) {
         try { await liq.skip(); } catch (e) {}
       }
 
-      // Push tracks to queue (first batch of 5)
+      // S3: prefetch first 5 tracks
       const batch = tracks.slice(0, 5);
+      if (s3.S3_ENABLED) {
+        await prefetchTracks(batch, musicDir);
+      }
       const results = [];
       for (const track of batch) {
         try {

@@ -216,7 +216,7 @@ describe('getNowInTimezone', () => {
   });
 
   it('weekday is 0=Mon convention', () => {
-    // Просто проверяем что weekday в диапазоне 0-6 (0=Mon, 6=Sun)
+    // Just verify weekday is in range 0-6 (0=Mon, 6=Sun)
     const result = getNowInTimezone('Europe/Moscow');
     expect(result.weekday).toBeGreaterThanOrEqual(0);
     expect(result.weekday).toBeLessThanOrEqual(6);
@@ -247,7 +247,7 @@ describe('getCurrentSlot', () => {
   it('matches a weekly slot on current day/time', () => {
     const { weekday, timeStr } = getNowInTimezone('UTC');
     const data = emptySchedule();
-    // Создаём слот на текущий день, текущее время ± 1 час
+    // Create a slot for the current day, current time +/- 1 hour
     const [h, m] = timeStr.split(':').map(Number);
     const start = String(Math.max(0, h - 1)).padStart(2, '0') + ':00';
     const end = String(Math.min(23, h + 1)).padStart(2, '0') + ':59';
@@ -263,37 +263,37 @@ describe('getCurrentSlot', () => {
   });
 
   it('matches overnight weekly slot on next calendar day', () => {
-    // Ключевой тест на overnight баг
-    // Мокаем getNowInTimezone чтобы контролировать время
+    // Key test for the overnight bug
+    // Mock getNowInTimezone to control time
     const data = emptySchedule();
-    // Слот: day=1 (Tue) 22:00-06:00
+    // Slot: day=1 (Tue) 22:00-06:00
     data.weekly.ws_night = {
       id: 'ws_night', day: 1, startTime: '22:00', endTime: '06:00',
       playlistId: 'night-pl', videoPlaylistId: 'night-vpl', label: 'Night'
     };
     mockScheduleFile(data);
 
-    // Подменяем getNowInTimezone — сейчас day=2 (Wed) 03:00
-    // Для этого мокаем Date и Intl
+    // Override getNowInTimezone — now day=2 (Wed) 03:00
+    // Mock Date and Intl for this
     const originalNow = Date.now;
     // Wed Feb 25 2026 03:00 UTC → weekday=2, timeStr=03:00
     vi.spyOn(Date, 'now').mockReturnValue(new Date('2026-02-25T03:00:00Z').getTime());
-    // Нужно мокать new Date() тоже
+    // Need to mock new Date() too
     const OrigDate = Date;
     const mockDate = new OrigDate('2026-02-25T03:00:00Z');
 
-    // Более надёжный подход: мокаем loadSchedule через файл, а getNowInTimezone через Intl
-    // Но проще: напрямую вызвать getCurrentSlot с контролируемым временем
-    // getCurrentSlot внутри вызывает getNowInTimezone('UTC'), которая использует new Date()
+    // More robust approach: mock loadSchedule via file, getNowInTimezone via Intl
+    // But simpler: call getCurrentSlot directly with controlled time
+    // getCurrentSlot internally calls getNowInTimezone('UTC') which uses new Date()
 
-    // Вместо сложного мока, просто проверим логику через _test функции напрямую
-    // isTimeInRange('03:00', '22:00', '06:00') уже true
-    // Проверяем что matchNextDay работает: (ws.day + 1) % 7 === weekday
-    // ws.day=1, weekday=2 → (1+1)%7=2 === 2 ✓, endTime='06:00' > '03:00' ✓
+    // Instead of complex mocking, verify logic via _test functions directly
+    // isTimeInRange('03:00', '22:00', '06:00') is already true
+    // Check matchNextDay works: (ws.day + 1) % 7 === weekday
+    // ws.day=1, weekday=2 -> (1+1)%7=2 === 2, endTime='06:00' > '03:00'
     expect(isTimeInRange('03:00', '22:00', '06:00')).toBe(true);
 
-    // Для полного e2e теста getCurrentSlot — мокаем весь getNowInTimezone нельзя
-    // (это внутренняя функция модуля), но мы проверили логику выше
+    // For a full e2e getCurrentSlot test — can't mock getNowInTimezone
+    // (it's an internal module function), but the logic is verified above
     Date.now = originalNow;
   });
 
@@ -365,7 +365,7 @@ describe('getCurrentSlot', () => {
     vi.spyOn(fs, 'existsSync').mockReturnValue(true);
     vi.spyOn(fs, 'readFileSync').mockReturnValue(JSON.stringify({ weekly: {}, events: {} }));
     vi.spyOn(fs, 'writeFileSync').mockImplementation(() => {});
-    // settings отсутствует — не должно крашиться
+    // settings is missing — should not crash
     const slot = getCurrentSlot();
     expect(['default', 'disabled', 'weekly', 'event']).toContain(slot.source);
   });
@@ -386,15 +386,15 @@ describe('getCurrentSlot overnight matching logic', () => {
   });
 
   it('overnight weekly: isTimeInRange returns true for morning side', () => {
-    // Это базовая проверка что isTimeInRange правильно обрабатывает overnight
+    // Basic check that isTimeInRange handles overnight correctly
     expect(isTimeInRange('03:00', '22:00', '06:00')).toBe(true);
     expect(isTimeInRange('05:59', '22:00', '06:00')).toBe(true);
     expect(isTimeInRange('06:00', '22:00', '06:00')).toBe(false);
   });
 
   it('overnight weekly: next-day matching formula is correct', () => {
-    // Формула: (ws.day + 1) % 7 === weekday && timeStr < ws.endTime
-    // Слот day=1 22:00-06:00, текущий weekday=2, time=03:00
+    // Formula: (ws.day + 1) % 7 === weekday && timeStr < ws.endTime
+    // Slot day=1 22:00-06:00, current weekday=2, time=03:00
     const ws = { day: 1, startTime: '22:00', endTime: '06:00' };
     const weekday = 2;
     const timeStr = '03:00';
@@ -476,7 +476,7 @@ describe('getNextSlot', () => {
   it('finds next weekly slot', () => {
     const { weekday, timeStr } = getNowInTimezone('UTC');
     const [h] = timeStr.split(':').map(Number);
-    // Слот через 2 часа от текущего
+    // Slot 2 hours from now
     const futureH = (h + 2) % 24;
     const start = String(futureH).padStart(2, '0') + ':00';
     const end = String((futureH + 2) % 24).padStart(2, '0') + ':00';
@@ -515,7 +515,7 @@ describe('getNextSlot', () => {
 
   it('picks closer slot when multiple exist', () => {
     const { weekday } = getNowInTimezone('UTC');
-    // Слот завтра утром vs через 3 дня
+    // Slot tomorrow morning vs 3 days out
     const tomorrow = (weekday + 1) % 7;
     const farDay = (weekday + 3) % 7;
 

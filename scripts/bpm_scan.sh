@@ -3,18 +3,18 @@
 # ============================================
 # STUDIO 23 — BPM Scanner (Live Daemon)
 #
-# Работает ПОСТОЯННО. Каждые N секунд
-# проверяет /music на новые треки,
-# которых ещё нет в .bpm_map.
-# Новые треки сканирует и дописывает.
+# Runs continuously. Every N seconds
+# checks /music for new tracks
+# not yet in .bpm_map.
+# New tracks are scanned and appended.
 #
-# Кидаешь трек в папку → через 15 сек
-# он уже в BPM-карте → Liquidsoap подхватит.
+# Drop a track in the folder -> within 15s
+# it's in the BPM map -> Liquidsoap picks it up.
 # ============================================
 
 MUSIC_DIR="/music"
 BPM_MAP="${MUSIC_DIR}/.bpm_map"
-SCAN_INTERVAL=15   # Секунды между проверками
+SCAN_INTERVAL=15   # Seconds between checks
 
 set -Eeuo pipefail
 
@@ -24,32 +24,32 @@ echo "  Watching: ${MUSIC_DIR}"
 echo "  Interval: ${SCAN_INTERVAL}s"
 echo "=========================================="
 
-# Создаём .bpm_map если не существует
+# Create .bpm_map if it doesn't exist
 touch "$BPM_MAP"
 
-# --- Функция: сканировать один файл ---
+# --- Function: scan a single file ---
 scan_file() {
   local FILE="$1"
   local BASENAME
   BASENAME=$(basename "$FILE")
 
-  # Проверяем, не просканирован ли уже
+  # Check if already scanned
   if grep -qF "${FILE}|" "$BPM_MAP" 2>/dev/null; then
     return 0
   fi
 
-  # Проверяем, что файл не пишется прямо сейчас
-  # (ждём, пока размер стабилизируется)
+  # Check that file is not still being written
+  # (wait for size to stabilize)
   local SIZE1 SIZE2
   SIZE1=$(stat -c%s "$FILE" 2>/dev/null || echo "0")
   sleep 2
   SIZE2=$(stat -c%s "$FILE" 2>/dev/null || echo "0")
   if [ "$SIZE1" != "$SIZE2" ]; then
-    echo "[~] ${BASENAME} — still copying, skip for now"
+    echo "[~] ${BASENAME} -- still copying, skip for now"
     return 1
   fi
 
-  # Сканируем BPM
+  # Scan BPM
   echo -n "[*] Scanning: ${BASENAME}... "
   local BPM RAW_BPM
   RAW_BPM=$(aubio tempo -i "$FILE" 2>/dev/null | tail -1 | awk '{printf "%.1f", $1}')
@@ -93,7 +93,7 @@ scan_file() {
   return 0
 }
 
-# --- Функция: удалить из карты файлы, которых больше нет ---
+# --- Function: remove map entries for deleted files ---
 cleanup_map() {
   if [ ! -s "$BPM_MAP" ]; then
     return
@@ -120,7 +120,7 @@ find_music_files() {
   \) -print0
 }
 
-# --- Первый полный скан ---
+# --- Initial full scan ---
 echo "[*] Initial scan..."
 initial_scan() {
   while IFS= read -r -d '' FILE; do
@@ -130,7 +130,7 @@ initial_scan() {
 
 initial_scan
 
-# Показываем сводку
+# Show summary
 TOTAL=$(grep -c '|' "$BPM_MAP" 2>/dev/null || echo "0")
 DETECTED=$(grep -v '|0.0$' "$BPM_MAP" 2>/dev/null | wc -l || echo "0")
 echo "=========================================="
@@ -138,17 +138,17 @@ echo "[+] Initial scan done: ${DETECTED}/${TOTAL} tracks with BPM"
 echo "[*] Now watching for new files..."
 echo "=========================================="
 
-# --- Бесконечный цикл мониторинга ---
+# --- Infinite monitoring loop ---
 while true; do
   sleep "$SCAN_INTERVAL"
 
-  # Ищем новые файлы
+  # Find new files
   while IFS= read -r -d '' FILE; do
     if ! grep -qF "${FILE}|" "$BPM_MAP" 2>/dev/null; then
       scan_file "$FILE"
     fi
   done < <(find_music_files)
 
-  # Чистим удалённые
+  # Clean up deleted files
   cleanup_map
 done

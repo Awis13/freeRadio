@@ -373,7 +373,7 @@ echo "[*] Waiting for icecast..."
 sleep 2
 echo "[+] Go!"
 
-# Создаем FIFO
+# Create FIFO pipes
 [ -p "$FIFO" ] || mkfifo "$FIFO"
 [ -p "$AUDIO_FIFO" ] || mkfifo "$AUDIO_FIFO"
 
@@ -408,7 +408,7 @@ build_video_filters() {
   if [ -f "$filter_file" ] && [ -s "$filter_file" ]; then
     cat "$filter_file"
   fi
-  # Нет дефолтных фильтров — пре-транскодированный контент готов к отдаче
+  # No default filters — pre-transcoded content is ready to stream
 }
 
 # Wait for background ffmpeg, kill immediately on mode/visual-mode change, video skip, or OBS connect.
@@ -426,7 +426,7 @@ wait_or_interrupt() {
     # Mode or visual-mode changed → kill clip, let loop pick new content instantly
     local m=$(get_stream_mode) vm=$(get_visual_mode)
     if [ "$m" != "$start_mode" ] || [ "$vm" != "$start_vmode" ]; then
-      # armed→live: убить preview, пустить concat плейлист
+      # armed→live: kill preview, start concat playlist
       kill $ffpid 2>/dev/null; wait $ffpid 2>/dev/null
       echo "[+] Interrupted: $start_mode/$start_vmode → $m/$vm"
       return 0
@@ -462,16 +462,16 @@ feed_fifo() {
     current_mode=$(get_stream_mode)
     visual_mode=$(get_visual_mode)
 
-    # Логируем смену режима
+    # Log mode changes
     if [ "$current_mode" != "$prev_mode" ] || [ "$visual_mode" != "$prev_vmode" ]; then
       echo "[+] Mode: ${prev_mode:-init}/${prev_vmode:-init} → $current_mode/$visual_mode"
       if [ "$current_mode" = "armed" ]; then
-        # Каждый ARM = новый плейлист
+        # Each ARM = new playlist
         SHUFFLED=()
-        echo "[+] Armed: сброс плейлиста (будет новый шаффл)"
+        echo "[+] Armed: playlist reset (new shuffle pending)"
       elif [ "$current_mode" = "live" ] && [ "$prev_mode" = "armed" ]; then
-        # Armed → Live: плейлист уже готов в SHUFFLED, PLAY подхватывает его
-        echo "[+] Armed → Live: плейлист готов (${#SHUFFLED[@]} клипов)"
+        # Armed → Live: playlist ready in SHUFFLED, PLAY picks it up
+        echo "[+] Armed → Live: playlist ready (${#SHUFFLED[@]} clips)"
       elif [ "$current_mode" = "live" ] && [ "$prev_mode" = "standby" ]; then
         SHUFFLED=()
         echo "[+] Shuffle reset (standby → live)"
@@ -481,18 +481,18 @@ feed_fifo() {
       prev_vmode="$visual_mode"
     fi
 
-    # Определяем следующий файл
+    # Determine next file
     local RANDOM_FILE=""
 
     if [ "$current_mode" = "standby" ]; then
       if [ "$visual_mode" = "video-playlist" ]; then
-        # Standby + video-playlist: video+audio from standby file, бесконечный луп
+        # Standby + video-playlist: video+audio from standby file, infinite loop
         ffmpeg -hide_banner -loglevel error -re \
           -stream_loop -1 -i "$STANDBY_FILE" \
           -c:v copy -c:a copy \
           -f mpegts - >&3 2>/dev/null &
       else
-        # Standby + live/visual-radio: video-only, бесконечный луп
+        # Standby + live/visual-radio: video-only, infinite loop
         ffmpeg -hide_banner -loglevel error -re \
           -stream_loop -1 -i "$STANDBY_FILE" \
           -c:v copy -an \
@@ -501,7 +501,7 @@ feed_fifo() {
       wait_or_interrupt $! "$current_mode" "$visual_mode"
       continue
     elif [ "$current_mode" = "armed" ]; then
-      # Armed: шаффлим плейлист, крутим первый клип. PLAY подхватит этот же плейлист.
+      # Armed: shuffle playlist, play first clip. PLAY picks up this same playlist.
       if [ ${#SHUFFLED[@]} -eq 0 ]; then
         mapfile -t ALL_VIDEOS < <(get_video_list)
         if [ ${#ALL_VIDEOS[@]} -gt 0 ]; then
@@ -512,7 +512,7 @@ feed_fifo() {
             SHUFFLED[$i]="${SHUFFLED[$j]}"
             SHUFFLED[$j]="$tmp"
           done
-          echo "[+] Armed: новый плейлист ${#SHUFFLED[@]} клипов, preview: ${SHUFFLED[0]##*/}"
+          echo "[+] Armed: new playlist ${#SHUFFLED[@]} clips, preview: ${SHUFFLED[0]##*/}"
         fi
       fi
       local arm_video="${SHUFFLED[0]:-$STANDBY_FILE}"
@@ -598,12 +598,12 @@ feed_fifo() {
     fi
     # Common path for visual-radio, video-playlist, and live-AFK: shuffle/queue
     if [ -z "$RANDOM_FILE" ]; then
-      # В video-playlist режиме сначала проверяем очередь
+      # In video-playlist mode, check queue first
       local queued_file=""
       if [ "$visual_mode" = "video-playlist" ] && [ -f /shared/video_queue.txt ]; then
         queued_file=$(head -1 /shared/video_queue.txt 2>/dev/null | tr -d '\r')
         if [ -n "$queued_file" ]; then
-          # Удаляем первую строку из очереди (atomic: sed + tmp)
+          # Remove first line from queue (atomic: sed + tmp)
           sed -i '1d' /shared/video_queue.txt 2>/dev/null || true
           if [ -f "/visuals/.processed/$queued_file" ]; then
             RANDOM_FILE="/visuals/.processed/$queued_file"
@@ -615,7 +615,7 @@ feed_fifo() {
         fi
       fi
 
-      # Если не из очереди — shuffle
+      # If not from queue — shuffle
       if [ -z "$queued_file" ]; then
         if [ ${#SHUFFLED[@]} -eq 0 ]; then
           mapfile -t ALL_VIDEOS < <(get_video_list)
@@ -635,13 +635,13 @@ feed_fifo() {
             SHUFFLED[$j]="$tmp"
           done
 
-          echo "[+] Новый раунд видео: ${#SHUFFLED[@]} клипов"
+          echo "[+] New video round: ${#SHUFFLED[@]} clips"
         fi
 
-        # === CONCAT DEMUXER: бесшовное воспроизведение всего раунда ===
-        # Вместо отдельного ffmpeg на каждый 5с клип (с гэпами между ними),
-        # собираем concat-лист и проигрываем весь раунд одним ffmpeg.
-        # visual-radio + все файлы processed → concat (0 гэпов)
+        # === CONCAT DEMUXER: seamless playback of entire round ===
+        # Instead of separate ffmpeg per 5s clip (with gaps between them),
+        # build a concat list and play the whole round with a single ffmpeg.
+        # visual-radio + all processed files → concat (0 gaps)
         if [ "$visual_mode" != "video-playlist" ]; then
           local all_processed=true
           for cf in "${SHUFFLED[@]}"; do
@@ -655,11 +655,11 @@ feed_fifo() {
             local concat_file="/tmp/concat_list.txt"
             > "$concat_file"
             local clip_count=${#SHUFFLED[@]}
-            # Первый раунд — текущий SHUFFLED (подготовлен в armed или свежий)
+            # First round — current SHUFFLED (prepared in armed or fresh)
             for cf in "${SHUFFLED[@]}"; do
               echo "file '$cf'" >> "$concat_file"
             done
-            # Дополнительные раунды с пере-шаффлом (бесшовно, ~10+ мин контента)
+            # Additional rounds with re-shuffle (seamless, ~10+ min of content)
             local round round_arr
             for round in $(seq 2 20); do
               round_arr=("${ALL_VIDEOS[@]}")
@@ -674,7 +674,7 @@ feed_fifo() {
               done
             done
             local total_clips=$((clip_count * 20))
-            echo "[+] Concat: $clip_count клипов × 20 раундов = $total_clips (бесшовный)"
+            echo "[+] Concat: $clip_count clips x 20 rounds = $total_clips (seamless)"
             echo "${SHUFFLED[0]##*/}" > /shared/current_video.txt 2>/dev/null || true
             SHUFFLED=()
 
@@ -687,16 +687,16 @@ feed_fifo() {
           fi
         fi
 
-        # Fallback: один клип (очередь, video-playlist, non-processed)
+        # Fallback: single clip (queue, video-playlist, non-processed)
         RANDOM_FILE="${SHUFFLED[0]}"
         SHUFFLED=("${SHUFFLED[@]:1}")
       fi
     fi
 
-    # Записываем текущее видео для дашборда
+    # Write current video for dashboard
     echo "${RANDOM_FILE##*/}" > /shared/current_video.txt 2>/dev/null || true
 
-    # Воспроизведение: video-playlist выдаёт video+audio, live/visual-radio — только video
+    # Playback: video-playlist outputs video+audio, live/visual-radio — video only
     local abr
     abr=$(get_current_audio_bitrate)
 
@@ -739,9 +739,9 @@ feed_fifo() {
   done
 }
 
-# Audio feeder: Icecast всегда подключён (gate в Liquidsoap рулит тишиной/музыкой).
-# Без mbuffer — нет буфера тишины. При PLAY музыка идёт мгновенно.
-# live+OBS → RTMP аудио. video-playlist = idle (audio from video FIFO).
+# Audio feeder: Icecast always connected (gate in Liquidsoap controls silence/music).
+# No mbuffer — no silence buffer. On PLAY music starts instantly.
+# live+OBS → RTMP audio. video-playlist = idle (audio from video FIFO).
 feed_audio() {
   # Redirect echo to stderr (docker logs), keep fd 3 for data pipe
   exec 3>&1 1>&2
@@ -786,13 +786,13 @@ feed_audio() {
         -f mpegts - >&3 2>&2 &
       audio_pid=$!
     else
-      # Проверяем доступность Icecast /live перед подключением (избегаем retry-спам)
+      # Check Icecast /live availability before connecting (avoid retry spam)
       if ! curl -s --connect-timeout 2 --max-time 3 -o /dev/null -w "%{http_code}" "$ICECAST_URL" 2>/dev/null | grep -q "200"; then
         echo "[audio] Icecast not ready, retry in 2s"
         sleep 2
         continue
       fi
-      # Icecast — всегда подключён, gate рулит тишиной/музыкой. Без mbuffer = без задержки.
+      # Icecast — always connected, gate handles silence/music. No mbuffer = no delay.
       echo "[audio] Icecast AAC passthrough (no mbuffer, gate handles standby/live)"
       ffmpeg -hide_banner -loglevel error \
         -reconnect 1 -reconnect_streamed 1 -reconnect_delay_max 5 \
@@ -844,7 +844,7 @@ feed_audio() {
       sleep 0.5
     done
 
-    # Backoff при быстром падении ffmpeg (Icecast не готов, сетевая ошибка и т.д.)
+    # Backoff on fast ffmpeg crash (Icecast not ready, network error, etc.)
     local audio_elapsed=$(( $(date +%s) - audio_start_time ))
     if [ "$audio_elapsed" -lt 2 ]; then
       echo "[audio] ffmpeg exited too fast (${audio_elapsed}s), backoff 3s"
@@ -860,7 +860,7 @@ rm -f "$APPLIED_SIG_FILE"
 # Reduce OOM score to prefer killing this process if memory runs out
 echo 1000 > /proc/self/oom_score_adj 2>/dev/null || true
 
-# Аргументы для ffmpeg progress (если задан файл)
+# Args for ffmpeg progress (if file is set)
 PROGRESS_ARGS=""
 if [ -n "$FFMPEG_PROGRESS_FILE" ]; then
   PROGRESS_ARGS="-progress $FFMPEG_PROGRESS_FILE -stats_period 2"
@@ -884,12 +884,12 @@ current_stream_sig() {
 }
 
 watch_stream_config() {
-  # Grace period: не трогать ffmpeg первые 10 секунд после старта
+  # Grace period: don't touch ffmpeg for the first 10 seconds after start
   sleep 10
   while true; do
     sleep 1
 
-    # Сигнал рестарта пайплайна (standby -> armed): flush stale mbuffer data
+    # Pipeline restart signal (standby -> armed): flush stale mbuffer data
     if [ -f /shared/restart_stream ]; then
       rm -f /shared/restart_stream
       if pgrep -f "$MAIN_FFMPEG_MATCH" >/dev/null 2>&1; then
@@ -1023,20 +1023,20 @@ build_outputs() {
   hwaccel_args=""
   vf_args=""
 
-  # Определяем нужны ли софтварные фильтры (оверлеи, скейлинг, улучшения)
+  # Check if software filters are needed (overlays, scaling, enhancements)
   local needs_sw_filters=false
   if [ -n "$vfilter" ] || [ -n "$logo_inputs" ]; then
     needs_sw_filters=true
   fi
 
-  # Собираем -vf аргумент из вычисленных фильтров
+  # Build -vf argument from computed filters
   if [ -n "$vfilter" ]; then
     vf_args="-vf $vfilter"
   fi
 
   local video_enc_args=""
   if [ "$needs_sw_filters" = "true" ]; then
-    # Есть оверлеи/фильтры — нужен полный пайплайн
+    # Has overlays/filters — full pipeline needed
     if [ "$hw_accel" = "qsv" ]; then
       hwaccel_args="-hwaccel qsv -hwaccel_output_format nv12"
       video_enc_args="$vf_args -c:v h264_qsv -load_plugin hevc_hw -bf 0 -b:v $vbr -minrate $vbr -maxrate $vbr -bufsize $vb_buf -g $gop -keyint_min $gop -sc_threshold 0 -flags +cgop"
@@ -1046,8 +1046,8 @@ build_outputs() {
       echo "[+] Software encode with filters ($vbr)" >&2
     fi
   else
-    # COPY MODE: видео уже готово к стримингу (CBR, GOP, H.264 High)
-    # 0% CPU, 0% GPU — просто перекладываем байты
+    # COPY MODE: video already stream-ready (CBR, GOP, H.264 High)
+    # 0% CPU, 0% GPU — just passing bytes through
     video_enc_args="-c:v copy"
     echo "[+] VIDEO COPY MODE: 0% CPU, 0% GPU (pre-transcoded CBR stream-ready)" >&2
   fi
@@ -1061,7 +1061,7 @@ build_outputs() {
 
 # Cleanup stale processes and FIFO
 cleanup_stream() {
-  # Убиваем по PID-файлам + все их дочерние процессы
+  # Kill by PID files + all their child processes
   if [ -f /tmp/feeder.pid ]; then
     local fpid=$(cat /tmp/feeder.pid)
     kill -9 -$fpid 2>/dev/null || kill -9 $fpid 2>/dev/null || true
@@ -1080,8 +1080,8 @@ cleanup_stream() {
     kill -9 $(cat /tmp/restream_manager.pid) 2>/dev/null || true
     rm -f /tmp/restream_manager.pid
   fi
-  sleep 1  # увеличено с 0.5 — гарантируем завершение всех процессов
-  # Пересоздаём FIFO после убийства всех процессов — разблокирует зависшие write
+  sleep 1  # increased from 0.5 — ensure all processes are terminated
+  # Recreate FIFO after killing all processes — unblocks stuck writes
   rm -f "$FIFO" "$AUDIO_FIFO"
   mkfifo "$FIFO"
   mkfifo "$AUDIO_FIFO"
@@ -1150,7 +1150,7 @@ stream() {
   pkill -9 -f "mbuffer" 2>/dev/null || true
   pkill -9 -f "ffmpeg.*-f mpegts" 2>/dev/null || true
 
-  # Ждём feeder с таймаутом (3с), чтобы не зависнуть на wait навечно
+  # Wait for feeder with timeout (3s) to avoid hanging on wait forever
   local _t
   for _t in $(seq 1 6); do
     kill -0 "$feeder_pid" 2>/dev/null || break
@@ -1159,7 +1159,7 @@ stream() {
   kill -9 "$feeder_pid" 2>/dev/null || true
   wait "$feeder_pid" 2>/dev/null || true
 
-  # Ждём audio feeder с таймаутом (3с)
+  # Wait for audio feeder with timeout (3s)
   for _t in $(seq 1 6); do
     kill -0 "$audio_feeder_pid" 2>/dev/null || break
     sleep 0.5
@@ -1167,7 +1167,7 @@ stream() {
   kill -9 "$audio_feeder_pid" 2>/dev/null || true
   wait "$audio_feeder_pid" 2>/dev/null || true
 
-  # Пересоздаём FIFO — разблокирует зависшие write
+  # Recreate FIFO — unblocks stuck writes
   rm -f "$FIFO" "$AUDIO_FIFO"
   mkfifo "$FIFO"
   mkfifo "$AUDIO_FIFO"

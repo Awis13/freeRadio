@@ -4,7 +4,7 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>STUDIO 23</title>
-  <link rel="stylesheet" href="/style.css?v=71" />
+  <link rel="stylesheet" href="/style.css?v=75" />
 </head>
 <body>
   <header>
@@ -42,7 +42,7 @@
               <button class="mode-sub-pill" data-submode="video-playlist">Video Playlist</button>
             </div>
           </div>
-          <!-- PHASE 2: Talk Over (voice + music) — скрыто до Phase 2
+          <!-- PHASE 2: Talk Over (voice + music) — hidden until Phase 2
           <div class="mode-card mode-talkover" data-mode="talkover">
             <div class="mode-card-header">
               <span class="mode-card-icon">&#127908;</span>
@@ -57,7 +57,7 @@
             </div>
           </div>
           -->
-          <!-- PHASE 3: Full Takeover (OBS replaces everything) — скрыто до Phase 3
+          <!-- PHASE 3: Full Takeover (OBS replaces everything) — hidden until Phase 3
           <div class="mode-card mode-takeover" data-mode="takeover">
             <div class="mode-card-header">
               <span class="mode-card-icon">&#127909;</span>
@@ -144,14 +144,14 @@
           </div>
         </div>
 
-        <!-- PHASE 2: Monitor Mixer — скрыто до Phase 2
+        <!-- PHASE 2: Monitor Mixer — hidden until Phase 2
 <div class="monitor-mixer" id="monitor-mixer">
           <div class="mm-header">
             <span class="mm-title">MONITOR MIXER</span>
             <span class="mm-status-badge" id="mm-status-badge">OFF</span>
           </div>
           <div class="mm-body">
-            [* Устройства *]
+            [* Devices *]
             <div class="mm-row mm-devices-row">
               <div class="mm-device-group">
                 <label>Input</label>
@@ -200,7 +200,7 @@
         </div>
         -->
 
-        <!-- PHASE 3: Live Mode Bar — скрыто до Phase 3
+        <!-- PHASE 3: Live Mode Bar — hidden until Phase 3
 <div class="live-mode-bar" id="live-mode-bar" style="display:none">
           <div class="live-mode-bar-header">
             <span class="live-mode-bar-title">LIVE MODE</span>
@@ -463,10 +463,13 @@
             <div class="panel-body">
               <div class="file-list" id="music-list"></div>
             </div>
-            <div class="upload-row">
-              <input type="file" id="music-input" multiple accept=".wav,.mp3,.flac,.ogg,.aac,.m4a" style="display:none" />
-              <button class="upload-btn" onclick="document.getElementById('music-input').click()">Upload</button>
-              <span class="upload-status" id="music-upload-status"></span>
+            <div class="drop-zone" id="drop-music" data-type="music" data-accept=".wav,.mp3,.flac,.ogg,.aac,.m4a">
+              <input type="file" class="drop-zone-input" multiple accept=".wav,.mp3,.flac,.ogg,.aac,.m4a" style="display:none" />
+              <div class="drop-zone-prompt">
+                <span class="drop-zone-icon">&#8593;</span>
+                <span>Drop files or <button class="drop-zone-browse" type="button">browse</button></span>
+              </div>
+              <div class="drop-zone-queue"></div>
             </div>
           </div>
 
@@ -479,10 +482,13 @@
             <div class="panel-body">
               <div class="file-list" id="visuals-list"></div>
             </div>
-            <div class="upload-row">
-              <input type="file" id="visuals-input" multiple accept=".mp4,.mov,.mkv" style="display:none" />
-              <button class="upload-btn" onclick="document.getElementById('visuals-input').click()">Upload</button>
-              <span class="upload-status" id="visuals-upload-status"></span>
+            <div class="drop-zone" id="drop-visuals" data-type="visuals" data-accept=".mp4,.mov,.mkv">
+              <input type="file" class="drop-zone-input" multiple accept=".mp4,.mov,.mkv" style="display:none" />
+              <div class="drop-zone-prompt">
+                <span class="drop-zone-icon">&#8593;</span>
+                <span>Drop files or <button class="drop-zone-browse" type="button">browse</button></span>
+              </div>
+              <div class="drop-zone-queue"></div>
             </div>
           </div>
         </div>
@@ -534,7 +540,7 @@
           </div>
         </div>
 
-        <!-- Settings (collapsible) — без live mode и channel strip -->
+        <!-- Settings (collapsible) — without live mode and channel strip -->
         <div class="panel panel-collapsible collapsed">
           <div class="panel-head panel-toggle"><span>Settings</span><span class="collapse-arrow"></span></div>
           <div class="panel-body">
@@ -643,7 +649,7 @@
                 <option value="Europe/London">Europe/London (UTC+0)</option>
                 <option value="Europe/Paris">Europe/Paris (UTC+1)</option>
                 <option value="Europe/Berlin">Europe/Berlin (UTC+1)</option>
-                <option value="Europe/Moscow" selected>Europe/Moscow (UTC+3)</option>
+                <option value="Europe/Berlin" selected>Europe/Berlin (UTC+1)</option>
                 <option value="Europe/Istanbul">Europe/Istanbul (UTC+3)</option>
                 <option value="Asia/Dubai">Asia/Dubai (UTC+4)</option>
                 <option value="Asia/Kolkata">Asia/Kolkata (UTC+5:30)</option>
@@ -659,10 +665,6 @@
             <div class="form-group">
               <label>Default Playlist</label>
               <select id="schedule-default-playlist"><option value="">-- None --</option></select>
-            </div>
-            <div class="form-group">
-              <label>Default Video Playlist</label>
-              <select id="schedule-default-video-playlist" class="video-playlist-select"><option value="">-- None --</option></select>
             </div>
             <div class="form-group">
               <label class="checkbox-label">
@@ -716,10 +718,13 @@
           <div class="panel-body">
             <div class="file-list" id="music-list"></div>
           </div>
-          <div class="upload-row">
-            <input type="file" id="music-input" multiple accept=".wav,.mp3,.flac,.ogg,.aac,.m4a" style="display:none" />
-            <button class="upload-btn" onclick="document.getElementById('music-input').click()">Upload</button>
-            <span class="upload-status" id="music-upload-status"></span>
+          <div class="drop-zone" id="drop-music-pl" data-type="music" data-accept=".wav,.mp3,.flac,.ogg,.aac,.m4a">
+            <input type="file" class="drop-zone-input" multiple accept=".wav,.mp3,.flac,.ogg,.aac,.m4a" style="display:none" />
+            <div class="drop-zone-prompt">
+              <span class="drop-zone-icon">&#8593;</span>
+              <span>Drop files or <button class="drop-zone-browse" type="button">browse</button></span>
+            </div>
+            <div class="drop-zone-queue"></div>
           </div>
         </div>
       </div>
@@ -838,10 +843,13 @@
           <div class="panel-body">
             <div class="file-list" id="visuals-list"></div>
           </div>
-          <div class="upload-row">
-            <input type="file" id="visuals-input" multiple accept=".mp4,.mov,.mkv" style="display:none" />
-            <button class="upload-btn" onclick="document.getElementById('visuals-input').click()">Upload</button>
-            <span class="upload-status" id="visuals-upload-status"></span>
+          <div class="drop-zone" id="drop-visuals-vis" data-type="visuals" data-accept=".mp4,.mov,.mkv">
+            <input type="file" class="drop-zone-input" multiple accept=".mp4,.mov,.mkv" style="display:none" />
+            <div class="drop-zone-prompt">
+              <span class="drop-zone-icon">&#8593;</span>
+              <span>Drop files or <button class="drop-zone-browse" type="button">browse</button></span>
+            </div>
+            <div class="drop-zone-queue"></div>
           </div>
         </div>
       </div>
@@ -870,9 +878,13 @@
           <div class="panel-body">
             <div id="overlay-assets-list" class="overlay-assets-list"></div>
           </div>
-          <div class="upload-row">
-            <input type="file" id="overlay-asset-input" accept=".png,.jpg,.jpeg,.gif,.svg,.webp" style="display:none" />
-            <button class="upload-btn" onclick="document.getElementById('overlay-asset-input').click()">Upload Logo</button>
+          <div class="drop-zone" id="drop-overlay" data-type="overlay-assets" data-accept=".png,.jpg,.jpeg,.gif,.svg,.webp">
+            <input type="file" class="drop-zone-input" accept=".png,.jpg,.jpeg,.gif,.svg,.webp" style="display:none" />
+            <div class="drop-zone-prompt">
+              <span class="drop-zone-icon">&#8593;</span>
+              <span>Drop files or <button class="drop-zone-browse" type="button">browse</button></span>
+            </div>
+            <div class="drop-zone-queue"></div>
           </div>
         </div>
       </div>
@@ -985,6 +997,6 @@
   </div>
 
   <script src="/js/hls.min.js"></script>
-  <script src="/app.js?v=105"></script>
+  <script src="/app.js?v=116"></script>
 </body>
 </html>

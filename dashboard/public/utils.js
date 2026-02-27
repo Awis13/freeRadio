@@ -164,13 +164,13 @@ export function uniquePlatformName(base, existingNames) {
 }
 
 // ---------------------------------------------------------------------------
-// XSS-защита
+// XSS protection
 // ---------------------------------------------------------------------------
 
 /**
- * Экранирование HTML-спецсимволов для безопасной вставки в innerHTML.
+ * Escape HTML special chars for safe innerHTML insertion.
  * @param {*} str
- * @returns {*} — экранированная строка, либо исходное значение если не строка
+ * @returns {*} — escaped string, or original value if not a string
  */
 export function escapeHtml(str) {
   if (typeof str !== 'string') return str;

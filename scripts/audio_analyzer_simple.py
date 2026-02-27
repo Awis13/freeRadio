@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 """
 STUDIO 23 — Simple Audio Analyzer (Essentia)
-Сканирует треки и сохраняет в простой текстовый формат как BPM map.
+Scans tracks and saves to a simple text format as BPM map.
 
-Формат .analysis_map:
+Format .analysis_map:
 filepath|bpm|duration|intro_end|outro_start|mix_in|mix_out|first_beat
 """
 
@@ -95,31 +95,31 @@ def detect_bpm(audio):
 
 def find_mix_in_point(audio, beats, bpm, sample_rate=44100):
     """
-    Найти точку входа для микса: первый значимый onset (пропуск тишины/шума).
-    Использует RMS по 50ms фреймам для точного определения.
-    Округляет до ближайшего бита вниз.
+    Find mix entry point: first significant onset (skip silence/noise).
+    Uses RMS over 50ms frames for precise detection.
+    Rounds down to nearest beat.
     """
     if bpm <= 0 or len(audio) == 0:
         return 0.0
 
     beat_period = 60.0 / bpm
 
-    # RMS по 50ms фреймам (2205 samples при 44100)
+    # RMS over 50ms frames (2205 samples at 44100)
     frame_samples = int(sample_rate * 0.05)
     n_frames = len(audio) // frame_samples
 
     if n_frames < 10:
         return 0.0
 
-    # Анализируем только первые 10 секунд (тишина дольше — маловероятна)
-    max_check = min(n_frames, int(10.0 / 0.05))  # 200 фреймов = 10 секунд
+    # Analyze only first 10 seconds (longer silence is unlikely)
+    max_check = min(n_frames, int(10.0 / 0.05))  # 200 frames = 10 seconds
     trimmed = audio[:max_check * frame_samples]
     frames = np.reshape(trimmed, (max_check, frame_samples))
     rms_per_frame = np.sqrt(np.mean(frames ** 2, axis=1))
 
-    # Пиковый RMS из первых 10 секунд (может быть тихое интро)
-    # Берём максимум из всего трека для корректного порога
-    full_check = min(n_frames, int(60.0 / 0.05))  # До 60 секунд
+    # Peak RMS from first 10 seconds (could be a quiet intro)
+    # Take max from full track for correct threshold
+    full_check = min(n_frames, int(60.0 / 0.05))  # Up to 60 seconds
     full_trimmed = audio[:full_check * frame_samples]
     full_frames = np.reshape(full_trimmed, (full_check, frame_samples))
     full_rms = np.sqrt(np.mean(full_frames ** 2, axis=1))
@@ -128,17 +128,17 @@ def find_mix_in_point(audio, beats, bpm, sample_rate=44100):
     if max_rms == 0:
         return 0.0
 
-    # Порог: -40dB от пика (0.01 * max)
+    # Threshold: -40dB from peak (0.01 * max)
     threshold = max_rms * 0.01
 
-    # Первый фрейм выше порога
+    # First frame above threshold
     onset_time = 0.0
     for i in range(max_check):
         if rms_per_frame[i] > threshold:
-            onset_time = i * 0.05  # 50ms шаг
+            onset_time = i * 0.05  # 50ms step
             break
 
-    # Округляем вниз до ближайшего бита
+    # Round down to nearest beat
     if onset_time > beat_period:
         beat_idx = int(onset_time / beat_period)
         onset_time = beat_idx * beat_period
@@ -148,17 +148,17 @@ def find_mix_in_point(audio, beats, bpm, sample_rate=44100):
 
 def find_intro_end(audio, bpm, duration, sample_rate=44100):
     """
-    Найти конец интро: первый значительный скачок энергии (drop/build).
-    Ищет самый большой рост RMS в первой половине трека.
-    Выравнивает по 16-барным фразам.
-    Fallback: фиксированная оценка (16/32 бара).
+    Find intro end: first significant energy jump (drop/build).
+    Looks for biggest RMS increase in first half of track.
+    Aligns to 16-bar phrases.
+    Fallback: fixed estimate (16/32 bars).
     """
     if bpm <= 0 or duration <= 0:
         return 0.0
 
     bar_duration = (60.0 / bpm) * 4.0
 
-    # RMS по барам
+    # RMS per bar
     samples_per_bar = int(bar_duration * sample_rate)
     n_bars = len(audio) // samples_per_bar
 
@@ -169,19 +169,19 @@ def find_intro_end(audio, bpm, duration, sample_rate=44100):
     bars_audio = np.reshape(trimmed, (n_bars, samples_per_bar))
     bar_energies = np.sqrt(np.mean(bars_audio ** 2, axis=1))
 
-    # Ищем самый большой скачок энергии в первой половине
-    half = min(n_bars // 2, 64)  # Не дальше 64 баров
-    window = 4  # Сглаживание: усреднение по 4 барам
+    # Find biggest energy jump in first half
+    half = min(n_bars // 2, 64)  # No further than 64 bars
+    window = 4  # Smoothing: average over 4 bars
 
     max_jump = 0.0
-    jump_bar = 16  # Дефолт
+    jump_bar = 16  # Default
 
     for i in range(window, half):
         avg_before = float(np.mean(bar_energies[max(0, i - window):i]))
         avg_after = float(np.mean(bar_energies[i:min(n_bars, i + window)]))
 
         if avg_before > 0:
-            jump = (avg_after - avg_before) / avg_before  # Относительный скачок
+            jump = (avg_after - avg_before) / avg_before  # Relative jump
         else:
             jump = float(avg_after)
 
@@ -189,11 +189,11 @@ def find_intro_end(audio, bpm, duration, sample_rate=44100):
             max_jump = jump
             jump_bar = i
 
-    # Выравниваем по 16-барной фразе (округляем вверх)
+    # Align to 16-bar phrase (round up)
     phrase_bar = ((jump_bar + 15) // 16) * 16
     intro_end = phrase_bar * bar_duration
 
-    # Fallback: если скачок незначительный (< 50%), фиксированная оценка
+    # Fallback: if jump is insignificant (< 50%), use fixed estimate
     if max_jump < 0.5:
         intro_bars = 16.0 if duration <= 180 else 32.0
         intro_end = intro_bars * bar_duration
@@ -201,7 +201,7 @@ def find_intro_end(audio, bpm, duration, sample_rate=44100):
     else:
         print(f"    Intro: detected at bar {phrase_bar} (jump={max_jump:.2f} at bar ~{jump_bar})")
 
-    # Ограничиваем разумным диапазоном
+    # Clamp to reasonable range
     intro_end = max(4.0 * bar_duration, min(intro_end, duration * 0.4))
 
     return round(intro_end, 1)
@@ -209,9 +209,9 @@ def find_intro_end(audio, bpm, duration, sample_rate=44100):
 
 def find_outro_start(audio, bpm, duration, intro_end, sample_rate=44100):
     """
-    Найти начало аутро: последний значительный спад энергии.
-    Ищет во второй половине трека. Выравнивает по 16-барным фразам.
-    Fallback: фиксированная оценка (16/32 баров от конца).
+    Find outro start: last significant energy drop.
+    Searches second half of track. Aligns to 16-bar phrases.
+    Fallback: fixed estimate (16/32 bars from end).
     """
     if bpm <= 0 or duration <= 0:
         return duration * 0.7
@@ -227,19 +227,19 @@ def find_outro_start(audio, bpm, duration, intro_end, sample_rate=44100):
     bars_audio = np.reshape(trimmed, (n_bars, samples_per_bar))
     bar_energies = np.sqrt(np.mean(bars_audio ** 2, axis=1))
 
-    # Ищем самый большой спад энергии во второй половине
+    # Find biggest energy drop in second half
     half_start = max(n_bars // 2, 16)
     window = 4
 
     max_drop = 0.0
-    drop_bar = n_bars - 16  # Дефолт
+    drop_bar = n_bars - 16  # Default
 
     for i in range(half_start, n_bars - window):
         avg_before = float(np.mean(bar_energies[max(0, i - window):i]))
         avg_after = float(np.mean(bar_energies[i:min(n_bars, i + window)]))
 
         if avg_before > 0:
-            drop = (avg_before - avg_after) / avg_before  # Относительный спад
+            drop = (avg_before - avg_after) / avg_before  # Relative drop
         else:
             drop = 0.0
 
@@ -247,11 +247,11 @@ def find_outro_start(audio, bpm, duration, intro_end, sample_rate=44100):
             max_drop = drop
             drop_bar = i
 
-    # Выравниваем по 16-барной фразе (округляем вниз)
+    # Align to 16-bar phrase (round down)
     phrase_bar = (drop_bar // 16) * 16
     outro_start = phrase_bar * bar_duration
 
-    # Fallback: если спад незначительный
+    # Fallback: if drop is insignificant
     if max_drop < 0.3:
         outro_bars = 16.0 if duration <= 180 else 32.0
         outro_start = max(0.0, duration - outro_bars * bar_duration)
@@ -259,7 +259,7 @@ def find_outro_start(audio, bpm, duration, intro_end, sample_rate=44100):
     else:
         print(f"    Outro: detected at bar {phrase_bar} (drop={max_drop:.2f} at bar ~{drop_bar})")
 
-    # Ограничиваем: не раньше intro_end + 4 бара, не позже чем 4 бара до конца
+    # Clamp: no earlier than intro_end + 4 bars, no later than 4 bars before end
     outro_start = max(intro_end + 4.0 * bar_duration, min(outro_start, duration - 4.0 * bar_duration))
 
     return round(outro_start, 1)
@@ -291,25 +291,25 @@ def analyze_file(filepath):
 
         # --- Smart mix point detection ---
 
-        # 1. Mix-in: первый значимый onset (пропуск тишины)
+        # 1. Mix-in: first significant onset (skip silence)
         mix_in = find_mix_in_point(audio, beats, bpm, sample_rate)
 
-        # 2. Intro end: скачок энергии (drop) в первой половине
+        # 2. Intro end: energy jump (drop) in first half
         intro_end = find_intro_end(audio, bpm, duration, sample_rate)
 
-        # 3. Outro start: спад энергии во второй половине
+        # 3. Outro start: energy drop in second half
         outro_start = find_outro_start(audio, bpm, duration, intro_end, sample_rate)
 
-        # 4. Mix-out: начало аутро, выравненное по 16-барной фразе
+        # 4. Mix-out: outro start aligned to 16-bar phrase
         outro_start_bar = int(outro_start / bar_duration)
         mix_out_bar = ((outro_start_bar + 15) // 16) * 16  # Rounded UP to next phrase
         mix_out = mix_out_bar * bar_duration
 
-        # Убеждаемся что mix_out внутри трека
+        # Ensure mix_out is within track
         if mix_out >= duration - bar_duration:
             mix_out = max(intro_end + 16.0 * bar_duration, duration - 16.0 * bar_duration)
 
-        # Убеждаемся что mix_out > intro_end
+        # Ensure mix_out > intro_end
         if mix_out <= intro_end:
             mix_out = intro_end + 16.0 * bar_duration
 

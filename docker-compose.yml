@@ -10,7 +10,7 @@ services:
       - ./scripts:/scripts:ro
     restart: unless-stopped
 
-  # 1. Аудио-сервер
+  # 1. Audio server
   icecast:
     image: infiniteproject/icecast
     container_name: s23-icecast
@@ -59,7 +59,7 @@ services:
       - rave-net
     restart: unless-stopped
 
-  # 3. Стример (FFMPEG → HLS или RTMP + multi-streaming)
+  # 3. Streamer (FFMPEG → HLS or RTMP + multi-streaming)
   streamer:
     build:
       context: .
@@ -98,7 +98,7 @@ services:
       - rtmp-ingest
     restart: unless-stopped
 
-  # 3.5 Transcoder — автоматическая конвертация видео из incoming в готовый формат
+  # 3.5 Transcoder — auto-converts incoming videos to stream-ready format
   transcoder:
     image: linuxserver/ffmpeg:latest
     container_name: s23-transcoder
@@ -136,6 +136,14 @@ services:
       - FFMPEG_PROGRESS_FILE=/shared/ffmpeg_progress.txt
       - STREAM_KEYS_SECRET=${STREAM_KEYS_SECRET}
       - DASHBOARD_TOKEN=${DASHBOARD_TOKEN}
+      - S3_ENABLED=${S3_ENABLED:-false}
+      - S3_ENDPOINT=${S3_ENDPOINT:-}
+      - S3_ACCESS_KEY=${S3_ACCESS_KEY:-}
+      - S3_SECRET_KEY=${S3_SECRET_KEY:-}
+      - S3_BUCKET=${S3_BUCKET:-studio23}
+      - S3_REGION=${S3_REGION:-eu-central-1}
+      - TENANT_ID=${TENANT_ID:-default}
+      - S3_CACHE_MAX_MB=${S3_CACHE_MAX_MB:-4000}
     volumes:
       - ./content/music:/music
       - ./content/visuals:/visuals

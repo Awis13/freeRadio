@@ -1,11 +1,11 @@
-// Channel Strip — пресеты, дефолты, диапазоны, валидация
+// Channel Strip — presets, defaults, ranges, validation
 const fs = require('fs');
 const path = require('path');
 const liqClient = require('./liqClient');
 
 const CONFIG_PATH = '/shared/channel_strip.json';
 
-// Диапазоны параметров для валидации
+// Parameter ranges for validation
 const PARAM_RANGES = {
   bypass:          { type: 'bool' },
   gate_threshold:  { min: -80, max: 0 },
@@ -32,7 +32,7 @@ const PARAM_RANGES = {
   output_gain:     { min: 0, max: 4 }
 };
 
-// Дефолтные значения (bypass=true)
+// Default values (bypass=true)
 const DEFAULTS = {
   bypass: true,
   gate_threshold: -30, gate_attack: 10, gate_release: 2000,
@@ -46,7 +46,7 @@ const DEFAULTS = {
   output_gain: 1
 };
 
-// Пресеты
+// Presets
 const PRESETS = {
   bypass: { ...DEFAULTS, bypass: true },
 
@@ -103,7 +103,7 @@ const PRESETS = {
   }
 };
 
-// Валидация и клэмп параметров
+// Validate and clamp parameters
 function validateConfig(params) {
   const result = {};
   for (const [key, value] of Object.entries(params)) {
@@ -120,7 +120,7 @@ function validateConfig(params) {
   return result;
 }
 
-// Сохранить конфиг в JSON файл
+// Save config to JSON file
 function saveConfig(config) {
   try {
     fs.writeFileSync(CONFIG_PATH, JSON.stringify(config, null, 2));
@@ -129,7 +129,7 @@ function saveConfig(config) {
   }
 }
 
-// Загрузить конфиг из JSON файла
+// Load config from JSON file
 function loadConfig() {
   try {
     if (fs.existsSync(CONFIG_PATH)) {
@@ -141,30 +141,30 @@ function loadConfig() {
   return null;
 }
 
-// API: получить текущий конфиг из Liquidsoap
+// API: get current config from Liquidsoap
 async function getConfig() {
   const res = await liqClient.getStripConfig();
   return res.data;
 }
 
-// API: установить параметры (partial update)
+// API: set parameters (partial update)
 async function setConfig(params) {
   const validated = validateConfig(params);
   if (Object.keys(validated).length === 0) {
     return { ok: false, error: 'no valid params' };
   }
 
-  // Отправляем в Liquidsoap
+  // Send to Liquidsoap
   const res = await liqClient.setStripConfig(validated);
 
-  // Сохраняем полный конфиг в файл
+  // Save full config to file
   const fullConfig = await liqClient.getStripConfig();
   if (fullConfig.data) saveConfig(fullConfig.data);
 
   return res.data;
 }
 
-// API: применить пресет
+// API: apply preset
 async function setPreset(name) {
   const preset = PRESETS[name];
   if (!preset) {
@@ -173,13 +173,13 @@ async function setPreset(name) {
 
   const res = await liqClient.setStripConfig(preset);
 
-  // Сохраняем в файл
+  // Save to file
   saveConfig(preset);
 
   return { ok: true, preset: name, data: res.data };
 }
 
-// API: получить metering данные
+// API: get metering data
 async function getMetering() {
   const res = await liqClient.getStripMetering();
   return res.data;

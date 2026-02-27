@@ -1,8 +1,33 @@
 # STUDIO 23 — TODO
 
-> Last reviewed: 2026-02-23
-> Tests: 364/364 green (65 pytest + 175 vitest + 124 bats)
-> Phase: Dashboard stabilization COMPLETE. Next: Platform (Phase 1)
+> Last reviewed: 2026-02-27
+> Current sprint: Стабилизация — рефакторинг server.js + код-ревью
+> Phase: S3 integration done. Next: stabilization + refactoring
+
+## Architecture Decisions (brainstorm 2026-02-23)
+
+### Infrastructure
+- **Тупые ноды**: Hetzner auction i9/64GB (~€40), Proxmox, никакой логики
+- **LXC-per-tenant**: 1536MB RAM limit, unprivileged, AppArmor. ~40 tenants/нода
+- **CPU ≈ 0**: QSV copy mode, bottleneck только RAM
+- **No overselling, No cluster**: standalone Proxmox, overcommit=0
+
+### Networking
+- **Tailscale mesh** между нодами и control plane
+- **Cloudflare DNS API** — A-record при provisioning
+- **Caddy на каждой ноде** — TLS, reverse proxy к LXC
+
+### Control Plane (Go + Postgres + Caddy)
+- **Go 1.24** + chi + pgx + golang-migrate. Repo: `github.com/Awis13/controlplane`
+- **Dev env**: OrbStack Ubuntu 25.04, Docker compose (Go app + Postgres 17)
+- **Мультипроектность**: projects table, каждый проект = template + ports + stripe plan
+- **Auth**: Bearer token middleware. **Encryption**: AES-256-GCM для Proxmox API tokens
+- **PostgreSQL** с миграциями embedded в binary
+
+### Frontend стек
+- **Админка**: htmx + Go templates, встроена в binary
+- **Лендинг**: static HTML + Tailwind + vanilla JS
+- **Auth**: Clerk (hosted signup/login), JWT в Go middleware
 
 ## In Progress
 
@@ -10,39 +35,47 @@
 
 ## Up Next
 
-### Phase 1 — Platform (multi-tenant)
-- [ ] Go API control plane — Proxmox REST API для LXC provisioning, tenant CRUD, health checks. Single binary, goroutine-per-tenant. (large)
-- [ ] Stripe + Coinbase Commerce billing — subscription management, webhook handlers, usage metering. (large)
-- [ ] Next.js platform frontend — landing page, Clerk auth, tenant onboarding, dashboard iframe wrapper. (large)
-- [ ] Nginx reverse proxy + Let's Encrypt — subdomain per tenant, TLS termination. (medium)
-- [ ] CI/CD pipeline — GitHub Actions: test → build → deploy. Currently tests run only locally. (medium)
+### Фаза 0: Закрыть хвосты
+- [ ] **Код-ревью PR #11** (S3 lifecycle) — codereview, фиксы, мерж в master. (small)
+- [ ] **Удалить syncWatcher.js** — `dashboard/lib/syncWatcher.js` мёртвый код (убран в a8c67e5). (small)
+
+### Фаза 1: Рефакторинг server.js (839 → ~150 строк)
+- [ ] **Создать `dashboard/routes/`** — вынести 42 inline-роута: `dj.js`, `streamKeys.js`, `settings.js`, `status.js`, `videoQueue.js`, `live.js`. (medium)
+- [ ] **Вынести boot logic** в `dashboard/lib/boot.js` — S3 sync + auto-restore (~120 строк). (medium)
+- [ ] **Вынести WebSocket** в `dashboard/lib/wsServer.js` — WS, broadcast, TLS (~60 строк). (small)
+- [ ] **Финализация server.js** — imports → app → middleware → mount → WS → boot → listen. (small)
+
+### Фаза 2: Тесты
+- [ ] **Тесты на роуты** — vitest, mock req/res. Минимум: dj, stream-keys, settings. (medium)
+- [ ] **Тест boot.js** — mock liqClient/probeStatus/S3. (medium)
 
 ## Backlog
 
-- [ ] Structured logging — replace 22 console.log statements in dashboard with JSON logger (pino). Needed for multi-tenant log aggregation. (small)
-- [ ] Health endpoint — `GET /api/health` checking HLS segment freshness, Icecast, RTMP status. Needed for platform health monitoring. (small)
-- [ ] HTTPS for dashboard — self-signed for dev, Let's Encrypt for prod. Currently HTTP only. (small)
-- [ ] Hardcoded test line numbers in bats — `tests/bash/test_stream_entry.bats` uses awk NR ranges that break on any code addition. Replace with marker-based stripping (`# TEST_STRIP_BEGIN/END`). (small)
-- [ ] Talk Over mode — voice + music with auto-ducking, Phase 2 feature. Voice ducking currently snaps back instantly (no fade). (medium)
-- [ ] Channel Strip DSP GUI — Gate → EQ → Comp → Limiter. Code scaffolded in radio_bpm.liq (commented out), HTTP endpoints exist. Phase 2/3. (large)
+- [ ] app.js (5890 строк) — фронтенд-монолит. Рефакторить при изменении UI. (large)
+- [ ] STREAM_KEYS_SECRET rotation — migration path для смены `.env`. (medium)
+- [ ] Health endpoint `GET /api/health` — для Control Plane интеграции. (small)
+- [ ] Рефакторинг server.js — **MOVED TO UP NEXT** (medium)
 
 ## Known Issues
 
-### FFT Analyzer на Safari (WebKit bug 180696)
-- `MediaElementSource` + HLS не поддерживается. Server-side FFT disabled, скрыт на iOS. Ждём Apple.
-
-### STREAM_KEYS_SECRET rotation
-- При пересоздании `.env` старые RTMP ключи (AES-256-GCM) становятся нечитаемыми. Workaround: заново ввести ключи в дашборде.
+- **FFT Analyzer на Safari** (WebKit bug 180696) — ждём Apple
+- **STREAM_KEYS_SECRET rotation** — пересоздание `.env` ломает старые RTMP ключи
 
 ## Done
 
-- [x] Pipeline audit: -bf 0 encode path + JSON injection protection — PR #10 (2026-02-23)
-- [x] CSP compliance: inline handlers → addEventListener — PR #9 (2026-02-23)
-- [x] Overnight schedule slots + 56 тестов — PR #8 (2026-02-23)
-- [x] Schedule audit: timezone, overlap, priority — PR #7 (2026-02-23)
-- [x] Auto-play on boot, ARM→PLAY GUI, XSS sanitization — PR #5-6 (2026-02-23)
+- [x] audio-analyzer Dockerfile (2026-02-27)
+- [x] S3 full lifecycle — source of truth, boot sync, каскадные удаления, atomic uploads (2026-02-26)
+- [x] Drag-and-drop upload с progress bar (2026-02-26)
+- [x] i18n — все русские комментарии и строки переведены на English (2026-02-26)
+- [x] Pipeline audit — `-bf 0` + JSON injection protection (2026-02-24, PR #10)
+- [x] CSP compliance — inline handlers removed (2026-02-24, PR #9)
+- [x] Control Plane: tenant provisioning — 86 tests (2026-02-24, CP PR #3)
 
 ## Dropped
 
-- **radio.liq** — заменён на `radio_bpm.liq` (BPM-aware mixing)
-- **DSP chain в Liquidsoap** — loudnorm перенесён в transcoder stage
+- **radio.liq** → `radio_bpm.liq`
+- **DSP chain в Liquidsoap** → transcoder loudnorm
+- **Proxmox cluster** → standalone ноды
+- **Node.js / SQLite для control plane** → Go + Postgres
+- **React/Vue для админки** → htmx + Go templates
+- **Next.js для лендинга (MVP)** → static HTML + Tailwind

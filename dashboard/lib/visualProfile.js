@@ -1,6 +1,7 @@
 const fs = require('fs');
 const path = require('path');
 const express = require('express');
+const { prefetchVideos } = require('./cacheManager');
 
 const PROFILES_FILE = '/shared/visual_profiles.json';
 const ACTIVE_FILE = '/shared/active_visual_profile.json';
@@ -148,6 +149,14 @@ function createVisualProfileRouter(visualsDir) {
   router.post('/:id/activate', (req, res) => {
     const result = activateProfile(req.params.id);
     if (!result) return res.status(404).json({ error: 'not found' });
+
+    // S3: prefetch active profile videos in background
+    if (result.videos && result.videos.length > 0) {
+      prefetchVideos(result.videos, visualsDir).catch(e =>
+        console.error(`[s3] prefetch profile videos failed: ${e.message}`)
+      );
+    }
+
     res.json(result);
   });
 

@@ -18,16 +18,16 @@ src = fallback(track_sensitive = false, [music, safety])
 src = mksafe(src)
 
 # ============================================
-# HARD TECHNO CROSSFADE — бочка в бочку
+# HARD TECHNO CROSSFADE — kick to kick
 # ============================================
 
 def pro_mix(old, new) =
   log("MIX PRO: transition starting")
 
-  # Equal-power (sin) кривые: сумма энергий постоянна,
-  # нет провала громкости в середине перехода.
-  # Старый трек держится дольше — уходит за 6с,
-  # новый плавно вступает за 12с.
+  # Equal-power (sin) curves: constant energy sum,
+  # no volume dip at transition midpoint.
+  # Old track holds longer — fades out over 6s,
+  # new track fades in smoothly over 12s.
   old_faded = fade.out(
     duration = 6.0,
     type = "sin",
@@ -42,7 +42,7 @@ def pro_mix(old, new) =
 
   mixed = add(normalize = false, [old_faded, new_faded])
 
-  # Компрессор на микс — склеивает бочки, не даёт провалу
+  # Compressor on mix — glues kicks together, prevents dip
   compress(
     threshold = -14.0,
     ratio = 3.0,
@@ -52,7 +52,7 @@ def pro_mix(old, new) =
   )
 end
 
-# 12с окно перехода
+# 12s transition window
 radio = cross(duration = 12.0, pro_mix, src)
 radio = mksafe(radio)
 
