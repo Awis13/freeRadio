@@ -674,12 +674,15 @@
     }
     var proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
     var wsUrl = proto + '//' + location.host;
-    if (authToken) wsUrl += '?token=' + encodeURIComponent(authToken);
     ws = new WebSocket(wsUrl);
 
     ws.onopen = function () {
       log('ws: connected');
       wsReconnectDelay = 1000;
+      // Send auth token as first message
+      if (authToken) {
+        ws.send(JSON.stringify({type: 'auth', token: authToken}));
+      }
       // Subscribe to server-side FFT if Safari analyzer is active
       if (azServerFFT) {
         ws.send(JSON.stringify({type: 'fft-subscribe'}));
