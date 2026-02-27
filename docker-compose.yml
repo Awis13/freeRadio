@@ -15,7 +15,7 @@ services:
     image: infiniteproject/icecast
     container_name: s23-icecast
     ports:
-      - "8000:8000"
+      - "127.0.0.1:8000:8000"
     environment:
       - ICECAST_SOURCE_PASSWORD=${ICECAST_SOURCE_PASSWORD}
       - ICECAST_ADMIN_PASSWORD=${ICECAST_ADMIN_PASSWORD}
@@ -82,6 +82,7 @@ services:
       - STABLE_LOOP=1
       - FFMPEG_PROGRESS_FILE=/shared/ffmpeg_progress.txt
       - DASHBOARD_API=http://dashboard:9090
+      - DASHBOARD_TOKEN=${DASHBOARD_TOKEN}
       - HW_ACCEL=qsv
     volumes:
       - /dev/dri:/dev/dri

@@ -7,6 +7,19 @@ const OVERLAY_CONFIG = '/shared/overlays.json';
 const FILTER_STRING_FILE = '/shared/overlay_filter_string.txt';
 const ASSETS_DIR = '/shared/overlay_assets';
 
+// --- Security helpers ---
+function sanitizeOverlayField(value, regex, fallback) {
+  const str = String(value ?? fallback);
+  return regex.test(str) ? str : fallback;
+}
+
+function escapeDrawtext(text) {
+  return String(text || '')
+    .replace(/\\/g, '\\\\\\\\')
+    .replace(/'/g, "'\\\\\\''")
+    .replace(/:/g, '\\\\:');
+}
+
 function loadOverlays() {
   try {
     if (fs.existsSync(OVERLAY_CONFIG)) {
@@ -53,8 +66,8 @@ function generateFilterString(config) {
   // For now, store logo info separately for stream_entry.sh to handle
   const logoInputs = logoLayers.map(l => ({
     asset: path.join(ASSETS_DIR, l.asset),
-    x: l.x || '20',
-    y: l.y || '20',
+    x: sanitizeOverlayField(l.x, /^[\d()wh+\-*/. ]{1,80}$/, '20'),
+    y: sanitizeOverlayField(l.y, /^[\d()wh+\-*/. ]{1,80}$/, '20'),
     opacity: l.opacity || 1.0
   }));
 
@@ -69,15 +82,21 @@ function generateFilterString(config) {
 }
 
 function buildDrawtext(layer) {
+  const RE_COLOR = /^[a-zA-Z0-9#@]{1,30}$/;
+  const RE_SIZE = /^\d{1,4}$/;
+  const RE_COORD = /^[\d()wh+\-*/. ]{1,80}$/;
+  const RE_SPEED = /^\d{1,5}$/;
+  const RE_FORMAT = /^[a-zA-Z0-9%: ._-]{0,50}$/;
+
   const common = [];
 
-  if (layer.fontsize) common.push(`fontsize=${layer.fontsize}`);
-  if (layer.fontcolor) common.push(`fontcolor=${layer.fontcolor}`);
-  if (layer.x) common.push(`x=${layer.x}`);
-  if (layer.y) common.push(`y=${layer.y}`);
+  if (layer.fontsize) common.push(`fontsize=${sanitizeOverlayField(layer.fontsize, RE_SIZE, '24')}`);
+  if (layer.fontcolor) common.push(`fontcolor=${sanitizeOverlayField(layer.fontcolor, RE_COLOR, 'white')}`);
+  if (layer.x) common.push(`x=${sanitizeOverlayField(layer.x, RE_COORD, '10')}`);
+  if (layer.y) common.push(`y=${sanitizeOverlayField(layer.y, RE_COORD, '10')}`);
   if (layer.boxcolor) {
     common.push('box=1');
-    common.push(`boxcolor=${layer.boxcolor}`);
+    common.push(`boxcolor=${sanitizeOverlayField(layer.boxcolor, RE_COLOR, 'black@0.5')}`);
     common.push('boxborderw=8');
   }
 
@@ -88,40 +107,36 @@ function buildDrawtext(layer) {
       break;
     case 'static_text':
       if (layer.text) {
-        // Escape special chars for FFmpeg drawtext
-        const escaped = layer.text
-          .replace(/\\/g, '\\\\\\\\')
-          .replace(/'/g, "\\'")
-          .replace(/:/g, '\\:');
+        const escaped = escapeDrawtext(layer.text);
         common.push(`text='${escaped}'`);
       }
       break;
-    case 'clock':
-      common.push(`text='%{localtime\\:${(layer.format || '%H\\:%M').replace(/:/g, '\\:')}}'`);
+    case 'clock': {
+      const fmt = sanitizeOverlayField(layer.format, RE_FORMAT, '%H\\:%M').replace(/:/g, '\\:');
+      common.push(`text='%{localtime\\:${fmt}}'`);
       break;
+    }
     case 'scrolling_text':
       if (layer.text) {
-        // Escape special chars for FFmpeg drawtext
-        const escaped = layer.text
-          .replace(/\\/g, '\\\\\\\\')
-          .replace(/'/g, "\\'")
-          .replace(/:/g, '\\:');
+        const escaped = escapeDrawtext(layer.text);
         common.push(`text='${escaped}'`);
       }
-      // Scrolling animation: move from right to left
-      // x=w-mod(t*speed,w+text_w) - starts at w, moves left at speed pixels/sec
-      var scrollSpeed = layer.speed || 100;
-      common.push(`x=w-mod(t*${scrollSpeed},w+text_w)`);
+      {
+        // Scrolling animation: move from right to left
+        const scrollSpeed = sanitizeOverlayField(layer.speed, RE_SPEED, '100');
+        common.push(`x=w-mod(t*${scrollSpeed},w+text_w)`);
+      }
       // Center vertically or use specified y
       if (!layer.y) common.push('y=(h-text_h)/2');
       break;
     case 'scrolling_now_playing':
       // Read from file and scroll - same as now_playing but scrolling
-      // Uses cleaned track name (no path, no extension, no underscores)
       common.push('textfile=/shared/current_track_clean.txt');
       common.push('reload=1');
-      var scrollSpeed2 = layer.speed || 100;
-      common.push(`x=w-mod(t*${scrollSpeed2},w+text_w)`);
+      {
+        const scrollSpeed2 = sanitizeOverlayField(layer.speed, RE_SPEED, '100');
+        common.push(`x=w-mod(t*${scrollSpeed2},w+text_w)`);
+      }
       if (!layer.y) common.push('y=(h-text_h)/2');
       break;
     default:
@@ -168,11 +183,20 @@ function createOverlayRouter() {
   router.post('/assets', upload.single('file'), (req, res) => {
     if (!req.file) return res.status(400).json({ error: 'no file' });
 
-    // Rename to original name
-    const dest = path.join(ASSETS_DIR, req.file.originalname);
+    // Sanitize filename to prevent path traversal
+    const safeName = path.basename(req.file.originalname).replace(/[^a-zA-Z0-9._-]/g, '_');
+    if (!safeName || safeName.startsWith('.')) {
+      fs.unlinkSync(req.file.path);
+      return res.status(400).json({ error: 'invalid filename' });
+    }
+    const dest = path.join(ASSETS_DIR, safeName);
+    if (!dest.startsWith(ASSETS_DIR + path.sep) && dest !== ASSETS_DIR) {
+      fs.unlinkSync(req.file.path);
+      return res.status(400).json({ error: 'path traversal detected' });
+    }
     fs.renameSync(req.file.path, dest);
 
-    res.json({ name: req.file.originalname, path: dest });
+    res.json({ name: safeName, path: dest });
   });
 
   // GET /api/overlays/assets — list assets
