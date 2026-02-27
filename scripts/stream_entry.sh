@@ -23,7 +23,8 @@ json_escape_value() {
 
 # Fetch RTMP URLs from dashboard API (for multi-streaming)
 fetch_rtmp_urls() {
-  curl -s "${DASHBOARD_API}/api/rtmp-urls" 2>/dev/null || echo "[]"
+  curl -s -H "Authorization: Bearer ${DASHBOARD_TOKEN}" \
+    "${DASHBOARD_API}/api/rtmp-urls" 2>/dev/null || echo "[]"
 }
 
 # Check if RTMP URLs contain only YouTube (returns "youtube" or "multi")
@@ -1125,7 +1126,9 @@ stream() {
 
   echo "[+] FFmpeg command: $cmd" >&2
   rc=0
-  eval "ffmpeg $cmd 2>>$FFMPEG_STDERR_LOG" || rc=$?
+  # Use array-based exec to prevent shell injection
+  read -r -a ffmpeg_args <<< "$cmd"
+  ffmpeg "${ffmpeg_args[@]}" 2>>"$FFMPEG_STDERR_LOG" || rc=$?
 
   # Stop restream manager (its trap cleans up child ffmpeg processes)
   kill "$restream_pid" 2>/dev/null || true

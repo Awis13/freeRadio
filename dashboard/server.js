@@ -151,7 +151,7 @@ app.use(express.json());
 
 // --- Auth middleware ---
 const PUBLIC_PATHS = [
-  '/api/status', '/api/audio-stream', '/api/rtmp-urls', '/api/rtmp-health',
+  '/api/status', '/api/audio-stream', '/api/rtmp-health',
   '/api/live/on_publish', '/api/live/on_done', '/api/auth/verify'
 ];
 
