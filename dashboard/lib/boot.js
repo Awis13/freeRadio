@@ -33,7 +33,7 @@ function probeStatus() {
 async function boot({ musicDir, visualsDir }) {
   _bootAborted = false;
 
-  // Phase 0: S3 boot sync
+  // S3 boot sync
   if (s3.S3_ENABLED) {
     const syncStart = Date.now();
     try {
@@ -57,94 +57,55 @@ async function boot({ musicDir, visualsDir }) {
     }
   }
 
-  // Auto-restore: wait for Liquidsoap, then set mode
+  // Check saved mode — respect last state before restart
+  const savedMode = streamControl.getModeState().mode;
+  console.log(`[boot] saved mode: ${savedMode}`);
+
+  // Wait for Liquidsoap to be ready
   const MAX_RETRIES = 30;
   const RETRY_INTERVAL = 2000;
-  const start = Date.now();
-
   await new Promise(r => setTimeout(r, 1000));
-  let probeResult = null;
+
   for (let attempt = 1; attempt <= MAX_RETRIES; attempt++) {
-    if (_bootAborted) { console.log('[boot] Aborted by user'); return; }
+    if (_bootAborted) { console.log('[boot] aborted'); return; }
     try {
-      probeResult = await probeStatus();
+      await probeStatus();
       break;
     } catch (e) {
       if (attempt < MAX_RETRIES) {
         console.log(`[boot] Liquidsoap not ready (${attempt}/${MAX_RETRIES}): ${e.message}`);
         await new Promise(r => setTimeout(r, RETRY_INTERVAL));
       } else {
-        console.log(`[boot] Auto-restore gave up after ${MAX_RETRIES} attempts: ${e.message}`);
+        console.log(`[boot] Liquidsoap unreachable after ${MAX_RETRIES} attempts`);
+        return;
       }
     }
   }
-  if (!probeResult) return;
 
-  const playing = (typeof probeResult === 'object') ? probeResult.playing : false;
-  if (playing) {
-    streamControl.setModeState('live');
-    console.log('[boot] Liquidsoap already playing, mode set to live');
+  if (savedMode === 'standby' || savedMode === 'armed') {
+    // Was off — stay off. Cancel Liquidsoap autoplay.
+    try { await liqClient.stopPlayback(); } catch (e) {}
+    console.log('[boot] was off, staying off');
     return;
   }
 
-  // Phase 2: wait for autoplay (8s from Liquidsoap start + 4s margin)
-  const elapsed = (Date.now() - start) / 1000;
-  const waitForAutoplay = Math.max(0, 12 - elapsed) * 1000;
-  if (waitForAutoplay > 0) {
-    await new Promise(r => setTimeout(r, waitForAutoplay));
-  }
-  if (_bootAborted) { console.log('[boot] Aborted by user'); return; }
+  // Was live — wait for Liquidsoap autoplay, then set mode
+  const waitMs = 10000; // autoplay fires at 8s + margin
+  console.log('[boot] was live, waiting for autoplay...');
+  await new Promise(r => setTimeout(r, waitMs));
+  if (_bootAborted) { console.log('[boot] aborted'); return; }
 
   try {
     const status = await probeStatus();
     if (status && status.playing) {
+      streamControl.setControlState(true, false);
       streamControl.setModeState('live');
-      console.log('[boot] Liquidsoap autoplay active, mode set to live');
-      return;
+      console.log('[boot] restored to live');
+    } else {
+      console.log('[boot] autoplay did not fire, staying off');
     }
   } catch (e) {
-    // Continue to fallback
-  }
-
-  // Phase 3: fallback — manual cue + resume
-  if (_bootAborted) { console.log('[boot] Aborted by user'); return; }
-  try {
-    const processedDir = path.join(musicDir, 'processed');
-    const files = (await fs.promises.readdir(processedDir)).filter(f => /\.(wav|mp3|flac|ogg|aac|m4a)$/i.test(f));
-    if (files.length === 0) {
-      console.log('[boot] No tracks found, cannot auto-restore');
-      return;
-    }
-
-    try {
-      const recheck = await probeStatus();
-      if (recheck && recheck.playing) {
-        streamControl.setModeState('live');
-        console.log('[boot] Liquidsoap started playing during fallback prep, mode set to live');
-        return;
-      }
-    } catch (e) { /* continue with fallback */ }
-
-    if (_bootAborted) { console.log('[boot] Aborted by user'); return; }
-    const track = files[Math.floor(Math.random() * files.length)];
-    const fullPath = path.join(processedDir, track);
-
-    if (s3.S3_ENABLED) {
-      try { await s3.ensureCached(`music/processed/${track}`, fullPath); } catch (e) {
-        console.error(`[boot] S3 download for cue failed: ${e.message}`);
-      }
-    }
-
-    await liqClient.cueTrack(fullPath);
-    await new Promise(resolve => setTimeout(resolve, 6000));
-    if (_bootAborted) { console.log('[boot] Aborted by user during buffer wait'); return; }
-    await liqClient.resumePlayback();
-    fs.writeFileSync('/shared/current_audio.txt', fullPath);
-    streamControl.setModeState('live');
-    const totalElapsed = ((Date.now() - start) / 1000).toFixed(1);
-    console.log(`[boot] Auto-restored (fallback): cued ${track}, gate opened (${totalElapsed}s)`);
-  } catch (e) {
-    console.log(`[boot] Auto-restore cue/resume failed: ${e.message}`);
+    console.log(`[boot] probe failed after wait: ${e.message}`);
   }
 }
 
