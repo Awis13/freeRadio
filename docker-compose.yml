@@ -98,6 +98,25 @@ services:
       - dj
       - rtmp-ingest
     restart: unless-stopped
+
+  # 3.5 Transcoder — auto-converts incoming videos to stream-ready format
+  transcoder:
+    image: linuxserver/ffmpeg:latest
+    container_name: s23-transcoder
+    entrypoint: /scripts/transcoder.sh
+    group_add:
+      - "105"
+    volumes:
+      - /dev/dri:/dev/dri
+      - ./content/visuals:/visuals
+      - ./content/music:/music
+      - ./scripts:/scripts:ro
+    mem_limit: 512m
+    networks:
+      - rave-net
+    restart: unless-stopped
+
+  # 4. Dashboard (Node.js — preview + API + WebSocket)
   # Dashboard UI
   dashboard:
     build: ./dashboard
