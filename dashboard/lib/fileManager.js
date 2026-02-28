@@ -3,6 +3,7 @@ const multer = require('multer');
 const fs = require('fs');
 const path = require('path');
 const s3 = require('./s3');
+const transcoder = require('./transcoderClient');
 
 // Determine S3 prefix from local directory
 function dirToS3Prefix(dir) {
@@ -98,8 +99,25 @@ function fileManager(dir) {
       return res.status(400).json({ error: 'No files uploaded' });
     }
     const uploaded = req.files.map((f) => ({ name: f.filename, size: f.size }));
+    const isVisuals = dir.includes('/visuals');
 
-    // S3 sync — await before responding
+    // Визуалы → транскодер (если включён), иначе fallback на S3
+    if (isVisuals && transcoder.ENABLED) {
+      const transcodeResults = [];
+      for (const f of req.files) {
+        try {
+          const result = await transcoder.submit(f.path);
+          transcodeResults.push({ name: f.filename, job_id: result.job_id, status: result.status });
+          console.log(`[transcoder] отправлено: ${f.filename} → job ${result.job_id}`);
+        } catch (e) {
+          console.error(`[transcoder] ошибка: ${f.filename}: ${e.message}`);
+          transcodeResults.push({ name: f.filename, error: e.message });
+        }
+      }
+      return res.json({ uploaded, transcode: transcodeResults });
+    }
+
+    // Музыка или fallback (нет транскодера) → S3
     const s3Results = [];
     if (s3.S3_ENABLED) {
       const prefix = dirToS3Prefix(dir);

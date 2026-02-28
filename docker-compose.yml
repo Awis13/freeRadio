@@ -15,7 +15,7 @@ services:
     image: infiniteproject/icecast
     container_name: s23-icecast
     ports:
-      - "127.0.0.1:8000:8000"
+      - "8000:8000"
     environment:
       - ICECAST_SOURCE_PASSWORD=${ICECAST_SOURCE_PASSWORD}
       - ICECAST_ADMIN_PASSWORD=${ICECAST_ADMIN_PASSWORD}
@@ -52,7 +52,7 @@ services:
     entrypoint: ["nginx"]
     command: ["-c", "/config/ingest.conf"]
     ports:
-      - "127.0.0.1:1935:1935"
+      - "1935:1935"
     volumes:
       - ./configs/nginx/ingest.conf:/config/ingest.conf:ro
     networks:
@@ -82,7 +82,6 @@ services:
       - STABLE_LOOP=1
       - FFMPEG_PROGRESS_FILE=/shared/ffmpeg_progress.txt
       - DASHBOARD_API=http://dashboard:9090
-      - DASHBOARD_TOKEN=${DASHBOARD_TOKEN}
       - HW_ACCEL=qsv
     volumes:
       - /dev/dri:/dev/dri
@@ -99,30 +98,11 @@ services:
       - rtmp-ingest
     restart: unless-stopped
 
-  # 3.5 Transcoder — auto-converts incoming videos to stream-ready format
-  transcoder:
-    image: linuxserver/ffmpeg:latest
-    container_name: s23-transcoder
-    entrypoint: /scripts/transcoder.sh
-    group_add:
-      - "105"
-    volumes:
-      - /dev/dri:/dev/dri
-      - ./content/visuals:/visuals
-      - ./content/music:/music
-      - ./scripts:/scripts:ro
-    mem_limit: 512m
-    networks:
-      - rave-net
-    restart: unless-stopped
-
   # 4. Dashboard (Node.js — preview + API + WebSocket)
   # Dashboard UI
   dashboard:
     build: ./dashboard
     container_name: s23-dashboard
-    security_opt:
-      - no-new-privileges:true
     ports:
       - "80:9090"
       - "443:9443"
@@ -147,6 +127,8 @@ services:
       - S3_REGION=${S3_REGION:-eu-central-1}
       - TENANT_ID=${TENANT_ID:-default}
       - S3_CACHE_MAX_MB=${S3_CACHE_MAX_MB:-4000}
+      - TRANSCODER_URL=${TRANSCODER_URL:-}
+      - TRANSCODER_TOKEN=${TRANSCODER_TOKEN:-}
     volumes:
       - ./content/music:/music
       - ./content/visuals:/visuals
