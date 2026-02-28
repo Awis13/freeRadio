@@ -38,9 +38,11 @@ get_rtmp_mode() {
   fi
   
   # Count total URLs and YouTube URLs
-  url_count=$(echo "$rtmp_urls" | grep -o '"url":"[^"]*"' | wc -l)
-  youtube_count=$(echo "$rtmp_urls" | grep -o '"url":"[^"]*"' | grep -c "youtube\|youtu.be" || echo "0")
-  
+  url_count=$(echo "$rtmp_urls" | grep -o '"url":"[^"]*"' | wc -l | tr -d '[:space:]')
+  youtube_count=$(echo "$rtmp_urls" | grep -o '"url":"[^"]*"' | grep -c "youtube\|youtu.be" | tr -d '[:space:]' || true)
+  [ -z "$url_count" ] && url_count=0
+  [ -z "$youtube_count" ] && youtube_count=0
+
   if [ "$url_count" -eq "$youtube_count" ] && [ "$youtube_count" -gt 0 ]; then
     echo "youtube"  # Only YouTube
   else
@@ -352,7 +354,13 @@ get_video_filter_with_scale() {
   
   case "$preset" in
     godmode) echo "scale=2560:1440:flags=lanczos${final_filter:+,}$final_filter" ;;  # Scale first, then filters
-    standard|kick) echo "scale=1920:1080:flags=lanczos${final_filter:+,}$final_filter" ;;  # 1080p for multi-platform
+    standard|kick)
+      # Pre-transcoded content already 1080p — only add scale when overlays/enhancements need processing
+      if [ -n "$final_filter" ]; then
+        echo "scale=1920:1080:flags=lanczos,$final_filter"
+      fi
+      # Empty = no filters = copy mode (0% CPU/GPU)
+      ;;
     *) echo "$final_filter" ;;
   esac
 }
