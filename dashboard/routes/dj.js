@@ -14,6 +14,8 @@ function createDjRouter(musicDir) {
   router.post('/start', async (req, res) => {
     try {
       const result = await liqClient.startPlayback();
+      // Signal streamer to restart pipeline with fresh audio
+      try { fs.writeFileSync("/shared/restart_stream", ""); } catch (e) {}
       res.json({ ok: true, data: result.data });
     } catch (e) {
       res.status(500).json({ error: e.message });

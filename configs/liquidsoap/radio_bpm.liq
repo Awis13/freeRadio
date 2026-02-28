@@ -10,6 +10,7 @@ settings.frame.audio.channels := 2
 
 # ---- SOURCE ----
 
+dj_playing = ref(false)
 music = playlist(
   id = "music",
   mode = "randomize",
@@ -22,7 +23,8 @@ queue = request.queue(id="queue")
 voice_queue = request.queue(id="voice_queue")
 
 safety = blank(duration = 1.0)
-my_source = fallback(track_sensitive = true, [queue, music, safety])
+gated_music = switch(track_sensitive = true, [({dj_playing()}, music)])
+my_source = fallback(track_sensitive = true, [queue, gated_music, safety])
 my_source = mksafe(my_source)
 
 current_track = ref("")
@@ -32,7 +34,6 @@ queue_list = ref([])
 mix_mode = ref("smart")
 prev_track_start = ref(0.0)
 curr_track_start = ref(0.0)
-dj_playing = ref(false)
 
 def on_track_handler(m) =
   filename = m["filename"] ?? ""
@@ -329,7 +330,10 @@ def smart_mix(a, b) =
   log("")
   log("MIX: #{old_name_str} -> #{new_name_str} [mode=#{mode}]")
 
-  if mode == "cut" then
+  if old_name_str == "" then
+    log("CLEAN START: no fade-in")
+    sequence([b.source])
+  elsif mode == "cut" then
     do_cut(a, b)
   elsif mode == "crossfade" then
     do_crossfade(a, b)
@@ -763,10 +767,11 @@ harbor.http.register(port=7000, method="POST", "/playback/start",
   fun(_, resp) -> begin
     music.reload()
     source.skip(my_source)
-    log("PLAYBACK: playlist reloaded + fresh track (gate unchanged)")
+    dj_playing := true
+    log("PLAYBACK: started (reload + skip + gate open)")
     resp.content_type("application/json")
     resp.header("access-control-allow-origin", "*")
-    resp.data('{"ok": true, "action": "prepared"}')
+    resp.data('{"ok": true, "playing": true}')
   end
 )
 

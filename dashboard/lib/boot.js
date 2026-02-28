@@ -82,30 +82,12 @@ async function boot({ musicDir, visualsDir }) {
     }
   }
 
-  if (savedMode === 'standby' || savedMode === 'armed') {
-    // Was off — stay off. Cancel Liquidsoap autoplay.
-    try { await liqClient.stopPlayback(); } catch (e) {}
+  // Always start off — user must press PLAY
+  try { await liqClient.stopPlayback(); } catch (e) {}
+  if (savedMode === 'live') {
+    console.log('[boot] was live before restart, waiting for PLAY');
+  } else {
     console.log('[boot] was off, staying off');
-    return;
-  }
-
-  // Was live — wait for Liquidsoap autoplay, then set mode
-  const waitMs = 10000; // autoplay fires at 8s + margin
-  console.log('[boot] was live, waiting for autoplay...');
-  await new Promise(r => setTimeout(r, waitMs));
-  if (_bootAborted) { console.log('[boot] aborted'); return; }
-
-  try {
-    const status = await probeStatus();
-    if (status && status.playing) {
-      streamControl.setControlState(true, false);
-      streamControl.setModeState('live');
-      console.log('[boot] restored to live');
-    } else {
-      console.log('[boot] autoplay did not fire, staying off');
-    }
-  } catch (e) {
-    console.log(`[boot] probe failed after wait: ${e.message}`);
   }
 }
 

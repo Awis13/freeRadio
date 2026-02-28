@@ -168,7 +168,7 @@ app.use('/api/', (req, res, next) => {
 
 // --- Routes ---
 app.use('/api', createStatusRouter(state));
-app.use('/api/music', fileManager(MUSIC_DIR));
+app.use('/api/music', fileManager(path.join(MUSIC_DIR, 'processed')));
 app.use('/api/visuals', fileManager(path.join(VISUALS_DIR, 'incoming')));
 app.use('/api/queue', createQueueRouter(MUSIC_DIR, getBpmMap));
 app.use('/api/video-queue', createVideoQueueRouter());
