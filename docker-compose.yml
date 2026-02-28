@@ -98,19 +98,12 @@ services:
       - rtmp-ingest
     restart: unless-stopped
 
-  # 4. Dashboard (Node.js — preview + API + WebSocket)
-  # Dashboard UI
+  # 4. Dashboard API (Node.js — API + WebSocket + HLS)
   dashboard:
     build: ./dashboard
-    container_name: s23-dashboard
-    ports:
-      - "80:9090"
-      - "443:9443"
+    container_name: s23-api
     environment:
       - PORT=9090
-      - TLS_PORT=9443
-      - TLS_CERT=/certs/tls.crt
-      - TLS_KEY=/certs/tls.key
       - HLS_DIR=/hls
       - MUSIC_DIR=/music
       - VISUALS_DIR=/visuals
@@ -134,12 +127,26 @@ services:
       - ./content/visuals:/visuals
       - hls-data:/hls:ro
       - shared-data:/shared
-      - ./certs:/certs:ro
     networks:
       - rave-net
     depends_on:
       - icecast
       - streamer
+    restart: unless-stopped
+
+  # 5. Frontend (nginx — SvelteKit static + proxy to API)
+  frontend:
+    build: ./s23-dashboard
+    container_name: s23-frontend
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./certs:/certs:ro
+    networks:
+      - rave-net
+    depends_on:
+      - dashboard
     restart: unless-stopped
 
 volumes:
