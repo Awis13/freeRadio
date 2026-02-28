@@ -57,6 +57,38 @@ async function deleteProcessed(dir, name) {
   return deleted;
 }
 
+// Фоновый poll задачи транскодера → скачать результат из S3 как только готово
+function pollAndDownload(jobId, filename, dir) {
+  const outputName = filename.replace(/\.[^.]+$/, '') + '.mp4';
+  const processedDir = dir.replace(/\/incoming\/?$/, '') + '/.processed';
+  const localPath = path.join(processedDir, outputName);
+  const s3Key = 'visuals/processed/' + outputName;
+  let attempts = 0;
+  const maxAttempts = 120; // 10 минут (120 * 5s)
+
+  const timer = setInterval(async () => {
+    attempts++;
+    try {
+      const job = await transcoder.getJob(jobId);
+      if (!job) { clearInterval(timer); return; }
+      if (job.status === 'done') {
+        clearInterval(timer);
+        if (!fs.existsSync(processedDir)) fs.mkdirSync(processedDir, { recursive: true });
+        await s3.download(s3Key, localPath);
+        console.log(`[transcoder] готово: ${outputName} → ${localPath}`);
+      } else if (job.status === 'error') {
+        clearInterval(timer);
+        console.error(`[transcoder] ошибка задачи ${jobId}: ${job.error || 'unknown'}`);
+      }
+    } catch (e) {
+      if (attempts >= maxAttempts) {
+        clearInterval(timer);
+        console.error(`[transcoder] таймаут poll ${jobId} после ${maxAttempts} попыток`);
+      }
+    }
+  }, 3000); // каждые 3 секунды
+}
+
 function fileManager(dir) {
   const router = express.Router();
 
@@ -109,6 +141,8 @@ function fileManager(dir) {
           const result = await transcoder.submit(f.path);
           transcodeResults.push({ name: f.filename, job_id: result.job_id, status: result.status });
           console.log(`[transcoder] отправлено: ${f.filename} → job ${result.job_id}`);
+          // Фоновый poll: ждём завершения → скачиваем результат из S3
+          pollAndDownload(result.job_id, f.filename, dir);
         } catch (e) {
           console.error(`[transcoder] ошибка: ${f.filename}: ${e.message}`);
           transcodeResults.push({ name: f.filename, error: e.message });
