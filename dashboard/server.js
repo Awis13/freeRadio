@@ -127,7 +127,7 @@ app.use((req, res, next) => {
   next();
 });
 
-const apiLimiter = rateLimit({ windowMs: 15 * 60 * 1000, max: 300, standardHeaders: true });
+const apiLimiter = rateLimit({ windowMs: 15 * 60 * 1000, max: 3000, standardHeaders: true });
 app.use('/api/', apiLimiter);
 
 app.use(express.static(path.join(__dirname, 'public'), {

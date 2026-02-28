@@ -134,14 +134,15 @@ services:
       - streamer
     restart: unless-stopped
 
-  # 5. Frontend (nginx — SvelteKit static + proxy to API)
-  frontend:
-    build: ./s23-dashboard
-    container_name: s23-frontend
+  # 5. TLS proxy (nginx) — HTTP + HTTPS -> dashboard
+  proxy:
+    image: nginx:alpine
+    container_name: s23-proxy
     ports:
       - "80:80"
       - "443:443"
     volumes:
+      - ./nginx-proxy/nginx.conf:/etc/nginx/conf.d/default.conf:ro
       - ./certs:/certs:ro
     networks:
       - rave-net

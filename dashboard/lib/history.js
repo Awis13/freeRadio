@@ -69,6 +69,21 @@ function createHistoryRouter() {
     res.json(getStats());
   });
 
+  // GET /api/history/analytics
+  router.get("/analytics", (req, res) => {
+    const stats = getStats();
+    const uptimeMs = stats.uptimeMs || 0;
+    const hours = Math.floor(uptimeMs / 3600000);
+    const mins = Math.floor((uptimeMs % 3600000) / 60000);
+    res.json({
+      totalTracks: stats.totalPlayed || 0,
+      uniqueTracks: stats.uniqueTracks || 0,
+      peakListeners: 0,
+      uptime: hours > 0 ? hours + "h " + mins + "m" : mins + "m"
+    });
+  });
+
+
   return router;
 }
 
