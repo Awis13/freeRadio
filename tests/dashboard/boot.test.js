@@ -93,15 +93,39 @@ describe('boot abort flag', () => {
 // ─── boot() with Liquidsoap already playing ───────────────────
 
 describe('boot() — Liquidsoap already playing', () => {
-  it('sets mode to live when Liquidsoap reports playing', async () => {
+  it('reads saved mode and stops playback without changing state', async () => {
     const origEnabled = s3.S3_ENABLED;
     s3.S3_ENABLED = false;
     mockProbeResponse({ playing: true });
+    spies.push(vi.spyOn(streamControl, 'getModeState').mockReturnValue({ mode: 'standby', standbyVisual: null }));
     spies.push(vi.spyOn(streamControl, 'setModeState').mockImplementation(() => {}));
+    spies.push(vi.spyOn(liqClient, 'stopPlayback').mockResolvedValue());
 
     await boot.boot({ musicDir: '/music', visualsDir: '/visuals' });
 
-    expect(streamControl.setModeState).toHaveBeenCalledWith('live');
+    expect(streamControl.getModeState).toHaveBeenCalled();
+    expect(liqClient.stopPlayback).toHaveBeenCalled();
+    expect(streamControl.setModeState).not.toHaveBeenCalled();
+    s3.S3_ENABLED = origEnabled;
+  });
+});
+
+// ─── boot() — saved mode live ────────────────────────────────
+
+describe('boot() — saved mode live', () => {
+  it('stops playback and does not change mode state when saved mode is live', async () => {
+    const origEnabled = s3.S3_ENABLED;
+    s3.S3_ENABLED = false;
+    mockProbeResponse({ playing: true });
+    spies.push(vi.spyOn(streamControl, 'getModeState').mockReturnValue({ mode: 'live', standbyVisual: null }));
+    spies.push(vi.spyOn(streamControl, 'setModeState').mockImplementation(() => {}));
+    spies.push(vi.spyOn(liqClient, 'stopPlayback').mockResolvedValue());
+
+    await boot.boot({ musicDir: '/music', visualsDir: '/visuals' });
+
+    expect(streamControl.getModeState).toHaveBeenCalled();
+    expect(liqClient.stopPlayback).toHaveBeenCalled();
+    expect(streamControl.setModeState).not.toHaveBeenCalled();
     s3.S3_ENABLED = origEnabled;
   });
 });
@@ -113,14 +137,15 @@ describe('boot() — aborted', () => {
     const origEnabled = s3.S3_ENABLED;
     s3.S3_ENABLED = false;
     mockProbeError(new Error('connection refused'));
-    spies.push(vi.spyOn(streamControl, 'setModeState').mockImplementation(() => {}));
+    spies.push(vi.spyOn(streamControl, 'getModeState').mockReturnValue({ mode: 'standby', standbyVisual: null }));
+    spies.push(vi.spyOn(liqClient, 'stopPlayback').mockResolvedValue());
 
     // Set abort flag after the 1s initial delay, during the probe retry sleep
     setTimeout(() => boot.setBootAborted(true), 1500);
 
     await boot.boot({ musicDir: '/music', visualsDir: '/visuals' });
 
-    expect(streamControl.setModeState).not.toHaveBeenCalled();
+    expect(liqClient.stopPlayback).not.toHaveBeenCalled();
     s3.S3_ENABLED = origEnabled;
   }, 15000);
 });
@@ -134,7 +159,8 @@ describe('boot() — S3 sync', () => {
     mockProbeResponse({ playing: true });
     spies.push(vi.spyOn(s3, 'syncDir').mockResolvedValue());
     spies.push(vi.spyOn(s3, 'ensureCached').mockResolvedValue());
-    spies.push(vi.spyOn(streamControl, 'setModeState').mockImplementation(() => {}));
+    spies.push(vi.spyOn(streamControl, 'getModeState').mockReturnValue({ mode: 'standby', standbyVisual: null }));
+    spies.push(vi.spyOn(liqClient, 'stopPlayback').mockResolvedValue());
 
     await boot.boot({ musicDir: '/music', visualsDir: '/visuals' });
 
@@ -148,11 +174,14 @@ describe('boot() — S3 sync', () => {
     mockProbeResponse({ playing: true });
     spies.push(vi.spyOn(s3, 'syncDir').mockRejectedValue(new Error('S3 down')));
     spies.push(vi.spyOn(s3, 'ensureCached').mockRejectedValue(new Error('S3 down')));
+    spies.push(vi.spyOn(streamControl, 'getModeState').mockReturnValue({ mode: 'standby', standbyVisual: null }));
     spies.push(vi.spyOn(streamControl, 'setModeState').mockImplementation(() => {}));
+    spies.push(vi.spyOn(liqClient, 'stopPlayback').mockResolvedValue());
 
     await boot.boot({ musicDir: '/music', visualsDir: '/visuals' });
 
-    expect(streamControl.setModeState).toHaveBeenCalledWith('live');
+    expect(liqClient.stopPlayback).toHaveBeenCalled();
+    expect(streamControl.setModeState).not.toHaveBeenCalled();
     s3.S3_ENABLED = origEnabled;
   });
 });
