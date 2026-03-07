@@ -9,10 +9,13 @@ import { describe, it, expect, beforeEach, vi } from 'vitest';
 import fs from 'fs';
 
 const QUALITY_FILE = '/shared/stream_quality.json';
+const TIER_FILE = '/shared/tier.json';
 let files = {};
 
 beforeEach(() => {
   files = {};
+  // Set tier to 'studio' so all quality presets are allowed in tests
+  files[TIER_FILE] = JSON.stringify({ tier: 'studio' });
   vi.restoreAllMocks();
 
   vi.spyOn(fs, 'existsSync').mockImplementation(p => p in files);

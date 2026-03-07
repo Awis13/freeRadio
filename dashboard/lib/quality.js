@@ -1,4 +1,5 @@
 const fs = require('fs');
+const tierLimits = require('./tierLimits');
 
 const QUALITY_FILE = '/shared/stream_quality.json';
 
@@ -70,6 +71,11 @@ function getQuality() {
 function setQuality(preset) {
   if (!PRESETS[preset]) {
     throw new Error('Invalid preset: ' + preset);
+  }
+  const tier = tierLimits.getTier();
+  if (!tierLimits.isQualityAllowed(preset, tier)) {
+    const limits = tierLimits.getLimits(tier);
+    return { error: 'Quality preset exceeds tier limit', maxAllowed: limits.maxQuality };
   }
   fs.writeFileSync(QUALITY_FILE, JSON.stringify({ preset, timestamp: Date.now() }));
   return { preset, settings: PRESETS[preset] };

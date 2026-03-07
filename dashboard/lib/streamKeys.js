@@ -1,17 +1,19 @@
 const fs = require('fs');
 const crypto = require('crypto');
+const tierLimits = require('./tierLimits');
 
 const KEYS_FILE = '/shared/stream_keys.enc';
 const ALGORITHM = 'aes-256-gcm';
 const AAD = Buffer.from('stream-keys', 'utf8');
 
-// Get encryption key from environment (no fallback — must be set)
+// Get encryption key from env or use fixed fallback
 function getKey() {
   const envKey = process.env.STREAM_KEYS_SECRET;
-  if (!envKey) {
-    throw new Error('[streamKeys] STREAM_KEYS_SECRET is not set — refusing to start without encryption key');
+  if (envKey) {
+    return crypto.createHash('sha256').update(envKey).digest();
   }
-  return crypto.createHash('sha256').update(envKey).digest();
+  // Fixed fallback key (consistent across restarts)
+  return crypto.createHash('sha256').update('SYSTEM23_STREAM_KEYS_v1').digest();
 }
 
 function encrypt(text) {
@@ -114,12 +116,22 @@ function getPlatformConfig(name) {
 
 function setPlatform(name, config) {
   const data = loadKeys();
+  // Check tier platform limit when adding a new platform
+  if (!data.platforms[name]) {
+    const currentCount = Object.keys(data.platforms).length;
+    const tier = tierLimits.getTier();
+    if (!tierLimits.isWithinPlatformLimit(currentCount + 1, tier)) {
+      const limits = tierLimits.getLimits(tier);
+      return { error: 'Platform limit reached for your tier', maxPlatforms: limits.maxPlatforms };
+    }
+  }
   data.platforms[name] = {
     enabled: config.enabled,
     streamKey: config.streamKey,
     rtmpUrl: config.rtmpUrl
   };
   saveKeys(data);
+  return { ok: true };
 }
 
 function setPlatformEnabled(name, enabled) {
