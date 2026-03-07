@@ -5,7 +5,7 @@ const TIER_FILE = '/shared/tier.json';
 const TIER_LIMITS = {
   free:    { maxQuality: 'medium', maxPlatforms: 1, watermark: true, dsp: false, customOverlays: false },
   starter: { maxQuality: 'medium', maxPlatforms: 1, watermark: false, dsp: false, customOverlays: false },
-  pro:     { maxQuality: 'standard', maxPlatforms: 3, watermark: false, dsp: true, customOverlays: true },
+  pro:     { maxQuality: 'kick', maxPlatforms: 3, watermark: false, dsp: true, customOverlays: true },
   studio:  { maxQuality: 'godmode', maxPlatforms: 3, watermark: false, dsp: true, customOverlays: true }
 };
 

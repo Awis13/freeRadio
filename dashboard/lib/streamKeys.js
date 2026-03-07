@@ -6,14 +6,13 @@ const KEYS_FILE = '/shared/stream_keys.enc';
 const ALGORITHM = 'aes-256-gcm';
 const AAD = Buffer.from('stream-keys', 'utf8');
 
-// Get encryption key from env or use fixed fallback
+// Get encryption key from environment (no fallback — must be set)
 function getKey() {
   const envKey = process.env.STREAM_KEYS_SECRET;
-  if (envKey) {
-    return crypto.createHash('sha256').update(envKey).digest();
+  if (!envKey) {
+    throw new Error('[streamKeys] STREAM_KEYS_SECRET is not set — refusing to start without encryption key');
   }
-  // Fixed fallback key (consistent across restarts)
-  return crypto.createHash('sha256').update('SYSTEM23_STREAM_KEYS_v1').digest();
+  return crypto.createHash('sha256').update(envKey).digest();
 }
 
 function encrypt(text) {
@@ -131,7 +130,6 @@ function setPlatform(name, config) {
     rtmpUrl: config.rtmpUrl
   };
   saveKeys(data);
-  return { ok: true };
 }
 
 function setPlatformEnabled(name, enabled) {
