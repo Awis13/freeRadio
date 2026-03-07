@@ -24,6 +24,9 @@ function createSettingsRouter() {
     const { preset } = req.body;
     try {
       const result = quality.setQuality(preset);
+      if (result && result.error) {
+        return res.status(403).json({ error: result.error, maxAllowed: result.maxAllowed });
+      }
       res.json({ success: true, ...result });
     } catch (e) {
       res.status(400).json({ error: e.message });

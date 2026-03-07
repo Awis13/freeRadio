@@ -1,24 +1,23 @@
 const express = require('express');
 const streamKeys = require('../lib/streamKeys');
+const tierLimits = require('../lib/tierLimits');
 
 function createStreamKeysRouter() {
   const router = express.Router();
 
   router.get('/', (req, res) => {
     const platforms = streamKeys.getPlatforms();
-    const maxPlatforms = parseInt(process.env.MAX_PLATFORMS) || 3;
-    res.json({ platforms, maxPlatforms });
+    const limits = tierLimits.getLimits(tierLimits.getTier());
+    res.json({ platforms, maxPlatforms: limits.maxPlatforms });
   });
 
   router.post('/:platform', (req, res) => {
     const { platform } = req.params;
     const { enabled, streamKey, rtmpUrl } = req.body;
-    const maxPlatforms = parseInt(process.env.MAX_PLATFORMS) || 3;
-    const existing = streamKeys.getPlatforms();
-    if (!existing[platform] && Object.keys(existing).length >= maxPlatforms) {
-      return res.status(400).json({ error: `Platform limit reached (max ${maxPlatforms})` });
+    const result = streamKeys.setPlatform(platform, { enabled, streamKey, rtmpUrl });
+    if (result && result.error) {
+      return res.status(400).json({ error: result.error, maxPlatforms: result.maxPlatforms });
     }
-    streamKeys.setPlatform(platform, { enabled, streamKey, rtmpUrl });
     res.json({ success: true });
   });
 

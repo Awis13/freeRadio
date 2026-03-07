@@ -12,10 +12,13 @@ import { describe, it, expect, beforeEach, vi } from 'vitest';
 import fs from 'fs';
 
 const KEYS_FILE = '/shared/stream_keys.enc';
+const TIER_FILE = '/shared/tier.json';
 let files = {};
 
 beforeEach(() => {
   files = {};
+  // Set tier to 'studio' so platform limits don't block tests (3 platforms allowed)
+  files[TIER_FILE] = JSON.stringify({ tier: 'studio' });
   vi.restoreAllMocks();
 
   // Ensure consistent encryption key

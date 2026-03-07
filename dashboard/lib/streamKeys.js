@@ -1,5 +1,6 @@
 const fs = require('fs');
 const crypto = require('crypto');
+const tierLimits = require('./tierLimits');
 
 const KEYS_FILE = '/shared/stream_keys.enc';
 const ALGORITHM = 'aes-256-gcm';
@@ -114,6 +115,15 @@ function getPlatformConfig(name) {
 
 function setPlatform(name, config) {
   const data = loadKeys();
+  // Check tier platform limit when adding a new platform
+  if (!data.platforms[name]) {
+    const currentCount = Object.keys(data.platforms).length;
+    const tier = tierLimits.getTier();
+    if (!tierLimits.isWithinPlatformLimit(currentCount + 1, tier)) {
+      const limits = tierLimits.getLimits(tier);
+      return { error: 'Platform limit reached for your tier', maxPlatforms: limits.maxPlatforms };
+    }
+  }
   data.platforms[name] = {
     enabled: config.enabled,
     streamKey: config.streamKey,

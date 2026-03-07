@@ -36,6 +36,7 @@ const createStatusRouter = require('./routes/status');
 const createVideoQueueRouter = require('./routes/videoQueue');
 const createLiveRouter = require('./routes/live');
 const ssoHandler = require('./routes/sso');
+const tierLimits = require('./lib/tierLimits');
 
 // --- Config ---
 const PORT = process.env.PORT || 9090;
@@ -167,10 +168,16 @@ app.get('/api/health', (req, res) => {
   });
 });
 
+// --- Tier endpoint (публичный, без авторизации) ---
+app.get('/api/tier', (req, res) => {
+  const tier = tierLimits.getTier();
+  res.json({ tier, limits: tierLimits.getLimits(tier) });
+});
+
 // --- Auth middleware ---
 const PUBLIC_PATHS = [
   '/api/status', '/api/health', '/api/audio-stream', '/api/rtmp-health',
-  '/api/live/on_publish', '/api/live/on_done', '/api/auth/verify'
+  '/api/live/on_publish', '/api/live/on_done', '/api/auth/verify', '/api/tier'
 ];
 
 app.use('/api/', (req, res, next) => {

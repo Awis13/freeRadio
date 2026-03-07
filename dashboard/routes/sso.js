@@ -12,6 +12,7 @@
  */
 
 const crypto = require('crypto');
+const tierLimits = require('../lib/tierLimits');
 
 const SSO_MAX_AGE_SECONDS = 60;
 
@@ -31,12 +32,13 @@ function ssoErrorPage(message) {
 </body></html>`;
 }
 
-function ssoSuccessPage(token) {
+function ssoSuccessPage(token, tier) {
   // Экранируем токен для безопасной вставки в JS-строку
   const safeToken = token
     .replace(/\\/g, '\\\\')
     .replace(/'/g, "\\'")
     .replace(/</g, '\\x3c');
+  const safeTier = (tier || 'free').replace(/[^a-z]/g, '');
   return `<!DOCTYPE html>
 <html><head><meta charset="utf-8"><title>SSO Login</title></head>
 <body style="background:#0a0a0a;color:#00ff41;font-family:monospace;display:flex;align-items:center;justify-content:center;height:100vh;margin:0;">
@@ -46,6 +48,7 @@ function ssoSuccessPage(token) {
 </div>
 <script>
   localStorage.setItem('s23_token', '${safeToken}');
+  localStorage.setItem('s23_tier', '${safeTier}');
   window.location.replace('/');
 </script>
 </body></html>`;
@@ -93,13 +96,18 @@ function verifySsoToken(tokenParam, dashboardToken) {
     return { error: 'Invalid signature', status: 401 };
   }
 
-  // Парсим payload: userID:tenantID:timestamp
+  // Парсим payload: userID:tenantID:tier:timestamp (или userID:tenantID:timestamp для обратной совместимости)
   const parts = payload.split(':');
-  if (parts.length !== 3) {
+  let userID, tenantID, tier, tsStr;
+  if (parts.length === 4) {
+    [userID, tenantID, tier, tsStr] = parts;
+  } else if (parts.length === 3) {
+    [userID, tenantID, tsStr] = parts;
+    tier = 'free';
+  } else {
     return { error: 'Invalid payload format', status: 400 };
   }
 
-  const [userID, tenantID, tsStr] = parts;
   const timestamp = parseInt(tsStr, 10);
   if (isNaN(timestamp)) {
     return { error: 'Invalid timestamp', status: 400 };
@@ -111,7 +119,7 @@ function verifySsoToken(tokenParam, dashboardToken) {
     return { error: 'Token expired', status: 401 };
   }
 
-  return { ok: true, userID, tenantID, timestamp };
+  return { ok: true, userID, tenantID, tier, timestamp };
 }
 
 // --- Express handler ---
@@ -130,9 +138,12 @@ function ssoHandler(req, res) {
     return res.status(result.status).send(ssoErrorPage(result.error));
   }
 
+  // Сохраняем tier в /shared/tier.json
+  tierLimits.setTier(result.tier);
+
   // Разрешаем inline script для SSO success page (основной CSP middleware блокирует)
   res.setHeader('Content-Security-Policy', "default-src 'self'; script-src 'self' 'unsafe-inline'");
-  res.send(ssoSuccessPage(DASHBOARD_TOKEN));
+  res.send(ssoSuccessPage(DASHBOARD_TOKEN, result.tier));
 }
 
 module.exports = ssoHandler;

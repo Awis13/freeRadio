@@ -2,6 +2,7 @@ const fs = require('fs');
 const path = require('path');
 const express = require('express');
 const multer = require('multer');
+const tierLimits = require('./tierLimits');
 
 const OVERLAY_CONFIG = '/shared/overlays.json';
 const FILTER_STRING_FILE = '/shared/overlay_filter_string.txt';
@@ -175,6 +176,14 @@ function createOverlayRouter() {
   // PUT /api/overlays — update full config
   router.put('/', express.json(), (req, res) => {
     const config = req.body;
+    // Check tier for custom overlays (system watermark is always allowed)
+    const limits = tierLimits.getLimits(tierLimits.getTier());
+    if (!limits.customOverlays) {
+      const hasCustomLayers = config.layers && config.layers.some(l => l.type !== 'watermark');
+      if (hasCustomLayers && config.enabled) {
+        return res.status(403).json({ error: 'Custom overlays not available in your tier' });
+      }
+    }
     saveOverlays(config);
     res.json(config);
   });
