@@ -35,6 +35,7 @@ const createSettingsRouter = require('./routes/settings');
 const createStatusRouter = require('./routes/status');
 const createVideoQueueRouter = require('./routes/videoQueue');
 const createLiveRouter = require('./routes/live');
+const ssoHandler = require('./routes/sso');
 
 // --- Config ---
 const PORT = process.env.PORT || 9090;
@@ -151,9 +152,24 @@ app.use('/hls', express.static(HLS_DIR, {
 
 app.use(express.json());
 
+// --- SSO endpoint (до auth middleware, не требует Bearer-токена) ---
+app.get('/auth/sso', ssoHandler);
+
+// --- Health endpoint для CP (публичный, без авторизации) ---
+app.get('/api/health', (req, res) => {
+  const uptime = process.uptime();
+  const streamActive = state.ffmpeg && state.ffmpeg.speed && state.ffmpeg.speed !== '0x';
+  res.json({
+    status: 'ok',
+    listeners: state.icecast ? state.icecast.listeners : 0,
+    uptime: Math.floor(uptime),
+    stream_active: !!streamActive
+  });
+});
+
 // --- Auth middleware ---
 const PUBLIC_PATHS = [
-  '/api/status', '/api/audio-stream', '/api/rtmp-health',
+  '/api/status', '/api/health', '/api/audio-stream', '/api/rtmp-health',
   '/api/live/on_publish', '/api/live/on_done', '/api/auth/verify'
 ];
 
