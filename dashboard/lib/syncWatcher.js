@@ -170,6 +170,20 @@ async function restoreConfigs() {
     }
   }
 
+  // Raw content files — restore music and visuals uploaded via dashboard
+  try {
+    const musicCount = await s3.syncDir('music/raw/', MUSIC_DIR);
+    restored += musicCount;
+  } catch (e) {
+    console.error(`[syncWatcher] restore music/raw: ${e.message}`);
+  }
+  try {
+    const visualsCount = await s3.syncDir('visuals/incoming/', VISUALS_DIR);
+    restored += visualsCount;
+  } catch (e) {
+    console.error(`[syncWatcher] restore visuals/incoming: ${e.message}`);
+  }
+
   if (restored > 0) console.log(`[syncWatcher] restored ${restored} files from S3`);
 }
 
