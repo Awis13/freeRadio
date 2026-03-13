@@ -5,6 +5,7 @@ const liqClient = require('./liqClient');
 const s3 = require('./s3');
 const cacheManager = require('./cacheManager');
 const streamControl = require('./streamControl');
+const syncWatcher = require('./syncWatcher');
 
 let _bootAborted = false;
 
@@ -50,6 +51,10 @@ async function boot({ musicDir, visualsDir }) {
       if (active && active.videos) {
         await cacheManager.prefetchVideos(active.videos, visualsDir);
       }
+      // Restore raw content files (music + visuals) from S3
+      await syncWatcher.init();
+      syncWatcher.start();
+
       const elapsed = ((Date.now() - syncStart) / 1000).toFixed(1);
       console.log(`[s3] boot sync completed in ${elapsed}s`);
     } catch (e) {
