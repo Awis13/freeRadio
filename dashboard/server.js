@@ -153,10 +153,10 @@ app.use('/hls', express.static(HLS_DIR, {
 
 app.use(express.json());
 
-// --- SSO endpoint (до auth middleware, не требует Bearer-токена) ---
+// --- SSO endpoint (before auth middleware, no Bearer token required) ---
 app.get('/auth/sso', ssoHandler);
 
-// --- Health endpoint для CP (публичный, без авторизации) ---
+// --- Health endpoint for controlplane (public, no auth) ---
 app.get('/api/health', (req, res) => {
   const uptime = process.uptime();
   const streamActive = state.ffmpeg && state.ffmpeg.speed && state.ffmpeg.speed !== '0x';
@@ -168,7 +168,7 @@ app.get('/api/health', (req, res) => {
   });
 });
 
-// --- Tier endpoint (публичный, без авторизации) ---
+// --- Tier endpoint (public, no auth) ---
 app.get('/api/tier', (req, res) => {
   const tier = tierLimits.getTier();
   res.json({ tier, limits: tierLimits.getLimits(tier) });

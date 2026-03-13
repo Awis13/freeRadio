@@ -1,7 +1,7 @@
 /**
  * tests/dashboard/routes/sso.test.js
  *
- * Unit-тесты для SSO-эндпоинта (dashboard/routes/sso.js).
+ * Unit tests for SSO endpoint (dashboard/routes/sso.js).
  */
 
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
@@ -94,7 +94,7 @@ describe('verifySsoToken', () => {
   });
 
   it('returns error for expired token (past)', () => {
-    const oldTs = nowTs() - 120; // 2 минуты назад
+    const oldTs = nowTs() - 120; // 2 minutes ago
     const payload = `user123:tenant456:${oldTs}`;
     const token = makeToken(payload);
     const result = verifySsoToken(token, SECRET);
@@ -103,7 +103,7 @@ describe('verifySsoToken', () => {
   });
 
   it('returns error for token from the future', () => {
-    const futureTs = nowTs() + 120; // 2 минуты в будущем
+    const futureTs = nowTs() + 120; // 2 minutes in the future
     const payload = `user123:tenant456:${futureTs}`;
     const token = makeToken(payload);
     const result = verifySsoToken(token, SECRET);
@@ -112,7 +112,7 @@ describe('verifySsoToken', () => {
   });
 
   it('accepts token within 60-second window', () => {
-    const ts = nowTs() - 30; // 30 секунд назад — ещё валидный
+    const ts = nowTs() - 30; // 30 seconds ago — still valid
     const payload = `user123:tenant456:${ts}`;
     const token = makeToken(payload);
     const result = verifySsoToken(token, SECRET);
@@ -120,7 +120,7 @@ describe('verifySsoToken', () => {
   });
 
   it('returns error for payload with wrong number of parts', () => {
-    const payload = `user123:${nowTs()}`; // только 2 части вместо 3
+    const payload = `user123:${nowTs()}`; // only 2 parts instead of 3
     const token = makeToken(payload);
     const result = verifySsoToken(token, SECRET);
     expect(result.error).toBe('Invalid payload format');

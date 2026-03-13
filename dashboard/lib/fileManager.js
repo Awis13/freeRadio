@@ -57,14 +57,14 @@ async function deleteProcessed(dir, name) {
   return deleted;
 }
 
-// Фоновый poll задачи транскодера → скачать результат из S3 как только готово
+// Background poll for transcoder job → download result from S3 when ready
 function pollAndDownload(jobId, filename, dir) {
   const outputName = filename.replace(/\.[^.]+$/, '') + '.mp4';
   const processedDir = dir.replace(/\/incoming\/?$/, '') + '/.processed';
   const localPath = path.join(processedDir, outputName);
   const s3Key = 'visuals/processed/' + outputName;
   let attempts = 0;
-  const maxAttempts = 120; // 10 минут (120 * 5s)
+  const maxAttempts = 120; // 10 minutes (120 * 5s)
 
   const timer = setInterval(async () => {
     attempts++;
@@ -75,18 +75,18 @@ function pollAndDownload(jobId, filename, dir) {
         clearInterval(timer);
         if (!fs.existsSync(processedDir)) fs.mkdirSync(processedDir, { recursive: true });
         await s3.download(s3Key, localPath);
-        console.log(`[transcoder] готово: ${outputName} → ${localPath}`);
+        console.log(`[transcoder] done: ${outputName} → ${localPath}`);
       } else if (job.status === 'error') {
         clearInterval(timer);
-        console.error(`[transcoder] ошибка задачи ${jobId}: ${job.error || 'unknown'}`);
+        console.error(`[transcoder] job error ${jobId}: ${job.error || 'unknown'}`);
       }
     } catch (e) {
       if (attempts >= maxAttempts) {
         clearInterval(timer);
-        console.error(`[transcoder] таймаут poll ${jobId} после ${maxAttempts} попыток`);
+        console.error(`[transcoder] poll timeout ${jobId} after ${maxAttempts} attempts`);
       }
     }
-  }, 3000); // каждые 3 секунды
+  }, 3000); // every 3 seconds
 }
 
 function fileManager(dir) {
@@ -133,25 +133,25 @@ function fileManager(dir) {
     const uploaded = req.files.map((f) => ({ name: f.filename, size: f.size }));
     const isVisuals = dir.includes('/visuals');
 
-    // Визуалы → транскодер (если включён), иначе fallback на S3
+    // Visuals → transcoder (if enabled), otherwise fallback to S3
     if (isVisuals && transcoder.ENABLED) {
       const transcodeResults = [];
       for (const f of req.files) {
         try {
           const result = await transcoder.submit(f.path);
           transcodeResults.push({ name: f.filename, job_id: result.job_id, status: result.status });
-          console.log(`[transcoder] отправлено: ${f.filename} → job ${result.job_id}`);
-          // Фоновый poll: ждём завершения → скачиваем результат из S3
+          console.log(`[transcoder] submitted: ${f.filename} → job ${result.job_id}`);
+          // Background poll: wait for completion → download result from S3
           pollAndDownload(result.job_id, f.filename, dir);
         } catch (e) {
-          console.error(`[transcoder] ошибка: ${f.filename}: ${e.message}`);
+          console.error(`[transcoder] error: ${f.filename}: ${e.message}`);
           transcodeResults.push({ name: f.filename, error: e.message });
         }
       }
       return res.json({ uploaded, transcode: transcodeResults });
     }
 
-    // Музыка или fallback (нет транскодера) → S3
+    // Music or fallback (no transcoder) → S3
     const s3Results = [];
     if (s3.S3_ENABLED) {
       const prefix = dirToS3Prefix(dir);

@@ -173,11 +173,11 @@ async function restoreConfigs() {
   if (restored > 0) console.log(`[syncWatcher] restored ${restored} files from S3`);
 }
 
-// --- Poll: processed files -> S3 (upload) + S3 -> local (download новых от транскодера) ---
+// --- Poll: processed files -> S3 (upload) + S3 -> local (download new files from transcoder) ---
 
 async function pollProcessed() {
   for (const pd of PROCESSED_DIRS) {
-    // Upload: локальные → S3
+    // Upload: local → S3
     const files = listLocalFiles(pd.local, pd.ext);
     for (const f of files) {
       const key = pd.s3Prefix + f;
@@ -190,7 +190,7 @@ async function pollProcessed() {
       }
     }
 
-    // Download: S3 → локальные (новые файлы от shared транскодера)
+    // Download: S3 → local (new files from shared transcoder)
     try {
       const remote = await s3.list(pd.s3Prefix);
       for (const obj of remote) {

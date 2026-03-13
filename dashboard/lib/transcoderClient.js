@@ -3,7 +3,7 @@ const https = require('https');
 const fs = require('fs');
 const path = require('path');
 
-// Конфигурация из env
+// Configuration from env
 const TRANSCODER_URL = process.env.TRANSCODER_URL || '';
 const TRANSCODER_TOKEN = process.env.TRANSCODER_TOKEN || '';
 const TENANT_ID = process.env.TENANT_ID || 'default';
@@ -11,19 +11,19 @@ const TENANT_ID = process.env.TENANT_ID || 'default';
 const ENABLED = !!(TRANSCODER_URL && TRANSCODER_TOKEN);
 
 if (ENABLED) {
-  console.log(`[transcoder] клиент включён: ${TRANSCODER_URL}, tenant=${TENANT_ID}`);
+  console.log(`[transcoder] client enabled: ${TRANSCODER_URL}, tenant=${TENANT_ID}`);
 } else {
-  console.log('[transcoder] клиент выключен (нет TRANSCODER_URL или TRANSCODER_TOKEN)');
+  console.log('[transcoder] client disabled (TRANSCODER_URL or TRANSCODER_TOKEN not set)');
 }
 
-// Отправляет файл на транскодер. Возвращает { job_id, status, filename }.
+// Submit file to transcoder. Returns { job_id, status, filename }.
 async function submit(filePath) {
   if (!ENABLED) return null;
 
   const filename = path.basename(filePath);
   const boundary = '----S23Boundary' + Date.now().toString(36);
 
-  // Формируем multipart body вручную (без зависимостей)
+  // Build multipart body manually (zero dependencies)
   const header = Buffer.from(
     `--${boundary}\r\n` +
     `Content-Disposition: form-data; name="file"; filename="${filename}"\r\n` +
@@ -50,7 +50,7 @@ async function submit(filePath) {
           'X-Tenant-ID': TENANT_ID,
           Authorization: `Bearer ${TRANSCODER_TOKEN}`,
         },
-        timeout: 300000, // 5 минут на загрузку
+        timeout: 300000, // 5 minutes for upload
       },
       (res) => {
         let data = '';
@@ -60,10 +60,10 @@ async function submit(filePath) {
             try {
               resolve(JSON.parse(data));
             } catch (e) {
-              reject(new Error(`невалидный JSON от транскодера: ${data}`));
+              reject(new Error(`invalid JSON from transcoder: ${data}`));
             }
           } else {
-            reject(new Error(`транскодер вернул ${res.statusCode}: ${data}`));
+            reject(new Error(`transcoder returned ${res.statusCode}: ${data}`));
           }
         });
       }
@@ -72,10 +72,10 @@ async function submit(filePath) {
     req.on('error', reject);
     req.on('timeout', () => {
       req.destroy();
-      reject(new Error('таймаут подключения к транскодеру'));
+      reject(new Error('transcoder connection timeout'));
     });
 
-    // Отправляем multipart: header → файл → footer
+    // Send multipart: header → file → footer
     req.write(header);
     const fileStream = fs.createReadStream(filePath);
     fileStream.on('error', reject);
@@ -86,7 +86,7 @@ async function submit(filePath) {
   });
 }
 
-// Получить статус задачи
+// Get job status
 async function getJob(jobId) {
   if (!ENABLED) return null;
 
@@ -110,7 +110,7 @@ async function getJob(jobId) {
           try {
             resolve(JSON.parse(data));
           } catch (e) {
-            reject(new Error(`невалидный JSON: ${data}`));
+            reject(new Error(`invalid JSON: ${data}`));
           }
         });
       }
@@ -118,7 +118,7 @@ async function getJob(jobId) {
     req.on('error', reject);
     req.on('timeout', () => {
       req.destroy();
-      reject(new Error('таймаут'));
+      reject(new Error('timeout'));
     });
   });
 }

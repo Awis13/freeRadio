@@ -1,14 +1,14 @@
 /**
  * routes/sso.js
  *
- * SSO-эндпоинт для входа через подписанный токен от controlplane.
+ * SSO endpoint for signed token authentication from the control plane.
  * GET /auth/sso?token=base64url(payload):base64url(signature)
  *
  * payload = "userID:tenantID:unixTimestamp"
  * signature = HMAC-SHA256(payload, DASHBOARD_TOKEN)
  *
- * При успешной верификации — сохраняет DASHBOARD_TOKEN в localStorage
- * (тот же механизм, что и ручной ввод токена) и редиректит на /.
+ * On successful verification — stores DASHBOARD_TOKEN in localStorage
+ * (same mechanism as manual token entry) and redirects to /.
  */
 
 const crypto = require('crypto');
@@ -16,10 +16,10 @@ const tierLimits = require('../lib/tierLimits');
 
 const SSO_MAX_AGE_SECONDS = 60;
 
-// --- HTML-страницы для SSO ---
+// --- HTML pages for SSO ---
 
 function ssoErrorPage(message) {
-  // Экранируем message для безопасной вставки в HTML
+  // Escape message for safe HTML insertion
   const safe = message.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
   return `<!DOCTYPE html>
 <html><head><meta charset="utf-8"><title>SSO Error</title></head>
@@ -33,7 +33,7 @@ function ssoErrorPage(message) {
 }
 
 function ssoSuccessPage(token, tier) {
-  // Экранируем токен для безопасной вставки в JS-строку
+  // Escape token for safe JS string insertion
   const safeToken = token
     .replace(/\\/g, '\\\\')
     .replace(/'/g, "\\'")
@@ -54,16 +54,16 @@ function ssoSuccessPage(token, tier) {
 </body></html>`;
 }
 
-// --- Верификация SSO-токена ---
+// --- SSO token verification ---
 
 function verifySsoToken(tokenParam, dashboardToken) {
   if (!tokenParam) {
     return { error: 'Missing token parameter', status: 400 };
   }
 
-  // Формат: base64url(payload):base64url(signature)
-  // payload содержит двоеточия (userID:tenantID:timestamp),
-  // поэтому разделяем по ПОСЛЕДНЕМУ двоеточию
+  // Format: base64url(payload):base64url(signature)
+  // payload contains colons (userID:tenantID:timestamp),
+  // so we split by the LAST colon
   const lastColon = tokenParam.lastIndexOf(':');
   if (lastColon <= 0) {
     return { error: 'Invalid token format', status: 400 };
@@ -76,7 +76,7 @@ function verifySsoToken(tokenParam, dashboardToken) {
     return { error: 'Invalid token format', status: 400 };
   }
 
-  // Декодируем base64url
+  // Decode base64url
   let payload, signature;
   try {
     payload = Buffer.from(payloadB64, 'base64url').toString('utf8');
@@ -85,7 +85,7 @@ function verifySsoToken(tokenParam, dashboardToken) {
     return { error: 'Invalid token encoding', status: 400 };
   }
 
-  // Проверяем HMAC-SHA256 подпись
+  // Verify HMAC-SHA256 signature
   const expectedSig = crypto
     .createHmac('sha256', dashboardToken)
     .update(payload)
@@ -96,7 +96,7 @@ function verifySsoToken(tokenParam, dashboardToken) {
     return { error: 'Invalid signature', status: 401 };
   }
 
-  // Парсим payload: userID:tenantID:tier:timestamp (или userID:tenantID:timestamp для обратной совместимости)
+  // Parse payload: userID:tenantID:tier:timestamp (or userID:tenantID:timestamp for backward compatibility)
   const parts = payload.split(':');
   let userID, tenantID, tier, tsStr;
   if (parts.length === 4) {
@@ -113,7 +113,7 @@ function verifySsoToken(tokenParam, dashboardToken) {
     return { error: 'Invalid timestamp', status: 400 };
   }
 
-  // Проверяем время жизни
+  // Check token TTL
   const now = Math.floor(Date.now() / 1000);
   if (Math.abs(now - timestamp) > SSO_MAX_AGE_SECONDS) {
     return { error: 'Token expired', status: 401 };
@@ -128,7 +128,7 @@ function ssoHandler(req, res) {
   const DASHBOARD_TOKEN = process.env.DASHBOARD_TOKEN || '';
 
   if (!DASHBOARD_TOKEN) {
-    // Без токена авторизация отключена — просто редирект
+    // No token configured — auth disabled, just redirect
     return res.redirect('/');
   }
 
@@ -138,10 +138,10 @@ function ssoHandler(req, res) {
     return res.status(result.status).send(ssoErrorPage(result.error));
   }
 
-  // Сохраняем tier в /shared/tier.json
+  // Save tier to /shared/tier.json
   tierLimits.setTier(result.tier);
 
-  // Разрешаем inline script для SSO success page (основной CSP middleware блокирует)
+  // Allow inline script for SSO success page (main CSP middleware blocks it)
   res.setHeader('Content-Security-Policy', "default-src 'self'; script-src 'self' 'unsafe-inline'");
   res.send(ssoSuccessPage(DASHBOARD_TOKEN, result.tier));
 }

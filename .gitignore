@@ -27,3 +27,7 @@ package-lock.json
 
 # Frontend symlink (repo lives separately)
 s23-dashboard
+
+# Internal docs
+CLAUDE.md
+TODO.md
