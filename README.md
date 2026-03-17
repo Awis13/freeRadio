@@ -20,7 +20,7 @@ Automated 24/7 streaming platform with BPM-aware music mixing, synchronized vide
                     ┌────────▼─────────┐
                     │    Dashboard     │ :9090
                     │  (Node.js API +  │
-                    │  WebSocket + HLS)│
+                    │ WebSocket + HLS) │
                     └──┬─────┬──────┬──┘
                        │     │      │
           ┌────────────┘     │      └─────────────┐
@@ -39,7 +39,7 @@ Automated 24/7 streaming platform with BPM-aware music mixing, synchronized vide
           │
  ┌────────▼─────────┐
  │ Audio Analyzer   │
- │ (Essentia/Python)│
+ │(Essentia/Python) │
  └──────────────────┘
 ```
 
