@@ -2,6 +2,8 @@
 
 Automated 24/7 streaming platform with BPM-aware music mixing, synchronized video visuals, and a real-time web dashboard. Designed to run as a self-contained Docker stack on a single machine.
 
+![Studio Dashboard](docs/studio-dashboard.png)
+
 ## Architecture
 
 ```
