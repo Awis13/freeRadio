@@ -7,36 +7,40 @@ Automated 24/7 streaming platform with BPM-aware music mixing, synchronized vide
 ## Architecture
 
 ```
-                        ┌─────────────────┐
-                        │   Web Browser    │
-                        │  (Dashboard UI)  │
-                        └───────┬─────────┘
-                                │ HTTP/WS
-                        ┌───────▼─────────┐
-                        │   Nginx Proxy    │ :80/:443
-                        │   (TLS + HTTP)   │
-                        └───────┬─────────┘
-                                │
-                        ┌───────▼─────────┐
-                        │    Dashboard     │ :9090
-                        │  (Node.js API +  │
-                        │   WebSocket +    │
-                        │   HLS Server)    │
-                        └──┬────┬────┬────┘
-                           │    │    │
-              ┌────────────┘    │    └────────────┐
-              │                 │                  │
-     ┌────────▼───────┐ ┌──────▼──────┐  ┌───────▼────────┐
-     │    Icecast      │ │   Streamer   │  │  RTMP Ingest   │
-     │  (Audio Server) │ │  (FFmpeg +   │  │  (nginx-rtmp)  │
-     │    :8000        │ │   mbuffer)   │  │    :1935       │
-     └────────┬───────┘ └──────┬──────┘  └────────────────┘
-              │                │
-     ┌────────▼───────┐       │
-     │   Liquidsoap    │       │    ┌─────────────────┐
-     │  (BPM AutoDJ)   │◄──────┘    │ Audio Analyzer   │
-     │  Harbor :7000   │            │ (Essentia/Python) │
-     └────────────────┘            └─────────────────┘
+                    ┌──────────────────┐
+                    │   Web Browser    │
+                    │  (Dashboard UI)  │
+                    └────────┬─────────┘
+                             │ HTTP/WS
+                    ┌────────▼─────────┐
+                    │   Nginx Proxy    │ :80/:443
+                    │   (TLS + HTTP)   │
+                    └────────┬─────────┘
+                             │
+                    ┌────────▼─────────┐
+                    │    Dashboard     │ :9090
+                    │  (Node.js API +  │
+                    │  WebSocket + HLS)│
+                    └──┬─────┬──────┬──┘
+                       │     │      │
+          ┌────────────┘     │      └─────────────┐
+          │                  │                     │
+ ┌────────▼─────────┐ ┌─────▼──────────┐ ┌───────▼──────────┐
+ │     Icecast      │ │    Streamer    │ │   RTMP Ingest    │
+ │  (Audio Server)  │ │  (FFmpeg +     │ │  (nginx-rtmp)    │
+ │     :8000        │ │   mbuffer)     │ │     :1935        │
+ └────────┬─────────┘ └─────┬──────────┘ └──────────────────┘
+          │                  │
+ ┌────────▼─────────┐       │
+ │   Liquidsoap     │◄──────┘
+ │  (BPM AutoDJ)   │
+ │  Harbor :7000    │
+ └────────┬─────────┘
+          │
+ ┌────────▼─────────┐
+ │ Audio Analyzer   │
+ │ (Essentia/Python)│
+ └──────────────────┘
 ```
 
 ## Data Pipeline
