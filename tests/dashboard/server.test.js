@@ -28,6 +28,20 @@
  *
  * server.listen + TLS are skipped via the NODE_ENV !== 'test' guard added
  * in server.js for this harness.
+ *
+ * Harness fidelity: the root devDependencies pin express/express-rate-limit to
+ * the SAME version ranges as dashboard/package.json (the production deps), so
+ * these pins run against the express major that actually ships. Keep them in
+ * sync when bumping either side.
+ *
+ * require.cache hygiene: seeded entries are minimal Module stubs (no children/
+ * paths/parent fields) — enough for require() resolution but not for anything
+ * that walks the module graph. Correctness relies on vitest per-file isolation:
+ * no other test file shares this process's require.cache. An afterAll below
+ * removes the seeded entries anyway. Caveat: loadServer() re-seeds fresh mock
+ * objects each call and server.js (cache-deleted) picks them up, but routers
+ * required by the FIRST load stay cached and keep referencing the FIRST seed's
+ * mocks — so the `mocks` return value is only authoritative for the first load.
  */
 
 import { describe, it, expect, beforeAll, afterAll, vi } from 'vitest';
@@ -38,14 +52,21 @@ const nodeRequire = createRequire(import.meta.url);
 
 // ─── require.cache seeding ──────────────────────────────────────────────────
 
+const seededIds = new Set();
+
 function seed(spec, exportsObj) {
   const id = nodeRequire.resolve(spec);
   nodeRequire.cache[id] = { id, filename: id, loaded: true, exports: exportsObj };
+  seededIds.add(id);
   return exportsObj;
 }
 
 const inertPoller = () => ({ start: vi.fn(), stop: vi.fn() });
 const passthroughRouter = () => (req, res, next) => next();
+
+// Captured BEFORE any seeding so every re-seed spreads the REAL module, not a
+// previous mock. tierLimits has no import-time side effects (fs only).
+const realTierLimits = nodeRequire('../../dashboard/lib/tierLimits');
 
 /** Installs fresh mock exports for every side-effectful dependency. */
 function seedMocks() {
@@ -99,6 +120,14 @@ function seedMocks() {
       startExecutor: vi.fn(),
       onTrackChange: vi.fn(),
       getCurrentSlot: vi.fn(() => null)
+    }),
+    // Hermetic tier: /api/tier calls tierLimits.getTier(), which reads the
+    // REAL /shared/tier.json — on hosts where that file exists the pin would
+    // flip. Stub getTier to a fixed 'free'; getLimits and the rest stay real,
+    // so the limits assertion still pins the real monetization matrix.
+    tierLimits: seed('../../dashboard/lib/tierLimits', {
+      ...realTierLimits,
+      getTier: vi.fn(() => 'free')
     })
   };
 }
@@ -115,6 +144,11 @@ afterAll(() => {
   else process.env.DASHBOARD_TOKEN = ORIGINAL_TOKEN;
   if (ORIGINAL_NODE_ENV === undefined) delete process.env.NODE_ENV;
   else process.env.NODE_ENV = ORIGINAL_NODE_ENV;
+  // Drop the seeded stubs (and the server itself) from require.cache so
+  // nothing in this process can pick up a mock after the suite is done.
+  for (const id of seededIds) delete nodeRequire.cache[id];
+  seededIds.clear();
+  delete nodeRequire.cache[nodeRequire.resolve('../../dashboard/server.js')];
 });
 
 /**
@@ -251,6 +285,9 @@ describe('mount order (token set, no Authorization header)', () => {
   });
 
   it('/api/tier responds 200 without a token and reports the free tier defaults', async () => {
+    // Tier is pinned to 'free' by the seeded tierLimits.getTier stub (hermetic:
+    // the real /shared/tier.json on the host cannot influence this); the limits
+    // body still comes from the real getLimits matrix.
     const res = await request(app).get('/api/tier');
     expect(res.status).toBe(200);
     expect(res.body.tier).toBe('free');

@@ -9,30 +9,20 @@
  */
 
 import { describe, it, expect, beforeEach, vi } from 'vitest';
-import fs from 'fs';
-import crypto from 'crypto';
+import { mockFsMap } from './helpers.js';
 
 const KEYS_FILE = '/shared/stream_keys.enc';
 const TIER_FILE = '/shared/tier.json';
 let files = {};
 
 beforeEach(() => {
-  files = {};
-  // Set tier to 'studio' so platform limits don't block tests (3 platforms allowed)
-  files[TIER_FILE] = JSON.stringify({ tier: 'studio' });
   vi.restoreAllMocks();
 
   // Ensure consistent encryption key
   process.env.STREAM_KEYS_SECRET = 'test-secret-for-vitest';
 
-  vi.spyOn(fs, 'existsSync').mockImplementation(p => p in files);
-  vi.spyOn(fs, 'readFileSync').mockImplementation((p, encoding) => {
-    if (p in files) return files[p];
-    throw new Error('ENOENT');
-  });
-  vi.spyOn(fs, 'writeFileSync').mockImplementation((p, data) => {
-    files[p] = data;
-  });
+  // Tier defaults to 'studio' so platform limits don't block tests (3 platforms allowed)
+  ({ files } = mockFsMap({ [TIER_FILE]: JSON.stringify({ tier: 'studio' }) }));
 });
 
 const {
@@ -318,14 +308,9 @@ describe('v1 legacy key file — data-loss chain', () => {
     expect(Object.keys(getPlatforms())).toEqual(['youtube']);
   });
 
-  // crypto.createDecipher was removed in Node 22; dashboard/lib/streamKeys.js
+  // Note: crypto.createDecipher was removed in Node 22; dashboard/lib/streamKeys.js
   // decryptLegacy() still calls it, so v1 records are undecryptable there even
   // in principle. On Node 20 (Docker/CI) the function exists but is deprecated.
-  // Tracked as a known data-loss issue; the fix is a separate ticket.
-  it.runIf(typeof crypto.createDecipher !== 'function')(
-    'documents createDecipher absence on Node 22+ (legacy decrypt path is dead code here)',
-    () => {
-      expect(crypto.createDecipher).toBeUndefined();
-    }
-  );
+  // Tracked as a known data-loss issue; the fix is a separate ticket. The chain
+  // tests above carry the real pin — both Node paths land in decrypt()'s catch.
 });

@@ -26,21 +26,39 @@
  *     (never rejects — callers read .data unguarded, so turning this
  *     into a reject would be a breaking change);
  *   - network error (connection refused) -> rejects;
- *   - 5s timeout -> req.destroy() + reject(new Error('timeout'))
- *     (pinned with a real 5s wait against a never-responding server).
+ *   - request timeout (DJ_TIMEOUT_MS, default 5000) -> req.destroy() +
+ *     reject(new Error('timeout')). Pinned with a 150ms override against a
+ *     never-responding server, plus a server-side observation that the
+ *     client socket really closes (destroy(), not a dangling connection).
  */
 
-import { describe, it, expect, beforeAll, afterAll, beforeEach } from 'vitest';
+import { describe, it, expect, beforeAll, afterAll, beforeEach, afterEach } from 'vitest';
 import { createRequire } from 'module';
 import http from 'node:http';
 
 const nodeRequire = createRequire(import.meta.url);
 const LIQ_SPEC = '../../dashboard/lib/liqClient';
 
-/** Fresh require of liqClient with DJ_HOST/DJ_PORT baked from env. */
-function freshLiq(host, port) {
+// Env snapshot taken before any test mutates it; restored verbatim in afterAll.
+const ORIGINAL_ENV = {
+  DJ_HOST: process.env.DJ_HOST,
+  DJ_PORT: process.env.DJ_PORT,
+  DJ_TIMEOUT_MS: process.env.DJ_TIMEOUT_MS
+};
+
+function restoreOriginalEnv() {
+  for (const [key, value] of Object.entries(ORIGINAL_ENV)) {
+    if (value === undefined) delete process.env[key];
+    else process.env[key] = value;
+  }
+}
+
+/** Fresh require of liqClient with DJ_HOST/DJ_PORT/DJ_TIMEOUT_MS baked from env. */
+function freshLiq(host, port, timeoutMs) {
   process.env.DJ_HOST = host;
   process.env.DJ_PORT = String(port);
+  if (timeoutMs === undefined) delete process.env.DJ_TIMEOUT_MS;
+  else process.env.DJ_TIMEOUT_MS = String(timeoutMs);
   const id = nodeRequire.resolve(LIQ_SPEC);
   delete nodeRequire.cache[id];
   return nodeRequire(id);
@@ -74,8 +92,7 @@ afterAll(async () => {
   http.globalAgent.destroy();
   server.closeAllConnections();
   await new Promise((r) => server.close(r));
-  delete process.env.DJ_HOST;
-  delete process.env.DJ_PORT;
+  restoreOriginalEnv();
 });
 
 beforeEach(() => {
@@ -84,6 +101,15 @@ beforeEach(() => {
     res.statusCode = 200;
     res.end('{"ok":true}');
   };
+});
+
+afterEach(() => {
+  // Some tests freshLiq() against throwaway servers; re-point the env at the
+  // recorder (and drop any timeout override) so any later fresh require keeps
+  // working — replaces per-test copy-paste restores.
+  process.env.DJ_HOST = '127.0.0.1';
+  process.env.DJ_PORT = String(server.address().port);
+  delete process.env.DJ_TIMEOUT_MS;
 });
 
 // ─── exports surface ─────────────────────────────────────────────────────────
@@ -202,27 +228,30 @@ describe('request() core', () => {
 
     const deadLiq = freshLiq('127.0.0.1', deadPort);
     await expect(deadLiq.getQueue()).rejects.toThrow(/ECONNREFUSED/);
-
-    // Restore env for any later fresh require.
-    process.env.DJ_HOST = '127.0.0.1';
-    process.env.DJ_PORT = String(server.address().port);
   });
 
-  it('rejects with Error("timeout") after the hardcoded 5s when the DJ never responds', async () => {
-    // Real 5s wait against a server that accepts the socket and goes silent.
+  it('rejects with Error("timeout") after DJ_TIMEOUT_MS when the DJ never responds', async () => {
+    // The production default stays 5000 (DJ_TIMEOUT_MS unset anywhere); the
+    // override keeps the suite fast while pinning the same timeout machinery.
+    const TIMEOUT_MS = 150;
     const blackHole = http.createServer(() => { /* never respond */ });
     await new Promise((r) => blackHole.listen(0, '127.0.0.1', r));
 
-    const slowLiq = freshLiq('127.0.0.1', blackHole.address().port);
+    // The timeout handler calls req.destroy(); pin that the socket really
+    // closes by watching the server side of the connection.
+    const socketClosed = new Promise((resolve) => {
+      blackHole.once('connection', (sock) => sock.once('close', resolve));
+    });
+
+    const slowLiq = freshLiq('127.0.0.1', blackHole.address().port, TIMEOUT_MS);
     const started = Date.now();
     try {
       await expect(slowLiq.getQueue()).rejects.toThrow('timeout');
-      expect(Date.now() - started).toBeGreaterThanOrEqual(4900);
+      expect(Date.now() - started).toBeGreaterThanOrEqual(TIMEOUT_MS - 10);
+      await socketClosed; // hangs (and trips the test timeout) if destroy() regresses
     } finally {
       blackHole.closeAllConnections();
       await new Promise((r) => blackHole.close(r));
-      process.env.DJ_HOST = '127.0.0.1';
-      process.env.DJ_PORT = String(server.address().port);
     }
-  }, 8000);
+  }, 3000);
 });

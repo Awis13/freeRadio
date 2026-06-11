@@ -7,6 +7,7 @@
  */
 
 import { vi } from 'vitest';
+import fs from 'fs';
 
 // ─── Spy management ───────────────────────────────────────────
 
@@ -22,6 +23,34 @@ export function spy(s) {
 export function restoreSpies() {
   _spies.forEach(s => s.mockRestore());
   _spies = [];
+}
+
+// ─── In-memory fs map ─────────────────────────────────────────
+
+/**
+ * Replaces fs.existsSync/readFileSync/writeFileSync with an in-memory file map.
+ * Files exist iff their path is a key in the map; reads of missing paths throw
+ * ENOENT like the real fs; writes land in the map. Mutate `files` directly in
+ * tests to control what modules under test see.
+ *
+ * @param {Object} initialFiles - path -> content seed for the map
+ * @returns {{files: Object, spies: import('vitest').MockInstance[]}}
+ *   The live map and the three spies (for restoration via mockRestore,
+ *   vi.restoreAllMocks(), or the spy()/restoreSpies() convention).
+ */
+export function mockFsMap(initialFiles = {}) {
+  const files = { ...initialFiles };
+  const spies = [
+    vi.spyOn(fs, 'existsSync').mockImplementation(p => p in files),
+    vi.spyOn(fs, 'readFileSync').mockImplementation((p) => {
+      if (p in files) return files[p];
+      throw new Error('ENOENT');
+    }),
+    vi.spyOn(fs, 'writeFileSync').mockImplementation((p, data) => {
+      files[p] = data;
+    })
+  ];
+  return { files, spies };
 }
 
 // ─── Mock response object ─────────────────────────────────────

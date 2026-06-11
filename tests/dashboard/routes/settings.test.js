@@ -8,8 +8,7 @@
 
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { createRequire } from 'module';
-import fs from 'fs';
-import { mockRes, getRouteHandler, spy, restoreSpies } from '../helpers.js';
+import { mockRes, getRouteHandler, spy, restoreSpies, mockFsMap } from '../helpers.js';
 
 const require = createRequire(import.meta.url);
 
@@ -441,25 +440,13 @@ describe('POST /quality — tier enforcement through real modules', () => {
   const TIER_FILE = '/shared/tier.json';
   const QUALITY_FILE = '/shared/stream_quality.json';
   let files = {};
-  let fsSpies = [];
 
   beforeEach(() => {
-    files = {};
-    fsSpies = [
-      vi.spyOn(fs, 'existsSync').mockImplementation(p => p in files),
-      vi.spyOn(fs, 'readFileSync').mockImplementation((p) => {
-        if (p in files) return files[p];
-        throw new Error('ENOENT');
-      }),
-      vi.spyOn(fs, 'writeFileSync').mockImplementation((p, data) => {
-        files[p] = data;
-      })
-    ];
-  });
-
-  afterEach(() => {
-    fsSpies.forEach(s => s.mockRestore());
-    fsSpies = [];
+    // Spies are registered with spy(); the file-level afterEach restoreSpies()
+    // restores them after each test.
+    const fsMap = mockFsMap();
+    files = fsMap.files;
+    fsMap.spies.forEach(spy);
   });
 
   it('returns 403 with exact body when preset exceeds free tier limit', () => {

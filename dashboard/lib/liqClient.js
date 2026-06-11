@@ -1,7 +1,9 @@
 const http = require('http');
 
+// Defaults match the docker-compose `dj` service; the env overrides exist for tests and non-Docker runs (none of them are set in compose/Docker).
 const DJ_HOST = process.env.DJ_HOST || 'dj';
 const DJ_PORT = parseInt(process.env.DJ_PORT || '7000', 10);
+const REQUEST_TIMEOUT_MS = parseInt(process.env.DJ_TIMEOUT_MS || '5000', 10);
 
 function request(method, path, body) {
   return new Promise((resolve, reject) => {
@@ -10,7 +12,7 @@ function request(method, path, body) {
       port: DJ_PORT,
       path,
       method,
-      timeout: 5000,
+      timeout: REQUEST_TIMEOUT_MS,
       headers: {}
     };
     if (body) {

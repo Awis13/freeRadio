@@ -12,22 +12,14 @@
 
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import fs from 'fs';
+import { mockFsMap } from './helpers.js';
 
 const TIER_FILE = '/shared/tier.json';
 let files = {};
 
 beforeEach(() => {
-  files = {};
   vi.restoreAllMocks();
-
-  vi.spyOn(fs, 'existsSync').mockImplementation(p => p in files);
-  vi.spyOn(fs, 'readFileSync').mockImplementation((p) => {
-    if (p in files) return files[p];
-    throw new Error('ENOENT');
-  });
-  vi.spyOn(fs, 'writeFileSync').mockImplementation((p, data) => {
-    files[p] = data;
-  });
+  ({ files } = mockFsMap());
 });
 
 const {
