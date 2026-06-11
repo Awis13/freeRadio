@@ -1,0 +1,228 @@
+/**
+ * tests/dashboard/liqClient.test.js
+ *
+ * Wire-level characterization of dashboard/lib/liqClient.js (P1-2).
+ *
+ * Strategy: liqClient is CJS and talks plain http to the Liquidsoap DJ
+ * sidecar (host/port baked into module-level consts at require time).
+ * vi.mock() is inert for requires made inside CJS modules in this repo
+ * (see tests/dashboard/server.test.js), so instead we:
+ *   1. start a REAL loopback http server on 127.0.0.1:0 that records
+ *      method/url/headers/raw body and answers via a per-test responder;
+ *   2. set DJ_HOST/DJ_PORT env BEFORE a fresh require of liqClient
+ *      (cache-deleted), so the baked consts point at the recorder.
+ *
+ * Pinned here (current behavior, callers depend on it):
+ *   - exact method + path + raw wire body for all 17 wrappers
+ *     (filePath strings sent raw, config objects JSON.stringified,
+ *     '' bodies for the no-payload POST group);
+ *   - Content-Length: explicit Buffer.byteLength(body) when body is
+ *     truthy; for the ''-body POSTs the explicit header is SKIPPED
+ *     (empty string is falsy) and Node itself emits content-length: 0;
+ *     GETs carry none. No Content-Type is EVER set — the DJ side
+ *     parses raw bodies regardless.
+ *   - request() core: JSON response -> parsed object; non-JSON ->
+ *     raw string fallback; NON-2XX RESOLVES with { status, data }
+ *     (never rejects — callers read .data unguarded, so turning this
+ *     into a reject would be a breaking change);
+ *   - network error (connection refused) -> rejects;
+ *   - 5s timeout -> req.destroy() + reject(new Error('timeout'))
+ *     (pinned with a real 5s wait against a never-responding server).
+ */
+
+import { describe, it, expect, beforeAll, afterAll, beforeEach } from 'vitest';
+import { createRequire } from 'module';
+import http from 'node:http';
+
+const nodeRequire = createRequire(import.meta.url);
+const LIQ_SPEC = '../../dashboard/lib/liqClient';
+
+/** Fresh require of liqClient with DJ_HOST/DJ_PORT baked from env. */
+function freshLiq(host, port) {
+  process.env.DJ_HOST = host;
+  process.env.DJ_PORT = String(port);
+  const id = nodeRequire.resolve(LIQ_SPEC);
+  delete nodeRequire.cache[id];
+  return nodeRequire(id);
+}
+
+let server;        // recorder server (default target of `liq`)
+let liq;           // liqClient instance pointed at the recorder
+let lastReq;       // { method, url, headers, body } of the last request seen
+let responder;     // (req, res) => void, programmable per test
+
+beforeAll(async () => {
+  server = http.createServer((req, res) => {
+    const chunks = [];
+    req.on('data', (c) => chunks.push(c));
+    req.on('end', () => {
+      lastReq = {
+        method: req.method,
+        url: req.url,
+        headers: req.headers,
+        body: Buffer.concat(chunks).toString('utf8')
+      };
+      responder(req, res);
+    });
+  });
+  await new Promise((r) => server.listen(0, '127.0.0.1', r));
+  liq = freshLiq('127.0.0.1', server.address().port);
+});
+
+afterAll(async () => {
+  // Keep-alive sockets (Node 22 default agent) would otherwise hang vitest.
+  http.globalAgent.destroy();
+  server.closeAllConnections();
+  await new Promise((r) => server.close(r));
+  delete process.env.DJ_HOST;
+  delete process.env.DJ_PORT;
+});
+
+beforeEach(() => {
+  lastReq = undefined;
+  responder = (req, res) => {
+    res.statusCode = 200;
+    res.end('{"ok":true}');
+  };
+});
+
+// ─── exports surface ─────────────────────────────────────────────────────────
+
+describe('exports', () => {
+  it('exposes request plus exactly the 17 wrappers', () => {
+    expect(Object.keys(liq).sort()).toEqual([
+      'clearQueue', 'cueTrack', 'getMixingConfig', 'getQueue',
+      'getQueueLength', 'getStripConfig', 'getStripMetering',
+      'getVoiceConfig', 'pushTrack', 'pushVoice', 'request',
+      'resumePlayback', 'setMixingConfig', 'setStripConfig',
+      'setVoiceConfig', 'skip', 'startPlayback', 'stopPlayback'
+    ]);
+  });
+});
+
+// ─── 17-wrapper wire mapping ─────────────────────────────────────────────────
+
+// Multi-byte path: pins Content-Length = Buffer.byteLength, not string length.
+const UTF8_PATH = '/music/café-déjà.mp3'; // 20 chars, 23 bytes
+const CONFIG = { enabled: true, gainDb: -3.5, name: 'voice "duck"' };
+
+// [name, args, method, path, bodyKind, expectedBody]
+// bodyKind: 'none' (GET) | 'empty' ('') | 'raw' (filePath) | 'json'
+const WRAPPERS = [
+  ['getQueue',        [],          'GET',  '/queue',           'none',  null],
+  ['pushTrack',       [UTF8_PATH], 'POST', '/queue/push',      'raw',   UTF8_PATH],
+  ['skip',            [],          'POST', '/skip',            'empty', ''],
+  ['clearQueue',      [],          'POST', '/queue/clear',     'empty', ''],
+  ['getQueueLength',  [],          'GET',  '/queue/length',    'none',  null],
+  ['pushVoice',       [UTF8_PATH], 'POST', '/voice/push',      'raw',   UTF8_PATH],
+  ['getVoiceConfig',  [],          'GET',  '/voice/config',    'none',  null],
+  ['setVoiceConfig',  [CONFIG],    'POST', '/voice/config',    'json',  JSON.stringify(CONFIG)],
+  ['getMixingConfig', [],          'GET',  '/mixing/config',   'none',  null],
+  ['setMixingConfig', [CONFIG],    'POST', '/mixing/config',   'json',  JSON.stringify(CONFIG)],
+  ['startPlayback',   [],          'POST', '/playback/start',  'empty', ''],
+  ['stopPlayback',    [],          'POST', '/playback/stop',   'empty', ''],
+  ['resumePlayback',  [],          'POST', '/playback/resume', 'empty', ''],
+  ['cueTrack',        [UTF8_PATH], 'POST', '/playback/cue',    'raw',   UTF8_PATH],
+  ['getStripConfig',  [],          'GET',  '/strip/config',    'none',  null],
+  ['setStripConfig',  [CONFIG],    'POST', '/strip/config',    'json',  JSON.stringify(CONFIG)],
+  ['getStripMetering',[],          'GET',  '/strip/metering',  'none',  null]
+];
+
+describe('wrapper -> wire mapping (all 17)', () => {
+  it.each(WRAPPERS)('%s sends %s %s', async (name, args, method, path, bodyKind, expectedBody) => {
+    const result = await liq[name](...args);
+
+    expect(lastReq.method).toBe(method);
+    expect(lastReq.url).toBe(path);
+    expect(result).toEqual({ status: 200, data: { ok: true } });
+
+    // No Content-Type, ever — pinned current behavior.
+    expect(lastReq.headers['content-type']).toBeUndefined();
+
+    if (bodyKind === 'none') {
+      // GET: no body written, no Content-Length on the wire.
+      expect(lastReq.body).toBe('');
+      expect(lastReq.headers['content-length']).toBeUndefined();
+    } else if (bodyKind === 'empty') {
+      // '' is falsy: explicit header skipped, req.write skipped;
+      // Node itself emits content-length: 0 on end().
+      expect(lastReq.body).toBe('');
+      expect(lastReq.headers['content-length']).toBe('0');
+    } else {
+      // raw filePath / JSON.stringify(config), written verbatim.
+      expect(lastReq.body).toBe(expectedBody);
+      expect(lastReq.headers['content-length'])
+        .toBe(String(Buffer.byteLength(expectedBody)));
+    }
+  });
+
+  it('pins byte-length vs char-length for multi-byte bodies', async () => {
+    await liq.pushTrack(UTF8_PATH);
+    expect(UTF8_PATH.length).toBe(20);
+    expect(lastReq.headers['content-length']).toBe('23');
+  });
+});
+
+// ─── request() core semantics ────────────────────────────────────────────────
+
+describe('request() core', () => {
+  it('parses a JSON response body into an object', async () => {
+    responder = (req, res) => { res.statusCode = 200; res.end('{"queue":["a.mp3"],"n":1}'); };
+    await expect(liq.request('GET', '/queue'))
+      .resolves.toEqual({ status: 200, data: { queue: ['a.mp3'], n: 1 } });
+  });
+
+  it('falls back to the raw string when the body is not JSON', async () => {
+    responder = (req, res) => { res.statusCode = 200; res.end('OK not json'); };
+    await expect(liq.request('GET', '/queue'))
+      .resolves.toEqual({ status: 200, data: 'OK not json' });
+  });
+
+  it('RESOLVES on non-2xx — status in result, never a rejection (caller contract)', async () => {
+    // Characterization: callers read .data unguarded and branch on .status
+    // themselves; a 500 from the DJ resolves like any other response.
+    responder = (req, res) => { res.statusCode = 500; res.end('liquidsoap exploded'); };
+    await expect(liq.request('POST', '/skip', ''))
+      .resolves.toEqual({ status: 500, data: 'liquidsoap exploded' });
+  });
+
+  it('resolves an empty 204-style body as the raw empty string', async () => {
+    // JSON.parse('') throws -> raw-string fallback.
+    responder = (req, res) => { res.statusCode = 204; res.end(); };
+    await expect(liq.request('GET', '/queue'))
+      .resolves.toEqual({ status: 204, data: '' });
+  });
+
+  it('rejects on network error (connection refused)', async () => {
+    // Grab a port that is guaranteed free, then close it.
+    const probe = http.createServer();
+    await new Promise((r) => probe.listen(0, '127.0.0.1', r));
+    const deadPort = probe.address().port;
+    await new Promise((r) => probe.close(r));
+
+    const deadLiq = freshLiq('127.0.0.1', deadPort);
+    await expect(deadLiq.getQueue()).rejects.toThrow(/ECONNREFUSED/);
+
+    // Restore env for any later fresh require.
+    process.env.DJ_HOST = '127.0.0.1';
+    process.env.DJ_PORT = String(server.address().port);
+  });
+
+  it('rejects with Error("timeout") after the hardcoded 5s when the DJ never responds', async () => {
+    // Real 5s wait against a server that accepts the socket and goes silent.
+    const blackHole = http.createServer(() => { /* never respond */ });
+    await new Promise((r) => blackHole.listen(0, '127.0.0.1', r));
+
+    const slowLiq = freshLiq('127.0.0.1', blackHole.address().port);
+    const started = Date.now();
+    try {
+      await expect(slowLiq.getQueue()).rejects.toThrow('timeout');
+      expect(Date.now() - started).toBeGreaterThanOrEqual(4900);
+    } finally {
+      blackHole.closeAllConnections();
+      await new Promise((r) => blackHole.close(r));
+      process.env.DJ_HOST = '127.0.0.1';
+      process.env.DJ_PORT = String(server.address().port);
+    }
+  }, 8000);
+});

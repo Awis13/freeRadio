@@ -1,7 +1,7 @@
 const http = require('http');
 
-const DJ_HOST = 'dj';
-const DJ_PORT = 7000;
+const DJ_HOST = process.env.DJ_HOST || 'dj';
+const DJ_PORT = parseInt(process.env.DJ_PORT || '7000', 10);
 
 function request(method, path, body) {
   return new Promise((resolve, reject) => {
