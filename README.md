@@ -1,5 +1,7 @@
 # STUDIO 23
 
+[![CI](https://github.com/Awis13/freeRadio/actions/workflows/ci.yml/badge.svg?branch=dev)](https://github.com/Awis13/freeRadio/actions/workflows/ci.yml)
+
 Automated 24/7 streaming platform with BPM-aware music mixing, synchronized video visuals, and a real-time web dashboard. Designed to run as a self-contained Docker stack on a single machine.
 
 ![Studio Dashboard](docs/studio-dashboard.png)
@@ -79,7 +81,7 @@ Icecast + Video  ──►  FFmpeg Streamer   ──►  HLS (always) + RTMP (op
 | File Storage | S3-compatible (any provider) |
 | Encryption | AES-256-GCM (stream keys) |
 | TLS Proxy | Nginx |
-| Testing | Vitest (78), pytest (65), BATS (117) = 260 tests |
+| Testing | Vitest (597 tests across 29 files) |
 | Containerization | Docker Compose (7 services) |
 
 ## Quick Start
@@ -102,6 +104,8 @@ docker compose up -d
 # Dashboard available at http://localhost (or :443 with TLS certs)
 ```
 
+> **Known limitation:** the Liquidsoap and nginx RTMP config files referenced by the compose files (`./configs/liquidsoap`, `./configs/nginx/`) are not currently in the repository (removed during legacy cleanup), so the `dj` and RTMP services will not start from a fresh clone. Restoring them is tracked; the dashboard and its test suite are unaffected.
+
 ## Configuration
 
 All configuration via environment variables. See [`.env.example`](.env.example).
@@ -113,6 +117,7 @@ All configuration via environment variables. See [`.env.example`](.env.example).
 | `ICECAST_SOURCE_PASSWORD` | Liquidsoap → Icecast auth |
 | `ICECAST_ADMIN_PASSWORD` | Icecast admin panel |
 | `ICECAST_PASSWORD` | Icecast listener auth |
+| `ICECAST_RELAY_PASSWORD` | Icecast relay auth |
 | `DASHBOARD_TOKEN` | Dashboard API Bearer token |
 | `STREAM_KEYS_SECRET` | AES-256 key for RTMP key encryption |
 
@@ -123,10 +128,16 @@ All configuration via environment variables. See [`.env.example`](.env.example).
 | `OUTPUT_MODE` | `hls` | `hls` or `rtmp` |
 | `RTMP_URL` | -- | Primary RTMP destination |
 | `MAX_PLATFORMS` | `3` | Max simultaneous RTMP outputs |
+| `MAX_CLIP_DURATION` | `60` | Max seconds per visual clip |
 | `S3_ENABLED` | `false` | Enable S3 content sync |
 | `S3_ENDPOINT` | -- | S3-compatible endpoint URL |
+| `S3_ACCESS_KEY` / `S3_SECRET_KEY` | -- | S3 credentials |
+| `S3_BUCKET` | `studio23` | S3 bucket name |
+| `S3_REGION` | `eu-central-1` | S3 region |
+| `S3_CACHE_MAX_MB` | `4000` | Local S3 cache size limit (MB) |
+| `TENANT_ID` | `default` | Tenant identifier (S3 prefix) |
 | `TRANSCODER_URL` | -- | External transcoder service URL |
-| `HW_ACCEL` | `qsv` | Hardware encoder (`qsv`, `vaapi`, `none`) |
+| `TRANSCODER_TOKEN` | -- | External transcoder auth token |
 
 ## Docker Services
 
@@ -218,18 +229,20 @@ freeRadio/
       status.js               Stream status
       streamKeys.js           RTMP key management
       videoQueue.js           Video queue management
-  scripts/
-    stream_entry.sh           FFmpeg streamer (~1240 LOC)
-    transcoder.sh             Video transcoding pipeline
-    audio_analyzer_simple.py  Essentia-based audio analysis
-    bpm_scan.py               Standalone BPM scanner
-  configs/
-    liquidsoap/               Liquidsoap AutoDJ configs
-    nginx/                    RTMP ingest + proxy configs
+    Dockerfile                Dashboard image
+    entrypoint.sh             Container entrypoint
   tests/
-    dashboard/                Vitest unit tests (78 tests)
-    bash/                     BATS integration tests (117 tests)
-    test_audio_analyzer.py    pytest audio analysis tests (65 tests)
+    dashboard/                Vitest unit tests (597 tests, incl. routes/)
+  .github/
+    workflows/
+      ci.yml                  GitHub Actions CI (vitest + coverage)
+  docker/
+    audio-analyzer/           Audio analyzer image
+  nginx-proxy/
+    nginx.conf                TLS proxy config
+  docs/                       Images and documentation assets
+  Dockerfile.streamer         FFmpeg streamer image
+  vitest.config.js            Test runner configuration
   docker-compose.yml          Main service orchestration
   docker-compose.rtmp.yml     RTMP-specific overrides
 ```
@@ -237,19 +250,17 @@ freeRadio/
 ## Running Tests
 
 ```bash
-# All tests
-npm run test:all
+# Install dependencies
+npm ci
 
-# JavaScript unit tests
+# Run the test suite (Vitest)
 npm test
 
-# Bash integration tests
-npm run test:bash
-
-# Python audio analyzer tests
-pip install -r requirements-test.txt
-pytest
+# Run with coverage
+npx vitest run --coverage
 ```
+
+CI runs the same suite with coverage on every push and pull request to `main` and `dev` via [`.github/workflows/ci.yml`](.github/workflows/ci.yml).
 
 ## License
 
