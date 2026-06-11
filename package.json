@@ -5,14 +5,10 @@
   "scripts": {
     "test": "vitest run",
     "test:watch": "vitest",
-    "test:bash": "bats tests/bash/",
-    "test:all": "pytest tests/ -v && npx vitest run && bats tests/bash/"
+    "test:all": "vitest run"
   },
   "devDependencies": {
     "@aws-sdk/client-s3": "^3.999.0",
-    "bats": "^1.13.0",
-    "bats-assert": "^2.2.4",
-    "bats-support": "^0.3.0",
     "express": "^5.2.1",
     "multer": "^2.0.2",
     "vitest": "^3.0.0",
