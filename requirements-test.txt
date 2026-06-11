@@ -1,3 +1,0 @@
-pytest>=8.0
-pytest-mock>=3.12
-numpy>=1.24

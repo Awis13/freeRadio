@@ -11,19 +11,18 @@ certs/
 __pycache__/
 .pytest_cache/
 *.pyc
+coverage/
 
 # Secrets
 .env
 .env.*
+!.env.example
 
 # Backup files
 *.bak
 *.bak.*
 *.broken
 *.old
-
-# Lock files (installed in container)
-package-lock.json
 
 # Frontend symlink (repo lives separately)
 s23-dashboard
