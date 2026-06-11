@@ -10,6 +10,7 @@
 
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import fs from 'fs';
+import crypto from 'crypto';
 
 const KEYS_FILE = '/shared/stream_keys.enc';
 const TIER_FILE = '/shared/tier.json';
@@ -232,4 +233,99 @@ describe('getEnabledRtmpUrls', () => {
     const urls = getEnabledRtmpUrls();
     expect(urls.length).toBe(2);
   });
+});
+
+// ---------------------------------------------------------------------------
+// setPlatform — tier platform limit enforcement (real tierLimits, no mocking)
+// Tier is controlled via /shared/tier.json in the fs map; tierLimits.getTier()
+// re-reads the file on every call, so flipping the map mid-test takes effect.
+// ---------------------------------------------------------------------------
+describe('setPlatform — tier platform limits', () => {
+  it('free tier: first platform is accepted, second is rejected with exact error shape', () => {
+    files[TIER_FILE] = JSON.stringify({ tier: 'free' });
+
+    const first = setPlatform('youtube', { enabled: true, streamKey: 'k1', rtmpUrl: 'rtmp://yt.com/live' });
+    expect(first).toBeUndefined();
+    expect(getPlatformConfig('youtube')).not.toBeNull();
+
+    const second = setPlatform('twitch', { enabled: true, streamKey: 'k2', rtmpUrl: 'rtmp://twitch.tv/app' });
+    expect(second).toEqual({ error: 'Platform limit reached for your tier', maxPlatforms: 1 });
+    expect(getPlatformConfig('twitch')).toBeNull();
+  });
+
+  it('free tier at limit: updating the EXISTING platform bypasses the limit check', () => {
+    files[TIER_FILE] = JSON.stringify({ tier: 'free' });
+    setPlatform('youtube', { enabled: true, streamKey: 'old-key', rtmpUrl: 'rtmp://yt.com/live' });
+
+    // Same name -> existing-platform path, no limit check, update succeeds
+    const result = setPlatform('youtube', { enabled: false, streamKey: 'new-key', rtmpUrl: 'rtmp://yt.com/live2' });
+    expect(result).toBeUndefined();
+
+    const config = getPlatformConfig('youtube');
+    expect(config.streamKey).toBe('new-key');
+    expect(config.enabled).toBe(false);
+    expect(config.rtmpUrl).toBe('rtmp://yt.com/live2');
+  });
+
+  it('studio tier: three platforms accepted, fourth rejected with maxPlatforms 3', () => {
+    files[TIER_FILE] = JSON.stringify({ tier: 'studio' });
+
+    expect(setPlatform('youtube', { enabled: true, streamKey: 'k1', rtmpUrl: 'rtmp://yt.com' })).toBeUndefined();
+    expect(setPlatform('twitch', { enabled: true, streamKey: 'k2', rtmpUrl: 'rtmp://twitch.tv' })).toBeUndefined();
+    expect(setPlatform('kick', { enabled: true, streamKey: 'k3', rtmpUrl: 'rtmp://kick.live-video.net' })).toBeUndefined();
+
+    const fourth = setPlatform('facebook', { enabled: true, streamKey: 'k4', rtmpUrl: 'rtmp://fb.com' });
+    expect(fourth).toEqual({ error: 'Platform limit reached for your tier', maxPlatforms: 3 });
+    expect(getPlatformConfig('facebook')).toBeNull();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// v1 legacy key file — data-loss chain characterization
+//
+// A pre-v2 keys file ('iv-less' 3-part format from crypto.createCipher) can no
+// longer be decrypted: on Node 22+ crypto.createDecipher does not exist
+// (TypeError), on Node 20 it exists (deprecated) but the GCM auth tag check
+// fails for data we cannot reproduce without createCipher. Both paths land in
+// decrypt()'s catch and return null — version-agnostic outcome: loadKeys()
+// silently returns {platforms:{}} and all v1 keys are invisible.
+//
+// The next WRITE (any setPlatform/deletePlatform) then re-encrypts that empty
+// state as v2 and overwrites the v1 file — the original keys are permanently
+// destroyed. This is a known data-loss issue; the fix is a separate ticket.
+// These tests pin the current behavior, they do not endorse it.
+// ---------------------------------------------------------------------------
+describe('v1 legacy key file — data-loss chain', () => {
+  const V1_CONTENT = 'whatever:authtaghex:cipherhex';
+
+  it('v1 file decrypt fails -> platforms read back as empty (keys invisible)', () => {
+    files[KEYS_FILE] = V1_CONTENT;
+    expect(getPlatforms()).toEqual({});
+    expect(getPlatformConfig('anything')).toBeNull();
+    // Read alone does not rewrite the file (decrypt failed before the
+    // auto-migration branch in loadKeys, which only runs on successful decrypt)
+    expect(files[KEYS_FILE]).toBe(V1_CONTENT);
+  });
+
+  it('next write overwrites the v1 file with v2 — original content permanently lost', () => {
+    files[KEYS_FILE] = V1_CONTENT;
+
+    setPlatform('youtube', { enabled: true, streamKey: 'new-key', rtmpUrl: 'rtmp://yt.com/live' });
+
+    expect(files[KEYS_FILE]).toMatch(/^v2:/);
+    expect(files[KEYS_FILE]).not.toContain(V1_CONTENT);
+    // Only the newly written platform survives; whatever the v1 file held is gone
+    expect(Object.keys(getPlatforms())).toEqual(['youtube']);
+  });
+
+  // crypto.createDecipher was removed in Node 22; dashboard/lib/streamKeys.js
+  // decryptLegacy() still calls it, so v1 records are undecryptable there even
+  // in principle. On Node 20 (Docker/CI) the function exists but is deprecated.
+  // Tracked as a known data-loss issue; the fix is a separate ticket.
+  it.runIf(typeof crypto.createDecipher !== 'function')(
+    'documents createDecipher absence on Node 22+ (legacy decrypt path is dead code here)',
+    () => {
+      expect(crypto.createDecipher).toBeUndefined();
+    }
+  );
 });

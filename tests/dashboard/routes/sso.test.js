@@ -4,12 +4,13 @@
  * Unit tests for SSO endpoint (dashboard/routes/sso.js).
  */
 
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { createRequire } from 'module';
 import crypto from 'crypto';
 
 const require = createRequire(import.meta.url);
 const ssoModule = require('../../../dashboard/routes/sso');
+const tierLimits = require('../../../dashboard/lib/tierLimits');
 const { verifySsoToken } = ssoModule;
 const ssoHandler = ssoModule;
 
@@ -206,5 +207,57 @@ describe('GET /auth/sso handler', () => {
     ssoHandler(req, res);
     expect(res.statusCode).toBe(200);
     expect(res.body).toContain("s23_tier', 'pro'");
+  });
+});
+
+// ─── ssoHandler — tierLimits.setTier side effect ─────────────
+//
+// A successful SSO login is the ONLY production path that writes the tenant
+// tier to /shared/tier.json. Pins that the handler calls setTier with the
+// tier carried in the token (4-part) or 'free' for legacy 3-part tokens.
+// setTier is spied (same CJS module instance the handler requires), so no
+// file is actually written.
+
+describe('ssoHandler — setTier side effect', () => {
+  let setTierSpy;
+
+  beforeEach(() => {
+    setTierSpy = vi.spyOn(tierLimits, 'setTier').mockImplementation(() => {});
+  });
+
+  afterEach(() => {
+    setTierSpy.mockRestore();
+  });
+
+  it('valid 4-part token: setTier is called with the tier from the token', () => {
+    const payload = `user1:tenant1:pro:${nowTs()}`;
+    const req = { query: { token: makeToken(payload) } };
+    const res = mockRes();
+    ssoHandler(req, res);
+
+    expect(res.statusCode).toBe(200);
+    expect(setTierSpy).toHaveBeenCalledTimes(1);
+    expect(setTierSpy).toHaveBeenCalledWith('pro');
+  });
+
+  it('valid 3-part legacy token: setTier is called with free', () => {
+    const payload = `user1:tenant1:${nowTs()}`;
+    const req = { query: { token: makeToken(payload) } };
+    const res = mockRes();
+    ssoHandler(req, res);
+
+    expect(res.statusCode).toBe(200);
+    expect(setTierSpy).toHaveBeenCalledTimes(1);
+    expect(setTierSpy).toHaveBeenCalledWith('free');
+  });
+
+  it('invalid token: setTier is NOT called', () => {
+    const payload = `user1:tenant1:${nowTs()}`;
+    const req = { query: { token: makeToken(payload, 'wrong-secret') } };
+    const res = mockRes();
+    ssoHandler(req, res);
+
+    expect(res.statusCode).toBe(401);
+    expect(setTierSpy).not.toHaveBeenCalled();
   });
 });
