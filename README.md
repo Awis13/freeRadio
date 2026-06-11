@@ -79,7 +79,6 @@ Icecast + Video  ──►  FFmpeg Streamer   ──►  HLS (always) + RTMP (op
 | File Storage | S3-compatible (any provider) |
 | Encryption | AES-256-GCM (stream keys) |
 | TLS Proxy | Nginx |
-| Monitoring | Prometheus + Grafana |
 | Testing | Vitest (78), pytest (65), BATS (117) = 260 tests |
 | Containerization | Docker Compose (7 services) |
 
@@ -227,15 +226,12 @@ freeRadio/
   configs/
     liquidsoap/               Liquidsoap AutoDJ configs
     nginx/                    RTMP ingest + proxy configs
-    prometheus/               Metrics collection
-    grafana/                  Dashboards
   tests/
     dashboard/                Vitest unit tests (78 tests)
     bash/                     BATS integration tests (117 tests)
     test_audio_analyzer.py    pytest audio analysis tests (65 tests)
   docker-compose.yml          Main service orchestration
   docker-compose.rtmp.yml     RTMP-specific overrides
-  docker-compose.monitoring.yml  Prometheus + Grafana stack
 ```
 
 ## Running Tests
