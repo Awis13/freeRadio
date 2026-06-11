@@ -102,6 +102,12 @@ function buildDrawtext(layer) {
   }
 
   switch (layer.type) {
+    case 'watermark':
+      if (layer.text) {
+        const escaped = escapeDrawtext(layer.text);
+        common.push(`text='${escaped}'`);
+      }
+      break;
     case 'now_playing':
       common.push('textfile=/shared/current_audio.txt');
       common.push('reload=1');
@@ -148,6 +154,36 @@ function buildDrawtext(layer) {
   return 'drawtext=' + common.join(':');
 }
 
+// --- Free-tier watermark ---
+function ensureWatermark() {
+  const tier = tierLimits.getTier();
+  const limits = tierLimits.getLimits(tier);
+  const config = loadOverlays();
+
+  // Remove all existing system watermarks
+  config.layers = config.layers.filter(l => l.type !== 'watermark' || !l.system);
+
+  if (limits.watermark) {
+    // Free tier: add the system watermark
+    config.layers.push({
+      type: 'watermark',
+      enabled: true,
+      system: true,
+      text: 'STUDIO 23',
+      fontsize: 28,
+      fontcolor: 'white@0.6',
+      x: 'W-text_w-20',
+      y: 'H-text_h-20',
+      boxcolor: 'black@0.3',
+      boxborderw: 4
+    });
+    // Enable overlays so the watermark is rendered
+    config.enabled = true;
+  }
+
+  saveOverlays(config);
+}
+
 function createOverlayRouter() {
   const router = express.Router();
 
@@ -177,13 +213,38 @@ function createOverlayRouter() {
   router.put('/', express.json(), (req, res) => {
     const config = req.body;
     // Check tier for custom overlays (system watermark is always allowed)
-    const limits = tierLimits.getLimits(tierLimits.getTier());
+    const tier = tierLimits.getTier();
+    const limits = tierLimits.getLimits(tier);
     if (!limits.customOverlays) {
       const hasCustomLayers = config.layers && config.layers.some(l => l.type !== 'watermark');
       if (hasCustomLayers && config.enabled) {
         return res.status(403).json({ error: 'Custom overlays not available in your tier' });
       }
     }
+
+    // Strip system layers from user input (they cannot be edited or removed)
+    if (config.layers) {
+      config.layers = config.layers.filter(l => !l.system);
+    }
+
+    // If the tier requires a watermark, re-insert it
+    if (limits.watermark) {
+      if (!config.layers) config.layers = [];
+      config.layers.push({
+        type: 'watermark',
+        enabled: true,
+        system: true,
+        text: 'STUDIO 23',
+        fontsize: 28,
+        fontcolor: 'white@0.6',
+        x: 'W-text_w-20',
+        y: 'H-text_h-20',
+        boxcolor: 'black@0.3',
+        boxborderw: 4
+      });
+      config.enabled = true;
+    }
+
     saveOverlays(config);
     res.json(config);
   });
@@ -238,4 +299,4 @@ function createOverlayRouter() {
   return router;
 }
 
-module.exports = { createOverlayRouter, loadOverlays, generateFilterString };
+module.exports = { createOverlayRouter, loadOverlays, saveOverlays, generateFilterString, ensureWatermark };

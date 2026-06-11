@@ -18,7 +18,7 @@ const createQueueRouter = require('./lib/queue');
 const { createPlaylistRouter } = require('./lib/playlist');
 const { createTrackRouter } = require('./lib/trackMeta');
 const { createVisualProfileRouter } = require('./lib/visualProfile');
-const { createOverlayRouter } = require('./lib/overlay');
+const { createOverlayRouter, ensureWatermark } = require('./lib/overlay');
 const { createVideoPlaylistRouter } = require('./lib/videoPlaylist');
 const { createScheduleRouter, startExecutor, onTrackChange } = require('./lib/schedule');
 const { createHistoryRouter } = require('./lib/history');
@@ -231,6 +231,9 @@ server.listen(PORT, '0.0.0.0', () => {
   bpmPoller.start();
   rtmpHealthPoller.start();
   startExecutor(getBpmMap, VISUALS_DIR);
+
+  // Watermark: add or remove based on tier at startup
+  ensureWatermark();
 
   // Boot: S3 sync + auto-restore (async, API already accepting requests)
   boot({ musicDir: MUSIC_DIR, visualsDir: VISUALS_DIR })

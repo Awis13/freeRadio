@@ -13,6 +13,7 @@
 
 const crypto = require('crypto');
 const tierLimits = require('../lib/tierLimits');
+const { ensureWatermark } = require('../lib/overlay');
 
 const SSO_MAX_AGE_SECONDS = 60;
 
@@ -140,6 +141,9 @@ function ssoHandler(req, res) {
 
   // Save tier to /shared/tier.json
   tierLimits.setTier(result.tier);
+
+  // Refresh the watermark after the tier change
+  ensureWatermark();
 
   // Allow inline script for SSO success page (main CSP middleware blocks it)
   res.setHeader('Content-Security-Policy', "default-src 'self'; script-src 'self' 'unsafe-inline'");
