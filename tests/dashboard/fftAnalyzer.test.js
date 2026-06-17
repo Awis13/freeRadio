@@ -22,9 +22,19 @@
  *     hop;
  *   - no-subscriber fast path: winFilled is reset to 0 and no frame is sent;
  *   - silence input -> spectrum clamps to 0 across all bins;
- *   - a strong DC (constant) signal concentrates spectral energy in bin 0;
+ *   - a moderate DC (constant) signal puts bin 0 as the STRICT unique maximum
+ *     (amplitude is chosen so bin 0 does not saturate and no other bin ties it);
+ *   - the full spectrum pipeline matches an INDEPENDENT naive O(N^2) DFT
+ *     reference computed inline (mono mix * Hanning -> DFT -> magnitude/N ->
+ *     dB -> byte), pinning fft()'s math byte-for-byte through the frame seam;
  *   - waveL/waveR bytes are signed->unsigned (& 0xFF): a negative sample
  *     maps to 128..255.
+ *
+ * fft(re, im, N) is module-private (only { FftAnalyzer } is exported), so it
+ * cannot be unit-tested directly without a production change. We therefore
+ * pin its math through the sole available seam — the binary frame — by
+ * feeding a known constant input and comparing the emitted spectrum bytes
+ * against an independent DFT computed with the naive summation formula.
  */
 
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
@@ -180,15 +190,67 @@ describe('dashboard/lib/fftAnalyzer.js spectrum (DFT correctness)', () => {
     expect([...spectrum].every((b) => b === 0)).toBe(true);
   });
 
-  it('strong DC -> energy concentrated in bin 0 (max bin is 0)', () => {
-    const frame = firstFrame(30000); // near full-scale constant
+  it('moderate DC -> bin 0 is the STRICT unique maximum (no saturation/tie)', () => {
+    // Amplitude 300 is chosen so bin 0 does NOT saturate: with the source math
+    // (mono mix * Hann -> fft -> mag/1024 -> dB -> byte) it lands at 216, a
+    // strict max over every other bin (bin 1 = 194, the rest 0). Contrast with
+    // 30000, which drives BOTH bin 0 and bin 1 to 255, so a max-index check
+    // would only pass by first-index tie-break. Here we assert STRICT '>'.
+    const frame = firstFrame(300);
     const spectrum = frame.subarray(1, 1 + BIN_COUNT);
-    let maxIdx = 0;
+    expect(spectrum[0]).toBe(216);
+    expect(spectrum[0]).toBeLessThan(255); // not saturated -> a real maximum
     for (let i = 1; i < BIN_COUNT; i++) {
-      if (spectrum[i] > spectrum[maxIdx]) maxIdx = i;
+      expect(spectrum[i]).toBeLessThan(spectrum[0]); // strict, unique max
     }
-    expect(maxIdx).toBe(0);
-    expect(spectrum[0]).toBeGreaterThan(0);
+  });
+
+  it('spectrum matches an independent naive O(N^2) DFT byte-for-byte', () => {
+    // Independent math pin for fft(). fft() is module-private, so we verify it
+    // through the frame seam: feed a known constant input and recompute the
+    // expected spectrum here with the naive DFT formula
+    // X[k] = sum_n x[n] * exp(-2*pi*i*k*n/N), then apply the same
+    // magnitude/dB/byte mapping the source uses. If fft()'s math drifts, the
+    // emitted bytes diverge from this reference.
+    const VALUE = 300;
+
+    // Source parameters (mirrored locally; do not import from production).
+    const N = FFT_SIZE;
+    const MIN_DB = -100;
+    const MAX_DB = -30;
+    const DB_RANGE = MAX_DB - MIN_DB;
+
+    // Hanning window, identical to the source definition.
+    const hann = new Float64Array(N);
+    for (let i = 0; i < N; i++) {
+      hann[i] = 0.5 * (1 - Math.cos((2 * Math.PI * i) / (N - 1)));
+    }
+
+    // Input the module sees for a constant hop: winL[i] === winR[i] === s,
+    // mono mix = (winL + winR) * 0.5 = s, then windowed.
+    const s = VALUE / 32768;
+    const x = new Float64Array(N);
+    for (let n = 0; n < N; n++) x[n] = (s + s) * 0.5 * hann[n];
+
+    // Independent naive DFT -> same magnitude/dB/byte mapping as the source.
+    const expected = new Uint8Array(BIN_COUNT);
+    for (let k = 0; k < BIN_COUNT; k++) {
+      let re = 0;
+      let im = 0;
+      for (let n = 0; n < N; n++) {
+        const ang = (-2 * Math.PI * k * n) / N;
+        re += x[n] * Math.cos(ang);
+        im += x[n] * Math.sin(ang);
+      }
+      const mag = Math.sqrt(re * re + im * im) / BIN_COUNT;
+      const db = 20 * Math.log10(Math.max(mag, 1e-10));
+      const val = (255 * (db - MIN_DB)) / DB_RANGE;
+      expected[k] = Math.max(0, Math.min(255, Math.round(val)));
+    }
+
+    const frame = firstFrame(VALUE);
+    const spectrum = frame.subarray(1, 1 + BIN_COUNT);
+    expect([...spectrum]).toEqual([...expected]);
   });
 });
 
