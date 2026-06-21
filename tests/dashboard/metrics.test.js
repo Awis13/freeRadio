@@ -7,6 +7,7 @@
 
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import os from 'os';
+import http from 'http';
 
 beforeEach(() => {
   vi.restoreAllMocks();
@@ -168,5 +169,114 @@ describe('MetricsExporter isolation', () => {
 
     expect(m1.getPrometheusFormat()).toContain('s23_ffmpeg_fps 60');
     expect(m2.getPrometheusFormat()).toContain('s23_ffmpeg_fps 24');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// MetricsExporter — start()  (real http server on the hardcoded METRICS_PORT)
+// ---------------------------------------------------------------------------
+const METRICS_PORT = 9091; // pinned as-is: start() hardcodes this port
+
+// Loopback GET against the exporter's fixed port; resolves with status + body.
+function fetchMetrics(path) {
+  return new Promise((resolve, reject) => {
+    const req = http.request(
+      // agent:false -> a fresh socket per request, so a pooled keep-alive
+      // socket from a prior (now-closed) server can't be reused.
+      { host: '127.0.0.1', port: METRICS_PORT, path, method: 'GET', agent: false },
+      (res) => {
+        let body = '';
+        res.on('data', (c) => { body += c; });
+        res.on('end', () => resolve({
+          status: res.statusCode,
+          contentType: res.headers['content-type'],
+          body,
+        }));
+      },
+    );
+    req.on('error', reject);
+    req.end();
+  });
+}
+
+// Grab the http.Server that start() created so the test can close it,
+// and wait until it is actually bound + the listen callback has run.
+function startAndCapture(exporter) {
+  let captured = null;
+  const origCreate = http.createServer;
+  const spy = vi.spyOn(http, 'createServer').mockImplementation((handler) => {
+    captured = origCreate(handler);
+    return captured;
+  });
+  exporter.start();
+  spy.mockRestore();
+  // Always wait for the 'listening' event. start() registers the log callback
+  // as a 'listening' listener first, so by the time ours fires the log is done.
+  return new Promise((resolve, reject) => {
+    captured.once('error', reject);
+    captured.once('listening', () => resolve(captured));
+  });
+}
+
+describe('MetricsExporter start()', () => {
+  it('listens on the metrics port and logs a startup line', async () => {
+    const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+    const m = new MetricsExporter();
+    const server = await startAndCapture(m);
+    try {
+      // pinned as-is: start() logs this exact line in the listen callback
+      expect(logSpy).toHaveBeenCalledWith(
+        `[metrics] Prometheus exporter on port ${METRICS_PORT}`,
+      );
+    } finally {
+      await new Promise((r) => server.close(r));
+    }
+  });
+
+  it('serves Prometheus text on GET /metrics with 200 + text/plain', async () => {
+    vi.spyOn(console, 'log').mockImplementation(() => {});
+    const m = new MetricsExporter();
+    m.update('ffmpeg_fps', 30);
+    const server = await startAndCapture(m);
+    try {
+      const res = await fetchMetrics('/metrics');
+      expect(res.status).toBe(200);
+      // pinned as-is: Content-Type is set to 'text/plain' (no charset/version)
+      expect(res.contentType).toBe('text/plain');
+      // body is exactly getPrometheusFormat() output for current state
+      expect(res.body).toBe(m.getPrometheusFormat());
+      expect(res.body).toContain('s23_ffmpeg_fps 30');
+    } finally {
+      await new Promise((r) => server.close(r));
+    }
+  });
+
+  it('returns 404 "Not found" for any non-/metrics path', async () => {
+    vi.spyOn(console, 'log').mockImplementation(() => {});
+    const m = new MetricsExporter();
+    const server = await startAndCapture(m);
+    try {
+      const res = await fetchMetrics('/health');
+      expect(res.status).toBe(404);
+      // pinned as-is: 404 path writes no Content-Type header, body is 'Not found'
+      expect(res.body).toBe('Not found');
+    } finally {
+      await new Promise((r) => server.close(r));
+    }
+  });
+
+  it('treats exact path only: "/metrics?x=1" with query is NOT the metrics route', async () => {
+    vi.spyOn(console, 'log').mockImplementation(() => {});
+    const m = new MetricsExporter();
+    const server = await startAndCapture(m);
+    try {
+      // pinned as-is: route check is `req.url === '/metrics'` (strict ===),
+      // so any query string makes req.url !== '/metrics' -> 404 branch
+      const res = await fetchMetrics('/metrics?x=1');
+      expect(res.status).toBe(404);
+      expect(res.body).toBe('Not found');
+    } finally {
+      await new Promise((r) => server.close(r));
+    }
   });
 });
