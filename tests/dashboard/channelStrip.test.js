@@ -7,17 +7,16 @@
 
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import fs from 'fs';
+import { createRequire } from 'module';
+
+// channelStrip uses CJS `require('./liqClient')` — the ESM vi.mock below does not
+// intercept that require path, so for the async API we spy on the SAME shared CJS
+// instance (sibling idiom: voice.test.js / mixing.test.js).
+const nodeRequire = createRequire(import.meta.url);
+const liqClient = nodeRequire('../../dashboard/lib/liqClient');
 
 const CONFIG_PATH = '/shared/channel_strip.json';
 let files = {};
-
-vi.mock('../../dashboard/lib/liqClient', () => ({
-  default: {
-    getStripConfig: vi.fn().mockResolvedValue({ data: {} }),
-    setStripConfig: vi.fn().mockResolvedValue({ data: { ok: true } }),
-    getStripMetering: vi.fn().mockResolvedValue({ data: {} })
-  }
-}));
 
 beforeEach(() => {
   files = {};
@@ -33,8 +32,10 @@ beforeEach(() => {
   });
 });
 
-const { validateConfig, PARAM_RANGES, DEFAULTS, PRESETS, saveConfig, loadConfig } =
-  await import('../../dashboard/lib/channelStrip.js');
+const {
+  validateConfig, PARAM_RANGES, DEFAULTS, PRESETS, saveConfig, loadConfig,
+  getConfig, setConfig, setPreset, getMetering
+} = await import('../../dashboard/lib/channelStrip.js');
 
 // ---------------------------------------------------------------------------
 // validateConfig
@@ -207,5 +208,134 @@ describe('loadConfig', () => {
   it('returns null on corrupt JSON', () => {
     files[CONFIG_PATH] = 'broken';
     expect(loadConfig()).toBeNull();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// saveConfig — error path (pinned as-is)
+// ---------------------------------------------------------------------------
+describe('saveConfig error path', () => {
+  it('swallows write errors and logs to console.error (does not throw)', () => {
+    // writeFileSync is spied in beforeEach; override it to throw for this test.
+    fs.writeFileSync.mockImplementationOnce(() => { throw new Error('disk full'); });
+    const errSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    // pinned as-is: catch swallows the error, returns undefined, never re-throws.
+    let r;
+    expect(() => { r = saveConfig({ bypass: true }); }).not.toThrow();
+    expect(r).toBeUndefined();
+    expect(errSpy).toHaveBeenCalledWith('[channel-strip] save error:', 'disk full');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// getConfig — async API
+// ---------------------------------------------------------------------------
+describe('getConfig', () => {
+  it('returns res.data from liqClient.getStripConfig', async () => {
+    const spy = vi.spyOn(liqClient, 'getStripConfig')
+      .mockResolvedValue({ data: { bypass: false, comp_ratio: 3 } });
+    const result = await getConfig();
+    expect(result).toEqual({ bypass: false, comp_ratio: 3 });
+    expect(spy).toHaveBeenCalled();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// getMetering — async API
+// ---------------------------------------------------------------------------
+describe('getMetering', () => {
+  it('returns res.data from liqClient.getStripMetering', async () => {
+    const spy = vi.spyOn(liqClient, 'getStripMetering')
+      .mockResolvedValue({ data: { peak: -3.2 } });
+    const result = await getMetering();
+    expect(result).toEqual({ peak: -3.2 });
+    expect(spy).toHaveBeenCalled();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// setConfig — async API
+// ---------------------------------------------------------------------------
+describe('setConfig', () => {
+  it('returns {ok:false} when no valid params, without calling liqClient', async () => {
+    const setSpy = vi.spyOn(liqClient, 'setStripConfig').mockResolvedValue({ data: {} });
+    // pinned as-is: all-unknown input -> validated is empty -> early return, no liq call.
+    const result = await setConfig({ unknown_param: 1 });
+    expect(result).toEqual({ ok: false, error: 'no valid params' });
+    expect(setSpy).not.toHaveBeenCalled();
+  });
+
+  it('validates/clamps params, sends to liqClient, and returns setStripConfig res.data', async () => {
+    const setSpy = vi.spyOn(liqClient, 'setStripConfig')
+      .mockResolvedValue({ data: { ok: true, applied: 1 } });
+    // getStripConfig used to fetch full config for persistence.
+    vi.spyOn(liqClient, 'getStripConfig')
+      .mockResolvedValue({ data: { bypass: false, comp_ratio: 20 } });
+
+    // comp_ratio 50 is above max 20 -> clamped to 20 before send (pinned as-is).
+    const result = await setConfig({ comp_ratio: 50, unknown_param: 'x' });
+
+    expect(setSpy).toHaveBeenCalledWith({ comp_ratio: 20 });
+    // return value is setStripConfig's res.data (the SET response), not the fetched full config.
+    expect(result).toEqual({ ok: true, applied: 1 });
+  });
+
+  it('persists the full config fetched from liqClient to file when fullConfig.data is present', async () => {
+    vi.spyOn(liqClient, 'setStripConfig').mockResolvedValue({ data: { ok: true } });
+    vi.spyOn(liqClient, 'getStripConfig')
+      .mockResolvedValue({ data: { bypass: true, comp_ratio: 4 } });
+
+    await setConfig({ comp_ratio: 4 });
+
+    // pinned as-is: file holds the full config from getStripConfig, not the partial input.
+    expect(files[CONFIG_PATH]).toBeDefined();
+    const saved = JSON.parse(files[CONFIG_PATH]);
+    expect(saved).toEqual({ bypass: true, comp_ratio: 4 });
+  });
+
+  it('does NOT write file when fullConfig.data is falsy', async () => {
+    vi.spyOn(liqClient, 'setStripConfig').mockResolvedValue({ data: { ok: true } });
+    vi.spyOn(liqClient, 'getStripConfig').mockResolvedValue({ data: null });
+
+    await setConfig({ comp_ratio: 4 });
+
+    // pinned as-is: `if (fullConfig.data)` guard skips saveConfig when data is null.
+    expect(files[CONFIG_PATH]).toBeUndefined();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// setPreset — async API
+// ---------------------------------------------------------------------------
+describe('setPreset', () => {
+  it('returns error object for unknown preset, without calling liqClient', async () => {
+    const setSpy = vi.spyOn(liqClient, 'setStripConfig').mockResolvedValue({ data: {} });
+    // pinned as-is: error message interpolates the name with no quoting.
+    const result = await setPreset('does_not_exist');
+    expect(result).toEqual({ ok: false, error: 'unknown preset: does_not_exist' });
+    expect(setSpy).not.toHaveBeenCalled();
+  });
+
+  it('sends the preset object to liqClient and saves it to file', async () => {
+    const setSpy = vi.spyOn(liqClient, 'setStripConfig')
+      .mockResolvedValue({ data: { ok: true, n: 5 } });
+
+    const result = await setPreset('clean_voice');
+
+    // pinned as-is: the raw PRESETS object is sent (not validated/clamped).
+    expect(setSpy).toHaveBeenCalledWith(PRESETS.clean_voice);
+    // file holds the preset object itself.
+    const saved = JSON.parse(files[CONFIG_PATH]);
+    expect(saved).toEqual(PRESETS.clean_voice);
+    // return shape wraps liq res.data under `data`.
+    expect(result).toEqual({ ok: true, preset: 'clean_voice', data: { ok: true, n: 5 } });
+  });
+
+  it('handles the bypass preset name', async () => {
+    const setSpy = vi.spyOn(liqClient, 'setStripConfig').mockResolvedValue({ data: {} });
+    const result = await setPreset('bypass');
+    expect(result.ok).toBe(true);
+    expect(result.preset).toBe('bypass');
+    expect(setSpy).toHaveBeenCalledWith(PRESETS.bypass);
   });
 });

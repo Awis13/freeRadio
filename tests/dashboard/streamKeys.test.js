@@ -9,7 +9,22 @@
  */
 
 import { describe, it, expect, beforeEach, vi } from 'vitest';
+import crypto from 'crypto';
 import { mockFsMap } from './helpers.js';
+
+// Re-create the module's exact v2 wire format (aes-256-gcm, AAD 'stream-keys',
+// sha256(secret) key) so a test can plant a record whose *decrypt succeeds* but
+// whose plaintext is arbitrary — used to reach loadKeys()'s JSON.parse catch.
+const V2_ALGO = 'aes-256-gcm';
+const V2_AAD = Buffer.from('stream-keys', 'utf8');
+function makeV2Blob(plaintext, secret) {
+  const key = crypto.createHash('sha256').update(secret).digest();
+  const iv = crypto.randomBytes(12);
+  const cipher = crypto.createCipheriv(V2_ALGO, key, iv);
+  cipher.setAAD(V2_AAD);
+  const enc = Buffer.concat([cipher.update(plaintext, 'utf8'), cipher.final()]);
+  return ['v2', iv.toString('hex'), cipher.getAuthTag().toString('hex'), enc.toString('hex')].join(':');
+}
 
 const KEYS_FILE = '/shared/stream_keys.enc';
 const TIER_FILE = '/shared/tier.json';
@@ -313,4 +328,103 @@ describe('v1 legacy key file — data-loss chain', () => {
   // in principle. On Node 20 (Docker/CI) the function exists but is deprecated.
   // Tracked as a known data-loss issue; the fix is a separate ticket. The chain
   // tests above carry the real pin — both Node paths land in decrypt()'s catch.
+});
+
+// ---------------------------------------------------------------------------
+// loadKeys — outer catch (decrypt succeeds, JSON.parse fails)
+//
+// decrypt() can legitimately return a non-null string that is not valid JSON
+// (e.g. a v2 record whose plaintext was never JSON, or corruption that still
+// authenticates). JSON.parse then throws and is swallowed by loadKeys()'s
+// OUTER try/catch — distinct from the `if (!decrypted)` early return, which
+// only fires when decrypt() returns null. Pinned as-is: returns {platforms:{}}.
+// ---------------------------------------------------------------------------
+describe('loadKeys — valid decrypt but non-JSON plaintext', () => {
+  it('swallows JSON.parse failure and reads back empty', () => {
+    // A genuine v2 record (decrypt succeeds) whose plaintext is not JSON.
+    files[KEYS_FILE] = makeV2Blob('this-is-not-json{{{', process.env.STREAM_KEYS_SECRET);
+
+    // loadKeys outer catch -> {platforms:{}}; getPlatforms maps that to {}.
+    expect(getPlatforms()).toEqual({});
+    expect(getPlatformConfig('anything')).toBeNull();
+    expect(getEnabledRtmpUrls()).toEqual([]);
+
+    // Pinned as-is: a pure read does NOT rewrite the file — the throw happens
+    // before the auto-migration branch, so the bad v2 blob survives untouched.
+    expect(files[KEYS_FILE]).toMatch(/^v2:/);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// getKey — missing STREAM_KEYS_SECRET
+//
+// getKey() reads process.env lazily on every encrypt/decrypt. With no secret it
+// throws, and that throw is NOT caught on the write path: saveKeys -> encrypt ->
+// getKey propagates straight out of setPlatform. (loadKeys for a missing file
+// never decrypts, so it returns {platforms:{}} first without touching getKey.)
+// ---------------------------------------------------------------------------
+describe('getKey — STREAM_KEYS_SECRET unset', () => {
+  it('setPlatform on the write path propagates the "not set" error', () => {
+    delete process.env.STREAM_KEYS_SECRET; // no encryption key available
+
+    // Pinned as-is: the exact refuse-to-start message bubbles up unhandled.
+    expect(() =>
+      setPlatform('yt', { enabled: true, streamKey: 'k', rtmpUrl: 'rtmp://yt.com' })
+    ).toThrow('[streamKeys] STREAM_KEYS_SECRET is not set — refusing to start without encryption key');
+  });
+
+  it('a read of an EXISTING file decrypts with the wrong/absent key and degrades to empty', () => {
+    // Seed a real v2 record (written under the test secret), then drop the secret.
+    files[KEYS_FILE] = makeV2Blob(JSON.stringify({ platforms: { yt: {} } }), process.env.STREAM_KEYS_SECRET);
+    delete process.env.STREAM_KEYS_SECRET;
+
+    // decrypt() calls getKey() which throws; that throw is caught INSIDE decrypt()
+    // (returns null) -> loadKeys early-returns {platforms:{}}. No exception escapes.
+    expect(getPlatforms()).toEqual({});
+  });
+});
+
+// ---------------------------------------------------------------------------
+// buildRtmpUrl — uncovered branches (exercised via getEnabledRtmpUrls)
+// ---------------------------------------------------------------------------
+describe('buildRtmpUrl — key-already-in-path and malformed-URL fallback', () => {
+  it('returns the URL unchanged when the stream key is already in the path', () => {
+    // pathname.includes(key) short-circuit: URL is normalized by `new URL` and
+    // returned as-is, the key is NOT appended a second time.
+    setPlatform('yt', {
+      enabled: true,
+      streamKey: 'mykey',
+      rtmpUrl: 'rtmp://srv.com/live/mykey'
+    });
+    const urls = getEnabledRtmpUrls();
+    expect(urls.length).toBe(1);
+    // Pinned as-is: new URL() round-trips this to the same string (no trailing
+    // mutation, key not duplicated).
+    expect(urls[0].url).toBe('rtmp://srv.com/live/mykey');
+  });
+
+  it('malformed rtmpUrl (no scheme) falls back to slash-join, no /app forced', () => {
+    // `new URL('not a url')` throws -> catch fallback: ensure trailing slash,
+    // then append the key. No scheme, no host parsing, no Kick /app handling.
+    setPlatform('weird', {
+      enabled: true,
+      streamKey: 'k1',
+      rtmpUrl: 'not a url'
+    });
+    const urls = getEnabledRtmpUrls();
+    expect(urls.length).toBe(1);
+    // Pinned as-is: 'not a url' has no trailing '/', so one is added -> 'not a url/' + 'k1'.
+    expect(urls[0].url).toBe('not a url/k1');
+  });
+
+  it('malformed rtmpUrl that already ends with slash is not double-slashed', () => {
+    setPlatform('weird2', {
+      enabled: true,
+      streamKey: 'k1',
+      rtmpUrl: 'justhost/'
+    });
+    const urls = getEnabledRtmpUrls();
+    // Pinned as-is: already ends with '/', so the key is appended directly.
+    expect(urls[0].url).toBe('justhost/k1');
+  });
 });

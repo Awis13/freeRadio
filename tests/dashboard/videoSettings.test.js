@@ -61,6 +61,29 @@ describe('getVideoSettings', () => {
     files[VIDEO_FILE] = JSON.stringify({ enhanced: 1 });
     expect(getVideoSettings().enhanced).toBe(false);
   });
+
+  it('treats a missing enhanced key as false (undefined !== true)', () => {
+    files[VIDEO_FILE] = JSON.stringify({ timestamp: 5000 });
+    expect(getVideoSettings().enhanced).toBe(false);
+  });
+
+  it('returns {enhanced:false} when readFileSync throws (swallowed catch)', () => {
+    // existsSync says the file is present, but the read blows up -> the
+    // empty catch swallows it and the default {enhanced:false} is returned.
+    files[VIDEO_FILE] = JSON.stringify({ enhanced: true });
+    fs.readFileSync.mockImplementationOnce(() => { throw new Error('EIO'); });
+    expect(getVideoSettings().enhanced).toBe(false);
+  });
+
+  it('returns {enhanced:false} when existsSync throws (swallowed catch)', () => {
+    fs.existsSync.mockImplementationOnce(() => { throw new Error('EACCES'); });
+    expect(getVideoSettings().enhanced).toBe(false);
+  });
+
+  it('returns exactly the shape {enhanced} with no extra keys (timestamp dropped on read)', () => {
+    files[VIDEO_FILE] = JSON.stringify({ enhanced: true, timestamp: 9999 });
+    expect(getVideoSettings()).toEqual({ enhanced: true });
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -92,6 +115,39 @@ describe('setVideoSettings', () => {
     expect(written.timestamp).toBeDefined();
     expect(typeof written.timestamp).toBe('number');
   });
+
+  it('stamps timestamp from Date.now()', () => {
+    const nowSpy = vi.spyOn(Date, 'now').mockReturnValue(1234567890);
+    const result = setVideoSettings({ enhanced: true });
+    expect(result.timestamp).toBe(1234567890);
+    expect(JSON.parse(files[VIDEO_FILE]).timestamp).toBe(1234567890);
+    nowSpy.mockRestore();
+  });
+
+  it('writes a compact JSON string (no pretty-print) with both keys', () => {
+    const nowSpy = vi.spyOn(Date, 'now').mockReturnValue(42);
+    setVideoSettings({ enhanced: true });
+    // No indentation arg passed to JSON.stringify -> single-line output.
+    expect(files[VIDEO_FILE]).toBe('{"enhanced":true,"timestamp":42}');
+    nowSpy.mockRestore();
+  });
+
+  it('returns the same object that was serialized (enhanced + timestamp only)', () => {
+    const nowSpy = vi.spyOn(Date, 'now').mockReturnValue(7);
+    const result = setVideoSettings({ enhanced: false });
+    expect(result).toEqual({ enhanced: false, timestamp: 7 });
+    nowSpy.mockRestore();
+  });
+
+  it('propagates a writeFileSync failure (no swallow on write path)', () => {
+    fs.writeFileSync.mockImplementationOnce(() => { throw new Error('ENOSPC'); });
+    expect(() => setVideoSettings({ enhanced: true })).toThrow('ENOSPC');
+  });
+
+  it('treats a missing enhanced key as false (undefined !== true)', () => {
+    const result = setVideoSettings({});
+    expect(result.enhanced).toBe(false);
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -110,6 +166,24 @@ describe('getVideoEnhancementFilter', () => {
   });
 
   it('returns null when no file exists', () => {
+    expect(getVideoEnhancementFilter()).toBeNull();
+  });
+
+  it('returns the exact enhancement filter chain when enabled', () => {
+    files[VIDEO_FILE] = JSON.stringify({ enhanced: true });
+    expect(getVideoEnhancementFilter()).toBe(
+      'eq=saturation=1.15:contrast=1.03,unsharp=3:3:0.5,deband'
+    );
+  });
+
+  it('returns null when enhanced is a truthy non-true value (strict equality upstream)', () => {
+    files[VIDEO_FILE] = JSON.stringify({ enhanced: 'true' });
+    expect(getVideoEnhancementFilter()).toBeNull();
+  });
+
+  it('returns null when the file read throws (swallowed -> default false)', () => {
+    files[VIDEO_FILE] = JSON.stringify({ enhanced: true });
+    fs.readFileSync.mockImplementationOnce(() => { throw new Error('EIO'); });
     expect(getVideoEnhancementFilter()).toBeNull();
   });
 });

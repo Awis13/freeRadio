@@ -72,6 +72,22 @@ describe('getQueue', () => {
     vi.spyOn(fs, 'readFileSync').mockImplementation(() => { throw new Error('EPERM'); });
     expect(getQueue()).toEqual([]);
   });
+
+  // Quirk: only the whole-content is trim()'d, not each line. Inner whitespace
+  // lines survive split('\n') because filter(Boolean) only drops EMPTY strings,
+  // and a "   " line is truthy -> it is kept verbatim.
+  it('keeps whitespace-only inner lines (only outer content is trimmed)', () => {
+    files[QUEUE_FILE] = 'video1.mp4\n   \nvideo2.mp4\n';
+    expect(getQueue()).toEqual(['video1.mp4', '   ', 'video2.mp4']);
+  });
+
+  // Quirk: entries are NOT individually trimmed; an interior CRLF leaves a
+  // trailing \r on that entry. Only the LAST entry loses its \r because the
+  // whole-content trim() strips the final '\r\n'.
+  it('does not strip interior carriage returns but the outer trim drops the last', () => {
+    files[QUEUE_FILE] = 'video1.mp4\r\nvideo2.mp4\r\n';
+    expect(getQueue()).toEqual(['video1.mp4\r', 'video2.mp4']);
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -98,6 +114,29 @@ describe('push', () => {
     push('video1.mp4');
     expect(fs.mkdirSync).toHaveBeenCalled();
   });
+
+  // Quirk: push() only trims the OUTER whitespace of the filename, then appends
+  // exactly one '\n'. Inner whitespace is preserved verbatim.
+  it('preserves inner whitespace and appends exactly one newline', () => {
+    push('  my video.mp4  ');
+    expect(files[QUEUE_FILE]).toBe('my video.mp4\n');
+  });
+
+  // Quirk: unlike clear(), push() does NOT swallow errors. A failing mkdirSync
+  // propagates to the caller.
+  it('propagates mkdirSync errors (no swallow)', () => {
+    vi.spyOn(fs, 'mkdirSync').mockImplementation(() => {
+      throw new Error('EACCES');
+    });
+    expect(() => push('video1.mp4')).toThrow('EACCES');
+  });
+
+  // Quirk: a filename that is only whitespace becomes a bare '\n' line after
+  // trim(), which getQueue() would then filter out as blank.
+  it('writes a bare newline for a whitespace-only filename', () => {
+    push('   ');
+    expect(files[QUEUE_FILE]).toBe('\n');
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -112,6 +151,16 @@ describe('clear', () => {
 
   it('does not throw when file does not exist', () => {
     expect(() => clear()).not.toThrow();
+  });
+
+  // Pins line 26: clear() swallows any write error silently (empty catch).
+  // The throwing writeFileSync is caught and clear() returns undefined.
+  it('swallows write errors silently', () => {
+    vi.spyOn(fs, 'writeFileSync').mockImplementation(() => {
+      throw new Error('EPERM');
+    });
+    expect(() => clear()).not.toThrow();
+    expect(clear()).toBeUndefined();
   });
 });
 
