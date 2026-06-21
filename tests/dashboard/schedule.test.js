@@ -637,7 +637,9 @@ let startExec;
  * the require. liqClient is kept as a whole-object (`const liq = require(...)`)
  * and its methods are read at call time, so it can be spied in any order.
  * Deleting schedule from the cache also resets its module-level state
- * (currentSlotId / currentPlaylistId back to null).
+ * (currentSlotId / currentPlaylistId back to null). Also silences console.log /
+ * console.error, which the executor writes on every tick — every executor
+ * describe block needs this, so it lives here next to the rest of the spies.
  */
 function freshExecutor() {
   vi.spyOn(playlistLive, 'resolvePlaylist').mockReturnValue([]);
@@ -646,12 +648,13 @@ function freshExecutor() {
   vi.spyOn(liqLive, 'skip').mockResolvedValue({});
   vi.spyOn(liqLive, 'pushTrack').mockResolvedValue({});
   vi.spyOn(liqLive, 'getQueueLength').mockResolvedValue({ data: { length: 5 } });
+  vi.spyOn(console, 'log').mockImplementation(() => {});
+  vi.spyOn(console, 'error').mockImplementation(() => {});
 
   delete nodeRequire.cache[nodeRequire.resolve(SCHEDULE_SPEC)];
   schedLive = nodeRequire(SCHEDULE_SPEC);
   tick = schedLive._test.executeScheduleTick;
   startExec = schedLive._test.startExecutor;
-  return schedLive._test;
 }
 
 // Use getNowInTimezone from the live module to build an "active now" slot.
@@ -675,8 +678,6 @@ describe('executeScheduleTick — slot-changed broadcast contract', () => {
   beforeEach(() => {
     vi.restoreAllMocks();
     freshExecutor();
-    vi.spyOn(console, 'log').mockImplementation(() => {});
-    vi.spyOn(console, 'error').mockImplementation(() => {});
   });
 
   it('does not throw when broadcastFn is null (default, never injected)', async () => {
@@ -694,10 +695,9 @@ describe('executeScheduleTick — slot-changed broadcast contract', () => {
     const broadcast = vi.fn();
     // startExecutor injects broadcastFn, then runs executeScheduleTick once.
     startExec(() => ({}), '/visuals', broadcast);
-    // The tick is async; let its microtasks settle.
-    await Promise.resolve();
-    await Promise.resolve();
-    await Promise.resolve();
+    // The tick is async; wait on the observable effect instead of draining a
+    // magic number of microtasks tied to the tick's internal promise depth.
+    await vi.waitFor(() => expect(broadcast).toHaveBeenCalled());
 
     expect(broadcast).toHaveBeenCalledWith('schedule-slot', {
       slotId: id,
@@ -713,8 +713,6 @@ describe('executeScheduleTick — playlist switch on slot change', () => {
   beforeEach(() => {
     vi.restoreAllMocks();
     freshExecutor();
-    vi.spyOn(console, 'log').mockImplementation(() => {});
-    vi.spyOn(console, 'error').mockImplementation(() => {});
   });
 
   it('clears queue, skips, and pushes the first 5 resolved tracks as processed paths', async () => {
@@ -784,8 +782,6 @@ describe('executeScheduleTick — video playlist activation file', () => {
   beforeEach(() => {
     vi.restoreAllMocks();
     freshExecutor();
-    vi.spyOn(console, 'log').mockImplementation(() => {});
-    vi.spyOn(console, 'error').mockImplementation(() => {});
   });
 
   it('writes ACTIVE_FILE with {id, name, videos, activatedAt} when slot has a video playlist', async () => {
@@ -850,8 +846,6 @@ describe('executeScheduleTick — refill path (slot unchanged)', () => {
   beforeEach(() => {
     vi.restoreAllMocks();
     freshExecutor();
-    vi.spyOn(console, 'log').mockImplementation(() => {});
-    vi.spyOn(console, 'error').mockImplementation(() => {});
   });
 
   /**
@@ -954,8 +948,6 @@ describe('startExecutor (P1-7)', () => {
   beforeEach(() => {
     vi.restoreAllMocks();
     freshExecutor();
-    vi.spyOn(console, 'log').mockImplementation(() => {});
-    vi.spyOn(console, 'error').mockImplementation(() => {});
   });
 
   it('saves the schedule after cleaning up past events on start', async () => {

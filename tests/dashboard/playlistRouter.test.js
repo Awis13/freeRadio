@@ -22,81 +22,30 @@
  * fs strategy: playlist.js is CommonJS required through Node's native require
  * chain, sharing this process's `fs` instance — so vi.spyOn(fs, ...) intercepts
  * loadPlaylists/savePlaylists/existsSync/readdirSync inside the endpoint. We back
- * PLAYLIST_FILE and the musicDir existence/listing with in-memory maps.
+ * PLAYLIST_FILE and the musicDir existence/listing with the shared in-memory fs
+ * harness (installPlaylistFsHarness), which delegates unowned paths to the real
+ * fs so body-parser's lazy require() at request time does not blow up.
  */
 
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
-import fs from 'fs';
-import path from 'path';
-import express from 'express';
 import request from 'supertest';
 
-import { createPlaylistRouter } from '../../dashboard/lib/playlist.js';
+import { installPlaylistFsHarness } from './playlistHarness.js';
 
-const PLAYLIST_FILE = '/shared/playlists.json';
-const MUSIC_DIR = '/music';
-
-let files = {};
-let musicFiles = [];
-
-// Keep references to the real implementations. express.json()'s body-parser
-// lazily require()s modules at request time, which calls fs.readFileSync to
-// load their source — so our mocks MUST delegate any path they don't own to
-// the real fs, otherwise module loading during a request blows up.
-const realReadFileSync = fs.readFileSync;
-const realExistsSync = fs.existsSync;
-const realReaddirSync = fs.readdirSync;
+let h;
+let makeApp;
+let seed;
+let savedPlaylists;
 
 beforeEach(() => {
-  files = {};
-  musicFiles = [];
   vi.restoreAllMocks();
-
-  vi.spyOn(fs, 'existsSync').mockImplementation((p) => {
-    if (typeof p === 'string') {
-      if (p in files) return true;
-      const base = path.basename(p);
-      if (p.startsWith(MUSIC_DIR)) return musicFiles.includes(base);
-      if (p === PLAYLIST_FILE) return false;
-    }
-    return realExistsSync(p);
-  });
-  vi.spyOn(fs, 'readFileSync').mockImplementation((p, ...rest) => {
-    if (typeof p === 'string' && p in files) return files[p];
-    if (p === PLAYLIST_FILE) throw new Error('ENOENT');
-    return realReadFileSync(p, ...rest);
-  });
-  vi.spyOn(fs, 'writeFileSync').mockImplementation((p, data) => {
-    files[p] = data;
-  });
-  vi.spyOn(fs, 'readdirSync').mockImplementation((dir, ...rest) => {
-    if (dir === MUSIC_DIR) return musicFiles;
-    return realReaddirSync(dir, ...rest);
-  });
+  h = installPlaylistFsHarness();
+  ({ makeApp, seed, savedPlaylists } = h);
 });
 
 afterEach(() => {
   vi.restoreAllMocks();
 });
-
-// Build an app with the real router. getBpmMap is invoked for smart-playlist
-// resolution (GET '/' and GET '/:id'); default to an empty BPM map.
-function makeApp(bpmMap = {}) {
-  const app = express();
-  app.use('/api/playlists', createPlaylistRouter(MUSIC_DIR, () => bpmMap));
-  return app;
-}
-
-// Seed the in-memory PLAYLIST_FILE directly (bypasses POST so we can pin GET/PUT
-// /:id against arbitrary stored shapes, including smart playlists).
-function seed(playlists) {
-  files[PLAYLIST_FILE] = JSON.stringify({ playlists });
-}
-
-// Read back the persisted playlists (whatever the last savePlaylists wrote).
-function savedPlaylists() {
-  return JSON.parse(files[PLAYLIST_FILE]).playlists;
-}
 
 // ---------------------------------------------------------------------------
 // GET / — list with trackCount
@@ -109,7 +58,7 @@ describe('GET / — list', () => {
   });
 
   it('manual trackCount = number of tracks whose file EXISTS in musicDir', async () => {
-    musicFiles = ['a.mp3', 'c.mp3']; // b.mp3 missing on disk
+    h.setMusicFiles(['a.mp3', 'c.mp3']); // b.mp3 missing on disk
     seed({
       pl_1: { id: 'pl_1', name: 'Manual', type: 'manual', tracks: ['a.mp3', 'b.mp3', 'c.mp3'] }
     });
@@ -124,7 +73,7 @@ describe('GET / — list', () => {
 
   it('smart trackCount = resolveSmartPlaylist(...).length over musicDir listing', async () => {
     // Two audio files in musicDir; smart playlist has no rules → all match.
-    musicFiles = ['x.mp3', 'y.flac'];
+    h.setMusicFiles(['x.mp3', 'y.flac']);
     seed({
       pl_smart: { id: 'pl_smart', name: 'Smart', type: 'smart', rules: {} }
     });
@@ -134,7 +83,7 @@ describe('GET / — list', () => {
   });
 
   it('smart trackCount honours a namePattern rule', async () => {
-    musicFiles = ['rock_1.mp3', 'rock_2.mp3', 'jazz_1.mp3'];
+    h.setMusicFiles(['rock_1.mp3', 'rock_2.mp3', 'jazz_1.mp3']);
     seed({
       pl_smart: { id: 'pl_smart', name: 'Rock', type: 'smart', rules: { namePattern: '^rock_' } }
     });
@@ -144,7 +93,7 @@ describe('GET / — list', () => {
   });
 
   it('lists multiple playlists, each carrying its own trackCount', async () => {
-    musicFiles = ['a.mp3', 'b.mp3'];
+    h.setMusicFiles(['a.mp3', 'b.mp3']);
     seed({
       pl_1: { id: 'pl_1', name: 'M', type: 'manual', tracks: ['a.mp3'] },
       pl_2: { id: 'pl_2', name: 'S', type: 'smart', rules: {} }
@@ -235,7 +184,7 @@ describe('GET /:id — details', () => {
   });
 
   it('returns playlist spread with resolvedTracks + trackCount (manual)', async () => {
-    musicFiles = ['a.mp3', 'c.mp3']; // b.mp3 missing
+    h.setMusicFiles(['a.mp3', 'c.mp3']); // b.mp3 missing
     seed({
       pl_1: { id: 'pl_1', name: 'M', type: 'manual', tracks: ['a.mp3', 'b.mp3', 'c.mp3'] }
     });
@@ -249,7 +198,7 @@ describe('GET /:id — details', () => {
   });
 
   it('resolves a smart playlist via the musicDir listing', async () => {
-    musicFiles = ['k1.mp3', 'k2.mp3'];
+    h.setMusicFiles(['k1.mp3', 'k2.mp3']);
     seed({
       pl_s: { id: 'pl_s', name: 'S', type: 'smart', rules: {} }
     });

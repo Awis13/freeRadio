@@ -19,60 +19,30 @@
  * fs strategy: playlist.js is CommonJS required through Node's native require
  * chain, sharing this process's `fs` instance — so vi.spyOn(fs, ...) intercepts
  * loadPlaylists/savePlaylists/existsSync inside the endpoint. We back PLAYLIST_FILE
- * and the musicDir existence check with in-memory maps, mirroring playlist.test.js.
+ * and the musicDir existence check with the shared in-memory fs harness
+ * (installPlaylistFsHarness), which is also used by playlistRouter.test.js.
  */
 
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
-import fs from 'fs';
-import path from 'path';
-import express from 'express';
 import request from 'supertest';
 
-import { createPlaylistRouter } from '../../dashboard/lib/playlist.js';
+import { installPlaylistFsHarness } from './playlistHarness.js';
+
 const { parseM3U } = (await import('../../dashboard/lib/playlist.js'))._test;
 
-const PLAYLIST_FILE = '/shared/playlists.json';
-const MUSIC_DIR = '/music';
-
-let files = {};
-let musicFiles = [];
+let h;
+let makeApp;
+let savedPlaylists;
 
 beforeEach(() => {
-  files = {};
-  musicFiles = [];
   vi.restoreAllMocks();
-
-  vi.spyOn(fs, 'existsSync').mockImplementation((p) => {
-    if (p in files) return true;
-    const base = path.basename(p);
-    if (p.startsWith(MUSIC_DIR) && musicFiles.includes(base)) return true;
-    return false;
-  });
-  vi.spyOn(fs, 'readFileSync').mockImplementation((p) => {
-    if (p in files) return files[p];
-    throw new Error('ENOENT');
-  });
-  vi.spyOn(fs, 'writeFileSync').mockImplementation((p, data) => {
-    files[p] = data;
-  });
+  h = installPlaylistFsHarness();
+  ({ makeApp, savedPlaylists } = h);
 });
 
 afterEach(() => {
   vi.restoreAllMocks();
 });
-
-// Build an app with the real import router. getBpmMap is not used by /import,
-// but createPlaylistRouter requires it — return an empty map.
-function makeApp() {
-  const app = express();
-  app.use('/api/playlists', createPlaylistRouter(MUSIC_DIR, () => ({})));
-  return app;
-}
-
-// Convenience: read back the single saved playlist from the writeFileSync spy.
-function savedPlaylists() {
-  return JSON.parse(files[PLAYLIST_FILE]).playlists;
-}
 
 // ---------------------------------------------------------------------------
 // parseM3U — pure parser
@@ -132,7 +102,7 @@ describe('POST /import — no file', () => {
 describe('POST /import — m3u', () => {
   it('imports only existing tracks; importedCount vs totalParsed gap pinned', async () => {
     // Three parsed tracks, but only two exist in musicDir.
-    musicFiles = ['a.mp3', 'c.mp3'];
+    h.setMusicFiles(['a.mp3', 'c.mp3']);
     const content = 'a.mp3\nb.mp3\nc.mp3\n';
 
     const res = await request(makeApp())
@@ -154,7 +124,7 @@ describe('POST /import — m3u', () => {
   });
 
   it('persists the new playlist via savePlaylists (writeFileSync payload)', async () => {
-    musicFiles = ['x.mp3'];
+    h.setMusicFiles(['x.mp3']);
     const res = await request(makeApp())
       .post('/api/playlists/import')
       .field('name', 'Persisted')
@@ -168,7 +138,7 @@ describe('POST /import — m3u', () => {
   });
 
   it('drops ALL tracks when none exist; importedCount 0, totalParsed kept', async () => {
-    musicFiles = [];
+    h.setMusicFiles([]);
     const res = await request(makeApp())
       .post('/api/playlists/import')
       .attach('file', Buffer.from('a.mp3\nb.mp3\n'), 'none.m3u');
@@ -184,7 +154,7 @@ describe('POST /import — m3u', () => {
 // ---------------------------------------------------------------------------
 describe('POST /import — name resolution', () => {
   it('explicit body.name overrides the originalname-derived name', async () => {
-    musicFiles = ['a.mp3'];
+    h.setMusicFiles(['a.mp3']);
     const res = await request(makeApp())
       .post('/api/playlists/import')
       .field('name', 'Explicit')
@@ -193,7 +163,7 @@ describe('POST /import — name resolution', () => {
   });
 
   it('derives name from originalname minus extension when no name field', async () => {
-    musicFiles = ['a.mp3'];
+    h.setMusicFiles(['a.mp3']);
     const res = await request(makeApp())
       .post('/api/playlists/import')
       .attach('file', Buffer.from('a.mp3\n'), 'My Set.m3u');
@@ -201,7 +171,7 @@ describe('POST /import — name resolution', () => {
   });
 
   it('AS-IS edge: originalname ".m3u" strips to "" then falls back to "Imported"', async () => {
-    musicFiles = ['a.mp3'];
+    h.setMusicFiles(['a.mp3']);
     const res = await request(makeApp())
       .post('/api/playlists/import')
       .attach('file', Buffer.from('a.mp3\n'), '.m3u');
@@ -214,7 +184,7 @@ describe('POST /import — name resolution', () => {
 // ---------------------------------------------------------------------------
 describe('POST /import — pls', () => {
   it('parses a real PLS sample, basename + audio-ext filter', async () => {
-    musicFiles = ['first.mp3', 'second.flac'];
+    h.setMusicFiles(['first.mp3', 'second.flac']);
     const content = [
       '[playlist]',
       'NumberOfEntries=2',
@@ -238,7 +208,7 @@ describe('POST /import — pls', () => {
   it('AS-IS quirk: File-prefix match is loose — numbered File1/File2 lines all match', async () => {
     // Pins that l.startsWith('File') accepts any "File..." line, including
     // multi-digit indices, while non-File lines (Title=, Length=) are ignored.
-    musicFiles = ['a.mp3', 'b.mp3', 'c.mp3'];
+    h.setMusicFiles(['a.mp3', 'b.mp3', 'c.mp3']);
     const content = [
       'File1=a.mp3',
       'Title1=A',
@@ -256,7 +226,7 @@ describe('POST /import — pls', () => {
   });
 
   it('pls existence filter drops non-existing tracks but keeps totalParsed', async () => {
-    musicFiles = ['a.mp3']; // b.mp3 missing
+    h.setMusicFiles(['a.mp3']); // b.mp3 missing
     const content = 'File1=a.mp3\nFile2=b.mp3\n';
     const res = await request(makeApp())
       .post('/api/playlists/import')
