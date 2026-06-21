@@ -5,8 +5,22 @@
  * All pure utility functions and refactored state-dependent logic are covered.
  */
 
-import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
-import {
+import { describe, it, expect } from 'vitest';
+import { createRequire } from 'node:module';
+import { readFileSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
+import path from 'node:path';
+import vm from 'node:vm';
+
+// utils.js is now a dual-target UMD module (window.FRUtils + module.exports),
+// loaded directly by the browser as a plain <script>. Consume it here via CJS
+// require so the same shipped file is exercised by the suite.
+const require = createRequire(import.meta.url);
+const utilsPath = path.resolve(
+  path.dirname(fileURLToPath(import.meta.url)),
+  '../../dashboard/public/utils.js'
+);
+const {
   pad,
   fmtSize,
   cleanTrackName,
@@ -18,7 +32,7 @@ import {
   deriveUiMode,
   uniquePlatformName,
   escapeHtml,
-} from '../../dashboard/public/utils.js';
+} = require(utilsPath);
 
 // ---------------------------------------------------------------------------
 // pad(n)
@@ -339,4 +353,58 @@ describe('escapeHtml(str)', () => {
 
   it('passes through undefined unchanged', () =>
     expect(escapeHtml(undefined)).toBe(undefined));
+});
+
+// ---------------------------------------------------------------------------
+// browser-global attachment (window.FRUtils)
+//
+// This is the REAL pin: it executes utils.js the way the browser does (as a
+// plain script, with `window` present but no CommonJS `module`), and asserts
+// the public API gets attached to window.FRUtils. The ESM/CJS export path is
+// already covered above; this proves the shipped browser entrypoint works.
+// ---------------------------------------------------------------------------
+describe('window.FRUtils (browser-global attachment)', () => {
+  function loadInBrowserLikeContext() {
+    const source = readFileSync(utilsPath, 'utf8');
+    const fakeWindow = {};
+    // Mimic a browser: `window` exists, `self` points at the global, and
+    // neither `module` nor `exports` is defined (no CommonJS).
+    const sandbox = {};
+    sandbox.window = fakeWindow;
+    sandbox.self = sandbox;
+    vm.createContext(sandbox);
+    vm.runInContext(source, sandbox, { filename: 'utils.js' });
+    return fakeWindow;
+  }
+
+  it('attaches the API to window.FRUtils', () => {
+    const win = loadInBrowserLikeContext();
+    expect(win.FRUtils).toBeTypeOf('object');
+  });
+
+  it('exposes every public function on window.FRUtils', () => {
+    const win = loadInBrowserLikeContext();
+    for (const name of [
+      'pad', 'fmtSize', 'cleanTrackName', 'escapeHtml', 'timeAgo',
+      'formatTime', 'pttFormatTime', 'computeMixDur', 'getBroadcastPhase',
+      'uniquePlatformName', 'deriveUiMode',
+    ]) {
+      expect(win.FRUtils[name]).toBeTypeOf('function');
+    }
+  });
+
+  it('window.FRUtils.pad(3) === "03"', () => {
+    const win = loadInBrowserLikeContext();
+    expect(win.FRUtils.pad(3)).toBe('03');
+  });
+
+  it('window.FRUtils.fmtSize(1024) === "1.0 KB"', () => {
+    const win = loadInBrowserLikeContext();
+    expect(win.FRUtils.fmtSize(1024)).toBe('1.0 KB');
+  });
+
+  it('window.FRUtils.escapeHtml escapes <script>', () => {
+    const win = loadInBrowserLikeContext();
+    expect(win.FRUtils.escapeHtml('<b>')).toBe('&lt;b&gt;');
+  });
 });
