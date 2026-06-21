@@ -118,6 +118,19 @@ describe('POST /cue', () => {
     const cuedPath = liqClient.cueTrack.mock.calls[0][0];
     expect(cuedPath).toMatch(/\.(flac|ogg|aac|m4a)$/);
   });
+
+  it('returns 500 when readdir of the processed dir fails', async () => {
+    spy(vi.spyOn(fs.promises, 'readdir').mockRejectedValue(new Error('EACCES')));
+
+    const router = createDjRouter('/music');
+    const handler = getRouteHandler(router, 'post', '/cue');
+    const res = mockRes();
+
+    await handler({}, res);
+
+    expect(res.status).toHaveBeenCalledWith(500);
+    expect(res.body.error).toBe('EACCES');
+  });
 });
 
 // ─── POST /resume ─────────────────────────────────────────────

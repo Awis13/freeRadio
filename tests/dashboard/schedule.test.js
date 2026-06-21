@@ -2,42 +2,27 @@
  * tests/dashboard/schedule.test.js
  *
  * Unit tests for dashboard/lib/schedule.js — schedule module.
- * Tests pure functions: isTimeInRange, slotsOverlap, prevDate,
- * getNowInTimezone, getCurrentSlot, getNextSlot, cleanupPastEvents.
+ * Covers the pure functions (isTimeInRange, slotsOverlap, prevDate,
+ * getNowInTimezone, getCurrentSlot, getNextSlot, cleanupPastEvents,
+ * loadSchedule, saveSchedule) and the executor (executeScheduleTick,
+ * startExecutor).
  *
- * Dependencies (liqClient, playlist, videoPlaylist, history, express)
- * are mocked to isolate pure logic.
+ * Harness: schedule.js is loaded via createRequire (native CJS), NOT a mocked
+ * ESM import. schedule.js consumes its deps with `require(...)`, which the
+ * vitest ESM mock layer (vi.mock) does not intercept, so mocking that way would
+ * silently hit the real liqClient/playlist/etc. Instead, deps are driven by
+ * vi.spyOn on the live singletons (see freshExecutor). Loading through a single
+ * nodeRequire copy also gives v8 one instrumented module to count, and the
+ * executor tests fresh-require schedule between cases to reset its module-level
+ * state (currentSlotId / currentPlaylistId). fs is stubbed via vi.spyOn.
  */
 
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import fs from 'fs';
+import { createRequire } from 'module';
 
-// Mock all schedule.js dependencies before importing
-vi.mock('../../dashboard/lib/liqClient', () => ({
-  default: {
-    clearQueue: vi.fn().mockResolvedValue({}),
-    skip: vi.fn().mockResolvedValue({}),
-    pushTrack: vi.fn().mockResolvedValue({}),
-    getQueueLength: vi.fn().mockResolvedValue({ data: { length: 5 } })
-  }
-}));
-
-vi.mock('../../dashboard/lib/playlist', () => ({
-  resolvePlaylist: vi.fn(() => []),
-  getPlaylist: vi.fn(() => null)
-}));
-
-vi.mock('../../dashboard/lib/videoPlaylist', () => ({
-  resolveVideoPlaylist: vi.fn(() => []),
-  getVideoPlaylist: vi.fn(() => null)
-}));
-
-vi.mock('../../dashboard/lib/history', () => ({
-  appendEntry: vi.fn()
-}));
-
-// Import after mocks
-const mod = await import('../../dashboard/lib/schedule.js');
+const nodeRequire = createRequire(import.meta.url);
+const mod = nodeRequire('../../dashboard/lib/schedule');
 const {
   isTimeInRange, slotsOverlap, getNowInTimezone, getCurrentSlot,
   getNextSlot, cleanupPastEvents, prevDate, loadSchedule, saveSchedule
@@ -614,5 +599,386 @@ describe('saveSchedule', () => {
       expect.stringContaining('schedule.json'),
       JSON.stringify(data, null, 2)
     );
+  });
+});
+
+// ─── executeScheduleTick / startExecutor (P1-7) ───────────────
+//
+// Characterization tests that PIN the current behavior of the schedule
+// executor (executeScheduleTick) and the startExecutor wrapper, including
+// surprising/buggy edges (swallowed errors, ACTIVE_FILE handling, the
+// `needed = 5 - len` refill math). They lock in what the code does today
+// before any future refactor — they are NOT bug fixes.
+//
+// Harness note: schedule.js consumes liqClient/playlist/videoPlaylist via
+// `require(...)`, which vitest's ESM mock layer (vi.mock) does not intercept —
+// mocking that way silently resolves the real CJS singletons. We therefore use
+// the same proven pattern as queue.test.js: load schedule.js and its deps as
+// live CJS singletons through createRequire, then vi.spyOn the shared dep
+// objects — schedule's internal require returns those very objects. Deleting
+// schedule from the require cache between tests resets its module-level state
+// (currentSlotId / currentPlaylistId start at null again).
+
+const ACTIVE_VISUAL_FILE = '/shared/active_visual_profile.json';
+
+const SCHEDULE_SPEC = '../../dashboard/lib/schedule';
+const liqLive = nodeRequire('../../dashboard/lib/liqClient');
+const playlistLive = nodeRequire('../../dashboard/lib/playlist');
+const videoLive = nodeRequire('../../dashboard/lib/videoPlaylist');
+
+let schedLive;
+let tick;
+let startExec;
+
+/**
+ * Spy on the live dep singletons, then fresh-require schedule so it closes over
+ * the spies. ORDER MATTERS: schedule.js DESTRUCTURES resolvePlaylist and
+ * resolveVideoPlaylist at require time, so those spies must be installed BEFORE
+ * the require. liqClient is kept as a whole-object (`const liq = require(...)`)
+ * and its methods are read at call time, so it can be spied in any order.
+ * Deleting schedule from the cache also resets its module-level state
+ * (currentSlotId / currentPlaylistId back to null). Also silences console.log /
+ * console.error, which the executor writes on every tick — every executor
+ * describe block needs this, so it lives here next to the rest of the spies.
+ */
+function freshExecutor() {
+  vi.spyOn(playlistLive, 'resolvePlaylist').mockReturnValue([]);
+  vi.spyOn(videoLive, 'resolveVideoPlaylist').mockReturnValue([]);
+  vi.spyOn(liqLive, 'clearQueue').mockResolvedValue({});
+  vi.spyOn(liqLive, 'skip').mockResolvedValue({});
+  vi.spyOn(liqLive, 'pushTrack').mockResolvedValue({});
+  vi.spyOn(liqLive, 'getQueueLength').mockResolvedValue({ data: { length: 5 } });
+  vi.spyOn(console, 'log').mockImplementation(() => {});
+  vi.spyOn(console, 'error').mockImplementation(() => {});
+
+  delete nodeRequire.cache[nodeRequire.resolve(SCHEDULE_SPEC)];
+  schedLive = nodeRequire(SCHEDULE_SPEC);
+  tick = schedLive._test.executeScheduleTick;
+  startExec = schedLive._test.startExecutor;
+}
+
+// Use getNowInTimezone from the live module to build an "active now" slot.
+function activeSlotSchedule({ playlistId = null, videoPlaylistId = null } = {}) {
+  const { weekday, timeStr } = schedLive._test.getNowInTimezone('UTC');
+  const [h] = timeStr.split(':').map(Number);
+  const start = String(Math.max(0, h - 1)).padStart(2, '0') + ':00';
+  const end = String(Math.min(23, h + 1)).padStart(2, '0') + ':59';
+  const id = 'ws_exec';
+  const data = {
+    weekly: {
+      [id]: { id, day: weekday, startTime: start, endTime: end, playlistId, videoPlaylistId, label: 'Slot ' + id }
+    },
+    events: {},
+    settings: { timezone: 'UTC', defaultPlaylistId: null, defaultVideoPlaylistId: null, enabled: true }
+  };
+  return { data, id };
+}
+
+describe('executeScheduleTick — slot-changed broadcast contract', () => {
+  beforeEach(() => {
+    vi.restoreAllMocks();
+    freshExecutor();
+  });
+
+  it('does not throw when broadcastFn is null (default, never injected)', async () => {
+    const { data } = activeSlotSchedule({ playlistId: null });
+    mockScheduleFile(data);
+    vi.spyOn(fs, 'unlinkSync').mockImplementation(() => {});
+    await expect(tick()).resolves.toBeUndefined();
+  });
+
+  it('broadcasts schedule-slot with the full slot payload when broadcastFn is set', async () => {
+    const { data, id } = activeSlotSchedule({ playlistId: 'pl-a', videoPlaylistId: 'vpl-a' });
+    mockScheduleFile(data);
+    videoLive.resolveVideoPlaylist.mockReturnValue(['v.mp4']);
+
+    const broadcast = vi.fn();
+    // startExecutor injects broadcastFn, then runs executeScheduleTick once.
+    startExec(() => ({}), '/visuals', broadcast);
+    // The tick is async; wait on the observable effect instead of draining a
+    // magic number of microtasks tied to the tick's internal promise depth.
+    await vi.waitFor(() => expect(broadcast).toHaveBeenCalled());
+
+    expect(broadcast).toHaveBeenCalledWith('schedule-slot', {
+      slotId: id,
+      playlistId: 'pl-a',
+      videoPlaylistId: 'vpl-a',
+      label: 'Slot ' + id,
+      source: 'weekly'
+    });
+  });
+});
+
+describe('executeScheduleTick — playlist switch on slot change', () => {
+  beforeEach(() => {
+    vi.restoreAllMocks();
+    freshExecutor();
+  });
+
+  it('clears queue, skips, and pushes the first 5 resolved tracks as processed paths', async () => {
+    const { data } = activeSlotSchedule({ playlistId: 'pl1' });
+    mockScheduleFile(data);
+    vi.spyOn(fs, 'unlinkSync').mockImplementation(() => {});
+    // resolvePlaylist returns 7 tracks; only the first 5 should be pushed.
+    playlistLive.resolvePlaylist.mockReturnValue([
+      'a.mp3', 'b.mp3', 'c.mp3', 'd.mp3', 'e.mp3', 'f.mp3', 'g.mp3'
+    ]);
+
+    await tick();
+
+    expect(liqLive.clearQueue).toHaveBeenCalledTimes(1);
+    expect(liqLive.skip).toHaveBeenCalledTimes(1);
+    // Batch is slice(0,5). getQueueLength default returns length 5 (>=3),
+    // so the refill block pushes nothing extra — these 5 are the batch only.
+    expect(liqLive.pushTrack).toHaveBeenCalledTimes(5);
+    // Paths are converted to /music/processed/<base>.wav
+    expect(liqLive.pushTrack).toHaveBeenNthCalledWith(1, '/music/processed/a.wav');
+    expect(liqLive.pushTrack).toHaveBeenNthCalledWith(5, '/music/processed/e.wav');
+  });
+
+  it('swallows a single pushTrack rejection and still pushes the rest of the batch', async () => {
+    const { data } = activeSlotSchedule({ playlistId: 'pl1' });
+    mockScheduleFile(data);
+    vi.spyOn(fs, 'unlinkSync').mockImplementation(() => {});
+    playlistLive.resolvePlaylist.mockReturnValue(['a.mp3', 'b.mp3', 'c.mp3']);
+    // Make the 2nd track reject; the empty catch in the loop must absorb it.
+    liqLive.pushTrack
+      .mockResolvedValueOnce({})
+      .mockRejectedValueOnce(new Error('push boom'))
+      .mockResolvedValue({});
+
+    await expect(tick()).resolves.toBeUndefined();
+    // All 3 push attempts were made despite the middle one failing.
+    expect(liqLive.pushTrack).toHaveBeenCalledTimes(3);
+  });
+
+  it('catches an outer playlist-switch failure (clearQueue rejects) without throwing', async () => {
+    const { data } = activeSlotSchedule({ playlistId: 'pl1' });
+    mockScheduleFile(data);
+    vi.spyOn(fs, 'unlinkSync').mockImplementation(() => {});
+    playlistLive.resolvePlaylist.mockReturnValue(['a.mp3', 'b.mp3']);
+    liqLive.clearQueue.mockRejectedValue(new Error('clearQueue down'));
+
+    await expect(tick()).resolves.toBeUndefined();
+    // Failure happened before skip/resolvePlaylist/pushTrack ran (skip is after clearQueue).
+    expect(liqLive.skip).not.toHaveBeenCalled();
+    expect(liqLive.pushTrack).not.toHaveBeenCalled();
+  });
+
+  it('does not touch the queue when the slot has no playlistId', async () => {
+    const { data } = activeSlotSchedule({ playlistId: null });
+    mockScheduleFile(data);
+    vi.spyOn(fs, 'unlinkSync').mockImplementation(() => {});
+
+    await tick();
+
+    expect(liqLive.clearQueue).not.toHaveBeenCalled();
+    expect(liqLive.skip).not.toHaveBeenCalled();
+    expect(liqLive.pushTrack).not.toHaveBeenCalled();
+  });
+});
+
+describe('executeScheduleTick — video playlist activation file', () => {
+  beforeEach(() => {
+    vi.restoreAllMocks();
+    freshExecutor();
+  });
+
+  it('writes ACTIVE_FILE with {id, name, videos, activatedAt} when slot has a video playlist', async () => {
+    const { data, id } = activeSlotSchedule({ playlistId: null, videoPlaylistId: 'vpl-9' });
+    mockScheduleFile(data);
+    videoLive.resolveVideoPlaylist.mockReturnValue(['v1.mp4', 'v2.mp4']);
+
+    const fixedNow = 1_700_000_000_000;
+    vi.spyOn(Date, 'now').mockReturnValue(fixedNow);
+    const writeSpy = vi.spyOn(fs, 'writeFileSync').mockImplementation(() => {});
+
+    await tick();
+
+    const activeCall = writeSpy.mock.calls.find(c => c[0] === ACTIVE_VISUAL_FILE);
+    expect(activeCall).toBeDefined();
+    const payload = JSON.parse(activeCall[1]);
+    expect(payload).toEqual({
+      id: 'vpl-9',
+      name: 'schedule-' + id,
+      videos: ['v1.mp4', 'v2.mp4'],
+      activatedAt: fixedNow
+    });
+    expect(typeof payload.activatedAt).toBe('number');
+  });
+
+  it('does not write ACTIVE_FILE when the resolved video playlist is empty', async () => {
+    const { data } = activeSlotSchedule({ playlistId: null, videoPlaylistId: 'vpl-empty' });
+    mockScheduleFile(data);
+    videoLive.resolveVideoPlaylist.mockReturnValue([]);
+    const writeSpy = vi.spyOn(fs, 'writeFileSync').mockImplementation(() => {});
+
+    await tick();
+
+    const activeCall = writeSpy.mock.calls.find(c => c[0] === ACTIVE_VISUAL_FILE);
+    expect(activeCall).toBeUndefined();
+  });
+
+  it('unlinks ACTIVE_FILE when slot has no video playlist and the file exists', async () => {
+    const { data } = activeSlotSchedule({ playlistId: null, videoPlaylistId: null });
+    mockScheduleFile(data); // existsSync mocked true → ACTIVE_FILE "exists"
+    const unlinkSpy = vi.spyOn(fs, 'unlinkSync').mockImplementation(() => {});
+
+    await tick();
+
+    expect(unlinkSpy).toHaveBeenCalledWith(ACTIVE_VISUAL_FILE);
+  });
+
+  it('does not unlink ACTIVE_FILE when no video playlist and the file does not exist', async () => {
+    // existsSync false everywhere → loadSchedule returns defaults (no playlist),
+    // and existsSync(ACTIVE_FILE) is false → no unlink.
+    vi.spyOn(fs, 'existsSync').mockReturnValue(false);
+    vi.spyOn(fs, 'writeFileSync').mockImplementation(() => {});
+    const unlinkSpy = vi.spyOn(fs, 'unlinkSync').mockImplementation(() => {});
+
+    await tick();
+
+    expect(unlinkSpy).not.toHaveBeenCalled();
+  });
+});
+
+describe('executeScheduleTick — refill path (slot unchanged)', () => {
+  beforeEach(() => {
+    vi.restoreAllMocks();
+    freshExecutor();
+  });
+
+  /**
+   * Drives two ticks against the SAME slot id. Tick 1 takes the slot-changed
+   * branch (sets currentSlotId/currentPlaylistId and runs the first batch).
+   * Tick 2 sees an unchanged slot, so only the refill block runs. queueLength
+   * is controlled per tick. Clears batch-phase calls before tick 2.
+   */
+  async function twoTicks({ resolveTracks, queueLenTick1, queueLenTick2 }) {
+    const { data } = activeSlotSchedule({ playlistId: 'pl-refill' });
+    mockScheduleFile(data); // same data → stable slot id across both ticks
+    vi.spyOn(fs, 'unlinkSync').mockImplementation(() => {});
+    playlistLive.resolvePlaylist.mockReturnValue(resolveTracks);
+    liqLive.getQueueLength
+      .mockResolvedValueOnce({ data: { length: queueLenTick1 } })
+      .mockResolvedValueOnce({ data: { length: queueLenTick2 } });
+
+    await tick(); // slot change + first batch
+    liqLive.pushTrack.mockClear();
+    liqLive.clearQueue.mockClear();
+    liqLive.skip.mockClear();
+    await tick(); // refill-only
+  }
+
+  it('refills exactly `needed = 5 - len` tracks when queue length < 3', async () => {
+    // tick 2: len = 1 → needed = 4. Plenty of tracks resolved.
+    await twoTicks({
+      resolveTracks: ['a.mp3', 'b.mp3', 'c.mp3', 'd.mp3', 'e.mp3', 'f.mp3'],
+      queueLenTick1: 5,
+      queueLenTick2: 1
+    });
+    // Slot unchanged on tick 2 → no clearQueue/skip, only refill pushes.
+    expect(liqLive.clearQueue).not.toHaveBeenCalled();
+    expect(liqLive.skip).not.toHaveBeenCalled();
+    expect(liqLive.pushTrack).toHaveBeenCalledTimes(4);
+  });
+
+  it('does not refill when queue length >= 3', async () => {
+    await twoTicks({
+      resolveTracks: ['a.mp3', 'b.mp3', 'c.mp3', 'd.mp3'],
+      queueLenTick1: 5,
+      queueLenTick2: 3 // exactly 3 → not < 3 → no refill
+    });
+    expect(liqLive.pushTrack).not.toHaveBeenCalled();
+  });
+
+  it('caps refill at the number of available tracks when fewer than `needed`', async () => {
+    // len = 0 → needed = 5, but only 2 tracks resolved → push 2.
+    await twoTicks({
+      resolveTracks: ['a.mp3', 'b.mp3'],
+      queueLenTick1: 5,
+      queueLenTick2: 0
+    });
+    expect(liqLive.pushTrack).toHaveBeenCalledTimes(2);
+  });
+
+  it('does not push when the resolved playlist is empty during refill', async () => {
+    await twoTicks({
+      resolveTracks: [],
+      queueLenTick1: 5,
+      queueLenTick2: 0
+    });
+    expect(liqLive.pushTrack).not.toHaveBeenCalled();
+  });
+
+  it('swallows a getQueueLength rejection during refill without throwing', async () => {
+    const { data } = activeSlotSchedule({ playlistId: 'pl-refill' });
+    mockScheduleFile(data);
+    vi.spyOn(fs, 'unlinkSync').mockImplementation(() => {});
+    playlistLive.resolvePlaylist.mockReturnValue(['a.mp3', 'b.mp3', 'c.mp3']);
+    liqLive.getQueueLength
+      .mockResolvedValueOnce({ data: { length: 5 } }) // tick 1
+      .mockRejectedValueOnce(new Error('no endpoint')); // tick 2 refill
+
+    await tick();
+    await expect(tick()).resolves.toBeUndefined();
+  });
+
+  it('treats a malformed getQueueLength result as length 0 and refills `needed` = 5', async () => {
+    // queueResult.data.length not a number → len defaults to 0 → needed = 5.
+    // PIN: this is the surprising default-to-0 branch in the source.
+    const { data } = activeSlotSchedule({ playlistId: 'pl-refill' });
+    mockScheduleFile(data);
+    vi.spyOn(fs, 'unlinkSync').mockImplementation(() => {});
+    playlistLive.resolvePlaylist.mockReturnValue([
+      'a.mp3', 'b.mp3', 'c.mp3', 'd.mp3', 'e.mp3', 'f.mp3'
+    ]);
+    liqLive.getQueueLength
+      .mockResolvedValueOnce({ data: { length: 5 } }) // tick 1: no refill
+      .mockResolvedValueOnce({}); // tick 2: no .data → len = 0
+
+    await tick();
+    liqLive.pushTrack.mockClear();
+    await tick();
+    expect(liqLive.pushTrack).toHaveBeenCalledTimes(5);
+  });
+});
+
+describe('startExecutor (P1-7)', () => {
+  beforeEach(() => {
+    vi.restoreAllMocks();
+    freshExecutor();
+  });
+
+  it('saves the schedule after cleaning up past events on start', async () => {
+    const { dateStr } = schedLive._test.getNowInTimezone('UTC');
+    const data = {
+      weekly: {}, events: { ev_old: { id: 'ev_old', date: '2020-01-01' } },
+      settings: { timezone: 'UTC', defaultPlaylistId: null, enabled: true }
+    };
+    vi.spyOn(fs, 'existsSync').mockReturnValue(true);
+    vi.spyOn(fs, 'readFileSync').mockReturnValue(JSON.stringify(data));
+    const writeSpy = vi.spyOn(fs, 'writeFileSync').mockImplementation(() => {});
+    vi.spyOn(fs, 'unlinkSync').mockImplementation(() => {});
+
+    startExec(() => ({}), '/visuals', vi.fn());
+
+    // saveSchedule wrote the schedule back (a past event was cleaned).
+    const savedCall = writeSpy.mock.calls.find(c => String(c[0]).includes('schedule.json'));
+    expect(savedCall).toBeDefined();
+    const saved = JSON.parse(savedCall[1]);
+    expect(saved.events.ev_old).toBeUndefined();
+    expect(dateStr).toMatch(/^\d{4}-\d{2}-\d{2}$/);
+  });
+
+  it('registers a 30s interval that re-invokes the tick', async () => {
+    const { data } = activeSlotSchedule({ playlistId: null });
+    mockScheduleFile(data);
+    vi.spyOn(fs, 'unlinkSync').mockImplementation(() => {});
+    const setIntervalSpy = vi.spyOn(globalThis, 'setInterval').mockImplementation(() => 0);
+
+    startExec(() => ({}), '/visuals', vi.fn());
+
+    expect(setIntervalSpy).toHaveBeenCalledWith(expect.any(Function), 30000);
   });
 });

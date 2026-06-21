@@ -267,3 +267,6 @@ function createPlaylistRouter(musicDir, getBpmMap) {
 }
 
 module.exports = { createPlaylistRouter, resolvePlaylist, getPlaylist, loadPlaylists };
+
+// Export internal functions for unit tests
+module.exports._test = { parseM3U };

@@ -8,7 +8,7 @@
 
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { createRequire } from 'module';
-import { mockRes, getRouteHandler, spy, restoreSpies } from '../helpers.js';
+import { mockRes, getRouteHandler, spy, restoreSpies, mockFsMap } from '../helpers.js';
 
 const require = createRequire(import.meta.url);
 
@@ -425,5 +425,56 @@ describe('Restream endpoints', () => {
     handler({ body: {} }, res);
 
     expect(res.status).toHaveBeenCalledWith(400);
+  });
+});
+
+// ─── Quality tier enforcement (REAL quality + tierLimits) ─────
+//
+// Unlike the mocked Quality tests above, these run the real quality and
+// tierLimits modules end-to-end through the route handler. Tier is controlled
+// via /shared/tier.json in an in-memory fs map (tierLimits.getTier re-reads
+// the file on every call). This pins the 403 monetization gate that every
+// other route test bypasses by mocking setQuality.
+
+describe('POST /quality — tier enforcement through real modules', () => {
+  const TIER_FILE = '/shared/tier.json';
+  const QUALITY_FILE = '/shared/stream_quality.json';
+  let files = {};
+
+  beforeEach(() => {
+    // Spies are registered with spy(); the file-level afterEach restoreSpies()
+    // restores them after each test.
+    const fsMap = mockFsMap();
+    files = fsMap.files;
+    fsMap.spies.forEach(spy);
+  });
+
+  it('returns 403 with exact body when preset exceeds free tier limit', () => {
+    files[TIER_FILE] = JSON.stringify({ tier: 'free' });
+
+    const router = createSettingsRouter();
+    const handler = getRouteHandler(router, 'post', '/quality');
+    const res = mockRes();
+    handler({ body: { preset: 'high' } }, res);
+
+    expect(res.status).toHaveBeenCalledWith(403);
+    expect(res.body).toEqual({ error: 'Quality preset exceeds tier limit', maxAllowed: 'medium' });
+    // Rejected preset must not be persisted
+    expect(files[QUALITY_FILE]).toBeUndefined();
+  });
+
+  it('returns 200 success when preset is within free tier limit', () => {
+    files[TIER_FILE] = JSON.stringify({ tier: 'free' });
+
+    const router = createSettingsRouter();
+    const handler = getRouteHandler(router, 'post', '/quality');
+    const res = mockRes();
+    handler({ body: { preset: 'medium' } }, res);
+
+    expect(res.status).not.toHaveBeenCalledWith(403);
+    expect(res.body.success).toBe(true);
+    expect(res.body.preset).toBe('medium');
+    expect(res.body.settings).toBeDefined();
+    expect(JSON.parse(files[QUALITY_FILE]).preset).toBe('medium');
   });
 });

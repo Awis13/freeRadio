@@ -219,53 +219,63 @@ console.log(`[boot] streaming=true, broadcast=${!!restreamCfg.autoStart}, mode=$
 server.keepAliveTimeout = 61000;
 server.headersTimeout = 65000;
 
-server.listen(PORT, '0.0.0.0', () => {
-  console.log(`[dashboard] http://0.0.0.0:${PORT}`);
-  console.log(`[dashboard] mode=${OUTPUT_MODE} hls=${HLS_DIR}`);
+// Startup tail (listen + pollers + boot + TLS) is skipped under tests so the app
+// can be imported without binding ports. Production entrypoint runs `node server.js`
+// with NODE_ENV unset, so the production path is unchanged.
+if (process.env.NODE_ENV !== 'test') {
+  server.listen(PORT, '0.0.0.0', () => {
+    console.log(`[dashboard] http://0.0.0.0:${PORT}`);
+    console.log(`[dashboard] mode=${OUTPUT_MODE} hls=${HLS_DIR}`);
 
-  // Start pollers
-  icecastPoller.start();
-  trackPoller.start();
-  videoPoller.start();
-  ffmpegPoller.start();
-  bpmPoller.start();
-  rtmpHealthPoller.start();
-  startExecutor(getBpmMap, VISUALS_DIR);
+    // Start pollers
+    icecastPoller.start();
+    trackPoller.start();
+    videoPoller.start();
+    ffmpegPoller.start();
+    bpmPoller.start();
+    rtmpHealthPoller.start();
+    startExecutor(getBpmMap, VISUALS_DIR);
 
-  // Boot: S3 sync + auto-restore (async, API already accepting requests)
-  boot({ musicDir: MUSIC_DIR, visualsDir: VISUALS_DIR })
-    .catch(e => console.error(`[boot] fatal: ${e.message}`));
+    // Boot: S3 sync + auto-restore (async, API already accepting requests)
+    boot({ musicDir: MUSIC_DIR, visualsDir: VISUALS_DIR })
+      .catch(e => console.error(`[boot] fatal: ${e.message}`));
 
-  // S3 cache eviction
-  if (s3.S3_ENABLED) {
-    setInterval(() => {
-      const processedDir = path.join(VISUALS_DIR, '.processed');
-      const maxBytes = S3_CACHE_MAX_MB * 1024 * 1024;
-      const currentSize = cacheManager.getCacheSize(processedDir);
-      if (currentSize > maxBytes) {
-        cacheManager.evictOldest(processedDir, maxBytes);
-      }
-    }, 60000);
-    console.log(`[s3] cache eviction enabled (max ${S3_CACHE_MAX_MB} MB for visuals)`);
-  }
-});
-
-// --- HTTPS ---
-const TLS_PORT = process.env.TLS_PORT;
-const TLS_CERT = process.env.TLS_CERT;
-const TLS_KEY = process.env.TLS_KEY;
-
-if (TLS_PORT && TLS_CERT && TLS_KEY && fs.existsSync(TLS_CERT) && fs.existsSync(TLS_KEY)) {
-  try {
-  const tlsOpts = { cert: fs.readFileSync(TLS_CERT), key: fs.readFileSync(TLS_KEY) };
-  const tlsServer = https.createServer(tlsOpts, app);
-  setupTlsWs(tlsServer, null, getInitState, wss);
-  tlsServer.listen(TLS_PORT, '0.0.0.0', () => {
-    console.log(`[dashboard] https://0.0.0.0:${TLS_PORT}`);
+    // S3 cache eviction
+    if (s3.S3_ENABLED) {
+      setInterval(() => {
+        const processedDir = path.join(VISUALS_DIR, '.processed');
+        const maxBytes = S3_CACHE_MAX_MB * 1024 * 1024;
+        const currentSize = cacheManager.getCacheSize(processedDir);
+        if (currentSize > maxBytes) {
+          cacheManager.evictOldest(processedDir, maxBytes);
+        }
+      }, 60000);
+      console.log(`[s3] cache eviction enabled (max ${S3_CACHE_MAX_MB} MB for visuals)`);
+    }
   });
-  } catch (e) {
-    console.log(`[dashboard] TLS cert/key not readable, skipping HTTPS: ${e.message}`);
+
+  // --- HTTPS ---
+  const TLS_PORT = process.env.TLS_PORT;
+  const TLS_CERT = process.env.TLS_CERT;
+  const TLS_KEY = process.env.TLS_KEY;
+
+  if (TLS_PORT && TLS_CERT && TLS_KEY && fs.existsSync(TLS_CERT) && fs.existsSync(TLS_KEY)) {
+    try {
+    const tlsOpts = { cert: fs.readFileSync(TLS_CERT), key: fs.readFileSync(TLS_KEY) };
+    const tlsServer = https.createServer(tlsOpts, app);
+    setupTlsWs(tlsServer, null, getInitState, wss);
+    tlsServer.listen(TLS_PORT, '0.0.0.0', () => {
+      console.log(`[dashboard] https://0.0.0.0:${TLS_PORT}`);
+    });
+    } catch (e) {
+      console.log(`[dashboard] TLS cert/key not readable, skipping HTTPS: ${e.message}`);
+    }
+  } else {
+    if (TLS_PORT) console.log('[dashboard] TLS configured but cert/key not found, skipping HTTPS');
   }
-} else {
-  if (TLS_PORT) console.log('[dashboard] TLS configured but cert/key not found, skipping HTTPS');
 }
+
+// Test-only exports for the characterization harness (tests/dashboard/server.test.js).
+// `state` is exported so tests can drive /api/health and getInitState() pins;
+// nothing in production reads these exports (entrypoint just runs this file).
+module.exports = { app, server, state, getInitState };
