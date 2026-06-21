@@ -86,6 +86,14 @@ describe('verifySsoToken', () => {
     expect(result.status).toBe(400);
   });
 
+  it('returns error when the signature segment after the last colon is empty', () => {
+    // "abc:" → lastColon > 0 (passes the first guard), but signatureB64 is ''
+    // → hits the second `!signatureB64` format guard.
+    const result = verifySsoToken('abc:', SECRET);
+    expect(result.error).toBe('Invalid token format');
+    expect(result.status).toBe(400);
+  });
+
   it('returns error for invalid signature', () => {
     const payload = `user123:tenant456:${nowTs()}`;
     const token = makeToken(payload, 'wrong-secret');

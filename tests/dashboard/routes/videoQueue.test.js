@@ -45,6 +45,32 @@ describe('POST /push', () => {
     expect(videoQueue.push).toHaveBeenCalledWith('my_video.mp4');
     expect(res.body).toEqual({ ok: true });
   });
+
+  it('returns 400 { error: "no filename" } when body is empty/whitespace', () => {
+    const pushSpy = spy(vi.spyOn(videoQueue, 'push').mockImplementation(() => {}));
+
+    const router = createVideoQueueRouter();
+    const handler = getRouteHandler(router, 'post', '/push');
+    const res = mockRes();
+    handler({ body: '   ' }, res);
+
+    expect(res.status).toHaveBeenCalledWith(400);
+    expect(res.body).toEqual({ error: 'no filename' });
+    expect(pushSpy).not.toHaveBeenCalled();
+  });
+
+  it('treats a non-string body as empty → 400 (AS-IS)', () => {
+    const pushSpy = spy(vi.spyOn(videoQueue, 'push').mockImplementation(() => {}));
+
+    const router = createVideoQueueRouter();
+    const handler = getRouteHandler(router, 'post', '/push');
+    const res = mockRes();
+    handler({ body: undefined }, res);
+
+    expect(res.status).toHaveBeenCalledWith(400);
+    expect(res.body).toEqual({ error: 'no filename' });
+    expect(pushSpy).not.toHaveBeenCalled();
+  });
 });
 
 // ─── POST /skip ───────────────────────────────────────────────

@@ -50,6 +50,21 @@ describe('POST /on_publish', () => {
 
     expect(res.status).toHaveBeenCalledWith(403);
   });
+
+  it('rejects publish with missing name (body.name defaults to "")', () => {
+    // Pins the `req.body.name || ''` fallback: an absent stream name becomes ''
+    // and never matches a configured ingestKey → 403.
+    spy(vi.spyOn(liveMode, 'getLiveMode').mockReturnValue({
+      source: 'obs', ingestKey: 'valid-key-123', obsStatus: 'disconnected'
+    }));
+
+    const router = createLiveRouter();
+    const handler = getRouteHandler(router, 'post', '/on_publish');
+    const res = mockRes();
+    handler({ body: {} }, res);
+
+    expect(res.status).toHaveBeenCalledWith(403);
+  });
 });
 
 // ─── POST /on_done ────────────────────────────────────────────
