@@ -112,6 +112,55 @@ describe('getLiveMode', () => {
     expect(config.ingestKey).toBeDefined();
     expect(config.ingestKey.length).toBeGreaterThan(0);
   });
+
+  it('defaults obsStatus to offline when missing from file', () => {
+    // pinned as-is: `data.obsStatus || 'offline'` — file present but no obsStatus
+    files[LIVE_MODE_FILE] = JSON.stringify({
+      source: 'obs',
+      afkFallback: 'visual-radio',
+      ingestKey: 'key-1',
+      timestamp: 1000
+    });
+    expect(getLiveMode().obsStatus).toBe('offline');
+  });
+
+  it('defaults obsStatus to offline when present but empty string', () => {
+    // pinned as-is: empty string is falsy, so the `|| 'offline'` default applies
+    files[LIVE_MODE_FILE] = JSON.stringify({
+      source: 'obs',
+      afkFallback: 'visual-radio',
+      obsStatus: '',
+      ingestKey: 'key-1',
+      timestamp: 1000
+    });
+    expect(getLiveMode().obsStatus).toBe('offline');
+  });
+
+  it('preserves timestamp from file when present', () => {
+    // pinned as-is: `data.timestamp || Date.now()` — truthy timestamp kept verbatim
+    files[LIVE_MODE_FILE] = JSON.stringify({
+      source: 'obs',
+      afkFallback: 'visual-radio',
+      obsStatus: 'offline',
+      ingestKey: 'key-1',
+      timestamp: 424242
+    });
+    expect(getLiveMode().timestamp).toBe(424242);
+  });
+
+  it('defaults timestamp to now when missing/falsy in file', () => {
+    // pinned as-is: missing timestamp falls through to Date.now()
+    files[LIVE_MODE_FILE] = JSON.stringify({
+      source: 'obs',
+      afkFallback: 'visual-radio',
+      obsStatus: 'offline',
+      ingestKey: 'key-1'
+    });
+    const before = Date.now();
+    const ts = getLiveMode().timestamp;
+    expect(typeof ts).toBe('number');
+    expect(ts).toBeGreaterThanOrEqual(before);
+  });
 });
 
 // ---------------------------------------------------------------------------
