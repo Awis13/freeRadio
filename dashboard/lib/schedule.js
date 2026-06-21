@@ -552,5 +552,6 @@ module.exports = { createScheduleRouter, startExecutor, onTrackChange, getCurren
 // Export internal functions for unit tests
 module.exports._test = {
   isTimeInRange, slotsOverlap, getNowInTimezone, getCurrentSlot,
-  getNextSlot, cleanupPastEvents, prevDate, loadSchedule, saveSchedule
+  getNextSlot, cleanupPastEvents, prevDate, loadSchedule, saveSchedule,
+  executeScheduleTick, startExecutor
 };
