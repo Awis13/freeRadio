@@ -1,43 +1,53 @@
 /**
  * tests/dashboard/overlay.test.js
  *
- * Unit tests for dashboard/lib/overlay.js — overlay filter generation.
- * Tests: loadOverlays, generateFilterString.
- * buildDrawtext is tested indirectly through generateFilterString.
+ * Characterization tests for dashboard/lib/overlay.js — pins CURRENT behavior
+ * AS-IS (bugs/quirks included) before any future refactor.
+ *
+ * Coverage map:
+ *   - loadOverlays / generateFilterString / buildDrawtext (via generateFilterString)
+ *     are pure-ish fs functions, driven through an in-memory fs map.
+ *   - saveOverlays is exercised indirectly through PUT /api/overlays (it writes
+ *     OVERLAY_CONFIG then calls generateFilterString).
+ *   - createOverlayRouter and all four endpoints are mounted REAL via supertest.
+ *
+ * REAL multer (not mocked): the upload endpoint uses multer DISK storage with
+ * dest=/shared/overlay_assets, unreachable in this sandbox. The harness spies the
+ * fs calls multer makes (mkdirp at construction, createWriteStream at upload) so
+ * real multipart uploads driven with supertest .attach() resolve to req.file
+ * without real disk I/O, and the handler's sanitize / traversal-guard /
+ * renameSync logic runs AS-IS. express is real; nothing in overlay.js is mocked.
  */
 
-import { describe, it, expect, beforeEach, vi } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
+import request from 'supertest';
 import fs from 'fs';
 
-const OVERLAY_CONFIG = '/shared/overlays.json';
-const FILTER_STRING_FILE = '/shared/overlay_filter_string.txt';
-const COMPILED_FILE = '/shared/overlay_compiled.json';
-
-let files = {};
-
-vi.mock('express', () => ({
-  default: { Router: vi.fn(() => ({ get: vi.fn(), put: vi.fn(), post: vi.fn(), delete: vi.fn() })) },
-  Router: vi.fn(() => ({ get: vi.fn(), put: vi.fn(), post: vi.fn(), delete: vi.fn() }))
-}));
-vi.mock('multer', () => ({ default: vi.fn(() => ({ single: vi.fn() })) }));
-
-beforeEach(() => {
-  files = {};
-  vi.restoreAllMocks();
-
-  vi.spyOn(fs, 'existsSync').mockImplementation(p => p in files);
-  vi.spyOn(fs, 'readFileSync').mockImplementation((p) => {
-    if (p in files) return files[p];
-    throw new Error('ENOENT');
-  });
-  vi.spyOn(fs, 'writeFileSync').mockImplementation((p, data) => {
-    files[p] = data;
-  });
-  vi.spyOn(fs, 'mkdirSync').mockImplementation(() => {});
-});
+import {
+  installOverlayFsHarness,
+  OVERLAY_CONFIG,
+  FILTER_STRING_FILE,
+  COMPILED_FILE,
+  ASSETS_DIR,
+} from './overlayHarness.js';
 
 const { loadOverlays, generateFilterString } =
   await import('../../dashboard/lib/overlay.js');
+
+let h;
+let files;
+let makeApp;
+
+beforeEach(() => {
+  vi.restoreAllMocks();
+  h = installOverlayFsHarness();
+  files = h.files;
+  makeApp = h.makeApp;
+});
+
+afterEach(() => {
+  vi.restoreAllMocks();
+});
 
 // ---------------------------------------------------------------------------
 // loadOverlays
@@ -241,5 +251,309 @@ describe('generateFilterString', () => {
     const filter = files[FILTER_STRING_FILE];
     expect(filter).not.toContain('localtime');
     expect(filter).toContain("text='ON'");
+  });
+
+  // --- Added characterization: sanitization fallbacks + compiled-json quirks ---
+
+  it('falls back to default fontsize/fontcolor/x/y when values fail the regex', () => {
+    // fontsize must be ^\d{1,4}$, fontcolor ^[a-zA-Z0-9#@]{1,30}$, coords the
+    // ^[\d()wh+-*/. ]{1,80}$ set. Out-of-range/illegal values fall back AS-IS.
+    generateFilterString({
+      enabled: true,
+      layers: [{
+        type: 'static_text', enabled: true, text: 'X',
+        fontsize: 'huge',          // not digits -> '24'
+        fontcolor: 'bad;color!',   // ';' and '!' illegal -> 'white'
+        x: 'drop table;',          // illegal chars -> '10'
+        y: '$(rm)',                // illegal chars -> '10'
+      }]
+    });
+    const filter = files[FILTER_STRING_FILE];
+    expect(filter).toContain('fontsize=24');
+    expect(filter).toContain('fontcolor=white');
+    expect(filter).toContain('x=10');
+    expect(filter).toContain('y=10');
+  });
+
+  it('boxcolor falls back to black@0.5 when value is illegal', () => {
+    generateFilterString({
+      enabled: true,
+      layers: [{ type: 'static_text', enabled: true, text: 'X', boxcolor: 'has space' }]
+    });
+    const filter = files[FILTER_STRING_FILE];
+    // box=1 / boxborderw=8 are always added once boxcolor is truthy; the color
+    // itself sanitizes back to the default.
+    expect(filter).toContain('box=1');
+    expect(filter).toContain('boxcolor=black@0.5');
+    expect(filter).toContain('boxborderw=8');
+  });
+
+  it('clock format falls back to %H\\:%M when format fails the regex', () => {
+    // RE_FORMAT forbids ';' — illegal format -> default '%H\:%M', then every ':'
+    // is doubled-escaped by the trailing .replace(/:/g, '\\:').
+    generateFilterString({
+      enabled: true,
+      layers: [{ type: 'clock', enabled: true, format: 'evil;%H' }]
+    });
+    // Default literal is '%H\:%M'; the trailing .replace(/:/g,'\\:') turns that
+    // single ':' into '\:', producing '%H\\:%M' (two backslashes before the
+    // colon). The 'localtime\:' separator is added literally by buildDrawtext.
+    expect(files[FILTER_STRING_FILE]).toContain("text='%{localtime\\:%H\\\\:%M}'");
+  });
+
+  it('static_text with no text emits a bare drawtext (no text= key) AS-IS', () => {
+    // buildDrawtext returns the filter as long as `common` is non-empty; with no
+    // text and no styling, static_text contributes nothing, so common stays empty
+    // -> buildDrawtext returns null and only format=yuv420p is written.
+    generateFilterString({
+      enabled: true,
+      layers: [{ type: 'static_text', enabled: true }]
+    });
+    expect(files[FILTER_STRING_FILE]).toBe('format=yuv420p');
+  });
+
+  it('drops a logo layer with no asset from logoInputs (type logo + !asset)', () => {
+    // logoLayers requires l.type==='logo' && l.asset. A logo without asset is in
+    // neither logoLayers nor textLayers -> contributes nothing, logoInputs empty.
+    generateFilterString({
+      enabled: true,
+      layers: [{ type: 'logo', enabled: true }]
+    });
+    expect(files[FILTER_STRING_FILE]).toBe('format=yuv420p');
+    const compiled = JSON.parse(files[COMPILED_FILE]);
+    expect(compiled.logoInputs).toEqual([]);
+  });
+
+  it('logo x/y sanitize and opacity defaults to 1.0 when falsy', () => {
+    generateFilterString({
+      enabled: true,
+      layers: [{ type: 'logo', enabled: true, asset: 'l.png', x: 'BAD!', y: 'NOPE!', opacity: 0 }]
+    });
+    const compiled = JSON.parse(files[COMPILED_FILE]);
+    expect(compiled.logoInputs[0].x).toBe('20'); // coord default for logos is '20'
+    expect(compiled.logoInputs[0].y).toBe('20');
+    expect(compiled.logoInputs[0].opacity).toBe(1.0); // 0 is falsy -> 1.0
+    expect(compiled.logoInputs[0].asset).toBe(ASSETS_DIR + '/l.png');
+  });
+
+  it('does NOT write overlay_compiled.json when there are no enabled layers', () => {
+    generateFilterString({ enabled: true, layers: [{ type: 'clock', enabled: false }] });
+    expect(files[COMPILED_FILE]).toBeUndefined();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// createOverlayRouter — construction
+// ---------------------------------------------------------------------------
+describe('createOverlayRouter construction', () => {
+  it('creates ASSETS_DIR recursively when missing', () => {
+    const local = installOverlayFsHarness({ assetsDirExists: false });
+    local.makeApp();
+    // The router's own guard does mkdirSync(ASSETS_DIR, { recursive: true }).
+    // (multer's internal mkdirp also calls mkdirSync with a positional mode; we
+    // assert specifically on the router's recursive call.)
+    expect(local.mkdirCalls.some(c => c.p === ASSETS_DIR && c.opts && c.opts.recursive === true)).toBe(true);
+  });
+
+  it('does NOT make the recursive ASSETS_DIR call when it already exists', () => {
+    const local = installOverlayFsHarness({ assetsDirExists: true });
+    local.makeApp();
+    // No router-level recursive mkdir; any mkdir present is multer's mkdirp.
+    expect(local.mkdirCalls.some(c => c.p === ASSETS_DIR && c.opts && c.opts.recursive === true)).toBe(false);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// GET /api/overlays
+// ---------------------------------------------------------------------------
+describe('GET /api/overlays', () => {
+  it('returns the default config when no file exists', async () => {
+    const res = await request(makeApp()).get('/api/overlays');
+    expect(res.status).toBe(200);
+    expect(res.body).toEqual({ enabled: false, layers: [] });
+  });
+
+  it('returns the stored config when the file exists', async () => {
+    const data = { enabled: true, layers: [{ type: 'clock', enabled: true }] };
+    files[OVERLAY_CONFIG] = JSON.stringify(data);
+    const res = await request(makeApp()).get('/api/overlays');
+    expect(res.status).toBe(200);
+    expect(res.body).toEqual(data);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// PUT /api/overlays — tier gating + save
+// ---------------------------------------------------------------------------
+describe('PUT /api/overlays', () => {
+  it('saves config and regenerates filter string on the free tier when only watermark layers (no custom)', async () => {
+    // free tier: customOverlays=false. A watermark-only config is allowed.
+    const body = { enabled: true, layers: [{ type: 'watermark', enabled: true }] };
+    const res = await request(makeApp())
+      .put('/api/overlays')
+      .send(body);
+    expect(res.status).toBe(200);
+    expect(res.body).toEqual(body);
+    // saveOverlays wrote OVERLAY_CONFIG and (via generateFilterString) the filter.
+    expect(JSON.parse(files[OVERLAY_CONFIG])).toEqual(body);
+    expect(FILTER_STRING_FILE in files).toBe(true);
+  });
+
+  it('returns 403 on free tier when enabled config has a non-watermark (custom) layer', async () => {
+    // free tier customOverlays=false; hasCustomLayers && enabled -> 403.
+    const body = { enabled: true, layers: [{ type: 'clock', enabled: true }] };
+    const res = await request(makeApp())
+      .put('/api/overlays')
+      .send(body);
+    expect(res.status).toBe(403);
+    expect(res.body).toEqual({ error: 'Custom overlays not available in your tier' });
+    // Nothing persisted.
+    expect(OVERLAY_CONFIG in files).toBe(false);
+  });
+
+  it('allows a custom layer on free tier when config is DISABLED (enabled=false) AS-IS', async () => {
+    // The guard requires hasCustomLayers && config.enabled. enabled=false slips
+    // the custom layer through and saves it.
+    const body = { enabled: false, layers: [{ type: 'clock', enabled: true }] };
+    const res = await request(makeApp())
+      .put('/api/overlays')
+      .send(body);
+    expect(res.status).toBe(200);
+    expect(JSON.parse(files[OVERLAY_CONFIG])).toEqual(body);
+  });
+
+  it('saves custom layers when tier file grants pro (customOverlays=true)', async () => {
+    files['/shared/tier.json'] = JSON.stringify({ tier: 'pro' });
+    const body = { enabled: true, layers: [{ type: 'clock', enabled: true }] };
+    const res = await request(makeApp())
+      .put('/api/overlays')
+      .send(body);
+    expect(res.status).toBe(200);
+    expect(JSON.parse(files[OVERLAY_CONFIG])).toEqual(body);
+  });
+
+  it('saves when layers is undefined (no custom-layer check trips)', async () => {
+    // config.layers is falsy -> hasCustomLayers is falsy -> save proceeds.
+    const body = { enabled: true };
+    const res = await request(makeApp())
+      .put('/api/overlays')
+      .send(body);
+    expect(res.status).toBe(200);
+    expect(JSON.parse(files[OVERLAY_CONFIG])).toEqual(body);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// POST /api/overlays/assets — upload (REAL multer, fs spied for disk I/O)
+// ---------------------------------------------------------------------------
+describe('POST /api/overlays/assets', () => {
+  it('returns 400 { error: "no file" } when no file attached', async () => {
+    const res = await request(makeApp()).post('/api/overlays/assets');
+    expect(res.status).toBe(400);
+    expect(res.body).toEqual({ error: 'no file' });
+  });
+
+  it('renames the upload to a sanitized name and returns name + dest path', async () => {
+    // multer fileFilter allows png; '!' and space are non-[a-zA-Z0-9._-] -> '_'.
+    const res = await request(makeApp())
+      .post('/api/overlays/assets')
+      .attach('file', Buffer.from('PNGDATA'), 'my logo!.png');
+    expect(res.status).toBe(200);
+    expect(res.body.name).toBe('my_logo_.png');
+    expect(res.body.path).toBe(ASSETS_DIR + '/my_logo_.png');
+    // The handler renamed the multer temp upload to the sanitized dest.
+    expect(h.renamed.length).toBe(1);
+    expect(h.renamed[0].to).toBe(ASSETS_DIR + '/my_logo_.png');
+  });
+
+  it('keeps allowed chars [a-zA-Z0-9._-] and replaces the rest with "_"', async () => {
+    const res = await request(makeApp())
+      .post('/api/overlays/assets')
+      .attach('file', Buffer.from('x'), 'A1-b_c.D@#$.png');
+    expect(res.status).toBe(200);
+    // '@', '#', '$' -> '_'
+    expect(res.body.name).toBe('A1-b_c.D___.png');
+    expect(res.body.path).toBe(ASSETS_DIR + '/A1-b_c.D___.png');
+  });
+
+  it('rejects a name that sanitizes to start with "." and unlinks the temp file', async () => {
+    // multer fileFilter only inspects the EXTENSION, so '.image.png' passes the
+    // filter; basename keeps the leading dot -> safeName starts with '.' -> 400.
+    const res = await request(makeApp())
+      .post('/api/overlays/assets')
+      .attach('file', Buffer.from('x'), '.image.png');
+    expect(res.status).toBe(400);
+    expect(res.body).toEqual({ error: 'invalid filename' });
+    // The multer temp file was unlinked before bailing.
+    expect(h.unlinked.length).toBe(1);
+    expect(h.renamed).toEqual([]);
+  });
+
+  it('non-image extension errors out of multer -> 500 (no error handler) AS-IS', async () => {
+    // fileFilter calls cb(new Error('Only image files allowed')) for .txt. multer
+    // surfaces that as a request error; the router defines NO error-handling
+    // middleware, so Express's default handler returns 500 (NOT the 400 "no file"
+    // path). Pinned as-is — this is a rough edge, not the intended 400.
+    const res = await request(makeApp())
+      .post('/api/overlays/assets')
+      .attach('file', Buffer.from('x'), 'notes.txt');
+    expect(res.status).toBe(500);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// GET /api/overlays/assets — list
+// ---------------------------------------------------------------------------
+describe('GET /api/overlays/assets', () => {
+  it('lists non-dotfile assets with their sizes', async () => {
+    h.setAssets({ 'a.png': 123, 'b.jpg': 456 });
+    const res = await request(makeApp()).get('/api/overlays/assets');
+    expect(res.status).toBe(200);
+    expect(res.body).toEqual([
+      { name: 'a.png', size: 123 },
+      { name: 'b.jpg', size: 456 },
+    ]);
+  });
+
+  it('filters out dotfiles', async () => {
+    h.setAssets({ '.hidden': 9, 'shown.png': 10 });
+    const res = await request(makeApp()).get('/api/overlays/assets');
+    expect(res.status).toBe(200);
+    expect(res.body).toEqual([{ name: 'shown.png', size: 10 }]);
+  });
+
+  it('returns [] when readdir throws (swallowed catch)', async () => {
+    vi.spyOn(fs, 'readdirSync').mockImplementation(() => { throw new Error('boom'); });
+    const res = await request(makeApp()).get('/api/overlays/assets');
+    expect(res.status).toBe(200);
+    expect(res.body).toEqual([]);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// DELETE /api/overlays/assets/:name
+// ---------------------------------------------------------------------------
+describe('DELETE /api/overlays/assets/:name', () => {
+  it('unlinks an existing asset and returns { ok: true }', async () => {
+    h.setAssets({ 'gone.png': 1 });
+    const res = await request(makeApp()).delete('/api/overlays/assets/gone.png');
+    expect(res.status).toBe(200);
+    expect(res.body).toEqual({ ok: true });
+    expect(h.unlinked).toContain(ASSETS_DIR + '/gone.png');
+  });
+
+  it('returns { ok: true } even when the file does not exist (no unlink)', async () => {
+    const res = await request(makeApp()).delete('/api/overlays/assets/missing.png');
+    expect(res.status).toBe(200);
+    expect(res.body).toEqual({ ok: true });
+    expect(h.unlinked).toEqual([]);
+  });
+
+  it('returns 400 invalid path when name resolves outside ASSETS_DIR via traversal', async () => {
+    // path.join(ASSETS_DIR, '../../etc/passwd') escapes ASSETS_DIR, so
+    // indexOf(ASSETS_DIR) !== 0 -> 400. Express decodes %2e%2e to '..'.
+    const res = await request(makeApp()).delete('/api/overlays/assets/%2e%2e%2f%2e%2e%2fetc%2fpasswd');
+    expect(res.status).toBe(400);
+    expect(res.body).toEqual({ error: 'invalid path' });
   });
 });
