@@ -10,7 +10,7 @@
  * It deliberately uses NO top-level `export`/`import` so a browser <script>
  * can load it without a SyntaxError.
  */
-(function (root, factory) {
+(function (factory) {
   'use strict';
   var api = factory();
   if (typeof module !== 'undefined' && module.exports) {
@@ -19,7 +19,7 @@
   if (typeof window !== 'undefined') {
     window.FRUtils = api;
   }
-})(typeof self !== 'undefined' ? self : this, function () {
+})(function () {
   'use strict';
 
   // -------------------------------------------------------------------------

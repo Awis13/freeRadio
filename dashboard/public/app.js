@@ -5,6 +5,7 @@
   // These 7 helpers are byte-identical to their inline predecessors and are now
   // sourced from FRUtils so there is a single source of truth. The names are kept
   // identical so every existing call site is untouched.
+  // REQUIRES utils.js to be loaded before this script (index.html loads /utils.js first); FRU is undefined otherwise.
   var FRU = window.FRUtils;
   var pad = FRU.pad, fmtSize = FRU.fmtSize, cleanTrackName = FRU.cleanTrackName,
       escapeHtml = FRU.escapeHtml, timeAgo = FRU.timeAgo, formatTime = FRU.formatTime,

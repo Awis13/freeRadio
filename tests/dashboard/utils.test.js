@@ -1,7 +1,7 @@
 /**
  * tests/dashboard/utils.test.js
  *
- * Comprehensive unit tests for dashboard-snapshot/utils.js.
+ * Comprehensive unit tests for dashboard/public/utils.js.
  * All pure utility functions and refactored state-dependent logic are covered.
  */
 
