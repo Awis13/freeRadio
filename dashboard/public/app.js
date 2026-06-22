@@ -1,6 +1,25 @@
 (function () {
   'use strict';
 
+  // --- Shared utilities (from utils.js, loaded as window.FRUtils before this script) ---
+  // These 7 helpers are byte-identical to their inline predecessors and are now
+  // sourced from FRUtils so there is a single source of truth. The names are kept
+  // identical so every existing call site is untouched.
+  var FRU = window.FRUtils;
+  var pad = FRU.pad, fmtSize = FRU.fmtSize, cleanTrackName = FRU.cleanTrackName,
+      escapeHtml = FRU.escapeHtml, timeAgo = FRU.timeAgo, formatTime = FRU.formatTime,
+      pttFormatTime = FRU.pttFormatTime;
+
+  // Test-only hook: lets the jsdom smoke assert the aliases resolved to FRUtils.
+  // Guarded by window.__APP_TEST__ — completely inert in production (flag unset).
+  if (typeof window !== 'undefined' && window.__APP_TEST__) {
+    window.__appHelpers = {
+      pad: pad, fmtSize: fmtSize, cleanTrackName: cleanTrackName,
+      escapeHtml: escapeHtml, timeAgo: timeAgo, formatTime: formatTime,
+      pttFormatTime: pttFormatTime
+    };
+  }
+
   // --- DOM refs ---
   var studioPlayer = document.getElementById('studio-player');
   var modeTag = document.getElementById('mode-tag');
@@ -257,42 +276,6 @@
     var m = Math.floor(s / 60); s %= 60;
     uptimeEl.textContent = pad(h) + ':' + pad(m) + ':' + pad(s);
   }, 1000);
-
-  function pad(n) { return n < 10 ? '0' + n : '' + n; }
-
-  // --- Format helpers ---
-  function fmtSize(bytes) {
-    if (bytes < 1024) return bytes + ' B';
-    if (bytes < 1048576) return (bytes / 1024).toFixed(1) + ' KB';
-    return (bytes / 1048576).toFixed(1) + ' MB';
-  }
-
-  function cleanTrackName(filename) {
-    if (!filename) return '';
-    var name = filename.split('/').pop() || filename;
-    name = name.replace(/\.[^.]+$/, '');
-    name = name.replace(/_/g, ' ');
-    return name;
-  }
-
-  // Escape HTML special chars for safe innerHTML insertion
-  function escapeHtml(str) {
-    if (typeof str !== 'string') return str;
-    return str
-      .replace(/&/g, '&amp;')
-      .replace(/</g, '&lt;')
-      .replace(/>/g, '&gt;')
-      .replace(/"/g, '&quot;')
-      .replace(/'/g, '&#039;');
-  }
-
-  function timeAgo(ts) {
-    var diff = Math.floor((Date.now() - ts) / 1000);
-    if (diff < 60) return 'just now';
-    if (diff < 3600) return Math.floor(diff / 60) + 'm ago';
-    if (diff < 86400) return Math.floor(diff / 3600) + 'h ago';
-    return Math.floor(diff / 86400) + 'd ago';
-  }
 
   // --- HLS Player (live-only, no scrubbing) ---
   var hlsInstance = null;
@@ -803,13 +786,6 @@
     if (mode === 'rtmp') {
       modeTag.classList.add('rtmp');
     }
-  }
-
-  function formatTime(sec) {
-    if (!sec || sec < 0) return '0:00';
-    var m = Math.floor(sec / 60);
-    var s = Math.floor(sec % 60);
-    return m + ':' + (s < 10 ? '0' : '') + s;
   }
 
   // Compute crossfade duration matching Liquidsoap logic
@@ -4143,13 +4119,6 @@
         if (pttStatus === 'sent') pttReset();
       }, 2000);
     }
-  }
-
-  function pttFormatTime(ms) {
-    var s = Math.floor(ms / 1000);
-    var m = Math.floor(s / 60);
-    s = s % 60;
-    return m + ':' + (s < 10 ? '0' : '') + s;
   }
 
   function pttReset() {
