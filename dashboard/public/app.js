@@ -5872,6 +5872,33 @@
       setMixMode: function (m) { currentMixMode = m; },
       setPlatformNames: function (a) { currentPlatformNames = a; }
     };
+
+    // Test-only playlists hook: exposes the music-playlists UI functions plus
+    // setters/getters for the closure state they read (playlists,
+    // selectedPlaylistId, musicFiles, bpmMap), so the jsdom harness can drive
+    // characterization before the C2 extraction. The functions are hoisted and
+    // the state vars are declared at the top of the IIFE, so all are in scope
+    // here at the bottom. updateSmartRules lives on window (window.updateSmartRules)
+    // and is referenced directly. Guarded by window.__APP_TEST__ — completely
+    // inert in production (flag unset).
+    window.__appPlaylists = {
+      loadPlaylists: loadPlaylists,
+      renderPlaylistsList: renderPlaylistsList,
+      selectPlaylist: selectPlaylist,
+      renderPlaylistDetail: renderPlaylistDetail,
+      renderPlaylistTrackLibrary: renderPlaylistTrackLibrary,
+      addTrackToPlaylist: addTrackToPlaylist,
+      removeTrackFromPlaylist: removeTrackFromPlaylist,
+      reorderPlaylistTrack: reorderPlaylistTrack,
+      loadPlaylistsForSelect: loadPlaylistsForSelect,
+      updateSmartRules: window.updateSmartRules,
+      setPlaylists: function (a) { playlists = a; },
+      getPlaylists: function () { return playlists; },
+      setSelectedPlaylistId: function (id) { selectedPlaylistId = id; },
+      getSelectedPlaylistId: function () { return selectedPlaylistId; },
+      setMusicFiles: function (a) { musicFiles = a; },
+      setBpmMap: function (o) { bpmMap = o; }
+    };
   }
 
 })();
