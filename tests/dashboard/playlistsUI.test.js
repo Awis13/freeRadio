@@ -1,44 +1,59 @@
 /**
  * tests/dashboard/playlistsUI.test.js
  *
- * AS-IS characterization of the music-playlists UI in dashboard/public/app.js.
+ * Equivalence baseline for the C2 extraction of the music-playlists UI out of
+ * the app.js IIFE into dashboard/public/playlists.js (window.FRPlaylists).
  *
- * This is the SAFETY-NET / equivalence baseline for the upcoming C2 extraction
- * of the playlists UI out of the app.js IIFE. It does NOT test the eventual
- * extracted module — it pins the OBSERVABLE contract of the CURRENT code:
+ * These tests originally pinned the AS-IS contract of the code WHILE it still
+ * lived in app.js (driven via the guarded window.__appPlaylists hook). After
+ * C2 the SAME contract is asserted against the extracted module — only the
+ * DRIVING handle changed (now window.FRPlaylists). The assertions are
+ * unchanged, so green here is the proof the extraction preserved behavior:
  *   - the DOM each render function produces (shape, classes, text)
  *   - the backend endpoints each action hits (method + path + body)
  *   - the selection / branch behavior (manual vs smart, highlight, etc.)
- * Whatever C2 does, these tests must keep passing unchanged.
  *
- * How the backend is controlled: app.js calls authFetch(), which wraps the
- * global fetch. The shared boot stubs fetch as a never-resolving promise; here
- * each test installs a controllable win.fetch (makeFetchStub) that RECORDS every
- * { method, url, body } and resolves canned JSON mirroring the real backend
- * shapes. Functions are driven via the guarded window.__appPlaylists hook; after
- * each drive we flush() microtasks then assert DOM + recorded fetch calls.
+ * How the backend is controlled: FRPlaylists calls its injected authFetch,
+ * which (via app.js boot init) wraps the global fetch. The shared boot stubs
+ * fetch as a never-resolving promise; here each test installs a controllable
+ * win.fetch (makeFetchStub) that RECORDS every { method, url, body } and
+ * resolves canned JSON mirroring the real backend shapes. Functions are driven
+ * via window.FRPlaylists; after each drive we flush() microtasks then assert
+ * DOM + recorded fetch calls.
  */
 
 import { describe, it, expect, beforeEach } from 'vitest';
 import { bootWindow, makeFetchStub, route, routeExact, flush } from './appBoot.js';
 
-/** Boot a fresh window and swap in a controllable fetch built from `routes`. */
+/**
+ * Boot a fresh window and swap in a controllable fetch built from `routes`.
+ *
+ * app.js calls FRPlaylists.init(...) on boot, wiring the real authFetch / log /
+ * showError / openGenericModal / closeGenericModal / loadQueue closures (all of
+ * which funnel through win.fetch) plus live getters for the app's musicFiles /
+ * bpmMap. We re-init here with getMusicFiles/getBpmMap cleared to null so the
+ * module falls back to its internal music state — letting the tests drive it
+ * through pl.setMusicFiles()/setBpmMap() exactly as before. The host services
+ * stay wired (init merges, untouched keys preserved), so authFetch/loadQueue/
+ * etc. still route through the freshly-installed win.fetch.
+ */
 function bootWithFetch(routes) {
   const { win, doc } = bootWindow();
   const stub = makeFetchStub(routes);
   win.fetch = stub.fetch;
-  return { win, doc, pl: win.__appPlaylists, calls: stub.calls };
+  win.FRPlaylists.init({ getMusicFiles: null, getBpmMap: null });
+  return { win, doc, pl: win.FRPlaylists, calls: stub.calls };
 }
 
-describe('playlists UI characterization (AS-IS, app.js __appPlaylists hook)', () => {
-  it('the guarded __appPlaylists hook populated with all 13 fns + state handles', () => {
+describe('playlists UI characterization (window.FRPlaylists)', () => {
+  it('window.FRPlaylists exposes all 13 fns + state handles', () => {
     const { win } = bootWindow();
-    const pl = win.__appPlaylists;
+    const pl = win.FRPlaylists;
     expect(pl).toBeTruthy();
     for (const fn of [
       'loadPlaylists', 'renderPlaylistsList', 'selectPlaylist', 'renderPlaylistDetail',
       'renderPlaylistTrackLibrary', 'addTrackToPlaylist', 'removeTrackFromPlaylist',
-      'reorderPlaylistTrack', 'loadPlaylistsForSelect', 'updateSmartRules',
+      'reorderPlaylistTrack', 'loadForSelect', 'updateSmartRules',
       'setPlaylists', 'getPlaylists', 'setSelectedPlaylistId', 'getSelectedPlaylistId',
       'setMusicFiles', 'setBpmMap',
     ]) {
@@ -447,9 +462,9 @@ describe('playlists UI characterization (AS-IS, app.js __appPlaylists hook)', ()
   });
 
   // -------------------------------------------------------------------------
-  // loadPlaylistsForSelect (music part)
+  // loadForSelect (music part of the former loadPlaylistsForSelect)
   // -------------------------------------------------------------------------
-  describe('loadPlaylistsForSelect', () => {
+  describe('loadForSelect', () => {
     it('populates #schedule-default-playlist with one option per playlist + a None option', async () => {
       const { doc, pl } = bootWithFetch([
         routeExact('GET', '/api/playlists', [
@@ -458,7 +473,7 @@ describe('playlists UI characterization (AS-IS, app.js __appPlaylists hook)', ()
         ]),
         routeExact('GET', '/api/video-playlists', []),
       ]);
-      pl.loadPlaylistsForSelect();
+      pl.loadForSelect();
       await flush();
 
       const sel = doc.getElementById('schedule-default-playlist');
