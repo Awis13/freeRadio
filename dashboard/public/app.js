@@ -1,6 +1,26 @@
 (function () {
   'use strict';
 
+  // --- Shared utilities (from utils.js, loaded as window.FRUtils before this script) ---
+  // These 7 helpers are byte-identical to their inline predecessors and are now
+  // sourced from FRUtils so there is a single source of truth. The names are kept
+  // identical so every existing call site is untouched.
+  // REQUIRES utils.js to be loaded before this script (index.html loads /utils.js first); FRU is undefined otherwise.
+  var FRU = window.FRUtils;
+  var pad = FRU.pad, fmtSize = FRU.fmtSize, cleanTrackName = FRU.cleanTrackName,
+      escapeHtml = FRU.escapeHtml, timeAgo = FRU.timeAgo, formatTime = FRU.formatTime,
+      pttFormatTime = FRU.pttFormatTime;
+
+  // Test-only hook: lets the jsdom smoke assert the aliases resolved to FRUtils.
+  // Guarded by window.__APP_TEST__ — completely inert in production (flag unset).
+  if (typeof window !== 'undefined' && window.__APP_TEST__) {
+    window.__appHelpers = {
+      pad: pad, fmtSize: fmtSize, cleanTrackName: cleanTrackName,
+      escapeHtml: escapeHtml, timeAgo: timeAgo, formatTime: formatTime,
+      pttFormatTime: pttFormatTime
+    };
+  }
+
   // --- DOM refs ---
   var studioPlayer = document.getElementById('studio-player');
   var modeTag = document.getElementById('mode-tag');
@@ -257,42 +277,6 @@
     var m = Math.floor(s / 60); s %= 60;
     uptimeEl.textContent = pad(h) + ':' + pad(m) + ':' + pad(s);
   }, 1000);
-
-  function pad(n) { return n < 10 ? '0' + n : '' + n; }
-
-  // --- Format helpers ---
-  function fmtSize(bytes) {
-    if (bytes < 1024) return bytes + ' B';
-    if (bytes < 1048576) return (bytes / 1024).toFixed(1) + ' KB';
-    return (bytes / 1048576).toFixed(1) + ' MB';
-  }
-
-  function cleanTrackName(filename) {
-    if (!filename) return '';
-    var name = filename.split('/').pop() || filename;
-    name = name.replace(/\.[^.]+$/, '');
-    name = name.replace(/_/g, ' ');
-    return name;
-  }
-
-  // Escape HTML special chars for safe innerHTML insertion
-  function escapeHtml(str) {
-    if (typeof str !== 'string') return str;
-    return str
-      .replace(/&/g, '&amp;')
-      .replace(/</g, '&lt;')
-      .replace(/>/g, '&gt;')
-      .replace(/"/g, '&quot;')
-      .replace(/'/g, '&#039;');
-  }
-
-  function timeAgo(ts) {
-    var diff = Math.floor((Date.now() - ts) / 1000);
-    if (diff < 60) return 'just now';
-    if (diff < 3600) return Math.floor(diff / 60) + 'm ago';
-    if (diff < 86400) return Math.floor(diff / 3600) + 'h ago';
-    return Math.floor(diff / 86400) + 'd ago';
-  }
 
   // --- HLS Player (live-only, no scrubbing) ---
   var hlsInstance = null;
@@ -805,23 +789,10 @@
     }
   }
 
-  function formatTime(sec) {
-    if (!sec || sec < 0) return '0:00';
-    var m = Math.floor(sec / 60);
-    var s = Math.floor(sec % 60);
-    return m + ':' + (s < 10 ? '0' : '') + s;
-  }
-
-  // Compute crossfade duration matching Liquidsoap logic
+  // Compute crossfade duration matching Liquidsoap logic.
+  // Delegates to FRUtils (single source of truth), passing the current mix mode.
   function computeMixDur(bpm) {
-    if (currentMixMode === 'cut') return 0;
-    if (currentMixMode === 'crossfade') return 5.0;
-    // Smart mode: 8 bars at track BPM, capped at 28s
-    if (!bpm || bpm <= 0) return 10.0; // reasonable default
-    var barDur = (60.0 / bpm) * 4.0;
-    var mixBars = Math.min(8, Math.floor(28.0 / barDur));
-    mixBars = Math.max(2, mixBars);
-    return mixBars * barDur;
+    return FRU.computeMixDur(bpm, currentMixMode);
   }
 
   function positionCueMarker() {
@@ -2750,13 +2721,9 @@
   var presetSelect = document.getElementById('platform-preset-select');
   var restreamAutoStartCheckbox = document.getElementById('restream-autostart-checkbox');
 
+  // Delegates to FRUtils (single source of truth), passing the current names.
   function uniquePlatformName(base) {
-    if (currentPlatformNames.indexOf(base) === -1) return base;
-    for (var i = 2; i <= 99; i++) {
-      var candidate = base + ' ' + i;
-      if (currentPlatformNames.indexOf(candidate) === -1) return candidate;
-    }
-    return base + ' ' + Date.now();
+    return FRU.uniquePlatformName(base, currentPlatformNames);
   }
 
   function applyPreset(key) {
@@ -2955,16 +2922,10 @@
   var broadcastState = { streaming: false, broadcast: false, streamMode: 'standby', standbyVisual: null, visualMode: 'visual-radio', arming: false, liveMode: { source: 'obs', afkFallback: 'visual-radio', obsStatus: 'offline', ingestKey: '' }, uiMode: 'radio', uiSubMode: 'visual-radio' };
   var armAborted = false;
 
-  // Derived phase from state
+  // Derived phase from state.
+  // Delegates to FRUtils (single source of truth), passing the broadcast state.
   function getBroadcastPhase() {
-    if (broadcastState.arming) return 'arming';
-    if (broadcastState.streamMode === 'armed') {
-      return broadcastState.broadcast ? 'broadcasting' : 'armed';
-    }
-    if (broadcastState.streamMode === 'live') {
-      return broadcastState.broadcast ? 'live' : 'playing';
-    }
-    return 'idle';
+    return FRU.getBroadcastPhase(broadcastState);
   }
 
   var btnArm = document.getElementById('btn-arm');
@@ -3129,21 +3090,14 @@
     updateBroadcastUI();
   }
 
-  // Reverse map: backend → UI mode (on load/WS)
+  // Reverse map: backend → UI mode (on load/WS).
+  // Delegates to FRUtils for the derivation, then applies the AS-IS mutation of
+  // broadcastState (FRUtils returns a value; app.js keeps mutating in place and
+  // returns undefined, exactly as before).
   function deriveUiMode() {
-    var vm = broadcastState.visualMode;
-
-    if (vm === 'live') {
-      broadcastState.uiMode = 'takeover';
-      broadcastState.uiSubMode = 'obs';
-      return;
-    }
-
-    // Phase 1: Talk Over has no backend representation
-    // Restore from localStorage
-    // Phase 1: radio mode only — ignore talkover/takeover from localStorage
-    broadcastState.uiMode = 'radio';
-    broadcastState.uiSubMode = vm || 'visual-radio';
+    var d = FRU.deriveUiMode(broadcastState.visualMode);
+    broadcastState.uiMode = d.uiMode;
+    broadcastState.uiSubMode = d.uiSubMode;
   }
 
   // Update UI: card highlighting, CSS classes, locking
@@ -4143,13 +4097,6 @@
         if (pttStatus === 'sent') pttReset();
       }, 2000);
     }
-  }
-
-  function pttFormatTime(ms) {
-    var s = Math.floor(ms / 1000);
-    var m = Math.floor(s / 60);
-    s = s % 60;
-    return m + ':' + (s < 10 ? '0' : '') + s;
   }
 
   function pttReset() {
@@ -5908,5 +5855,23 @@
   // --- Init canvas on load + resize ---
   window.addEventListener('resize', azResize);
   azResize();
+
+  // Test-only drift hook: exposes the 4 helpers that were cut over from inline
+  // copies to FRUtils delegations (C3), plus the closure handles tests need to
+  // drive them (broadcastState, and setters for currentMixMode /
+  // currentPlatformNames). Placed at the bottom of the IIFE so all three vars
+  // are already declared. Guarded by window.__APP_TEST__ — completely inert in
+  // production (flag unset).
+  if (typeof window !== 'undefined' && window.__APP_TEST__) {
+    window.__appDrift = {
+      computeMixDur: computeMixDur,
+      getBroadcastPhase: getBroadcastPhase,
+      uniquePlatformName: uniquePlatformName,
+      deriveUiMode: deriveUiMode,
+      broadcastState: broadcastState,
+      setMixMode: function (m) { currentMixMode = m; },
+      setPlatformNames: function (a) { currentPlatformNames = a; }
+    };
+  }
 
 })();
