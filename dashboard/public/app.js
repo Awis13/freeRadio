@@ -788,16 +788,10 @@
     }
   }
 
-  // Compute crossfade duration matching Liquidsoap logic
+  // Compute crossfade duration matching Liquidsoap logic.
+  // Delegates to FRUtils (single source of truth), passing the current mix mode.
   function computeMixDur(bpm) {
-    if (currentMixMode === 'cut') return 0;
-    if (currentMixMode === 'crossfade') return 5.0;
-    // Smart mode: 8 bars at track BPM, capped at 28s
-    if (!bpm || bpm <= 0) return 10.0; // reasonable default
-    var barDur = (60.0 / bpm) * 4.0;
-    var mixBars = Math.min(8, Math.floor(28.0 / barDur));
-    mixBars = Math.max(2, mixBars);
-    return mixBars * barDur;
+    return FRU.computeMixDur(bpm, currentMixMode);
   }
 
   function positionCueMarker() {
@@ -2726,13 +2720,9 @@
   var presetSelect = document.getElementById('platform-preset-select');
   var restreamAutoStartCheckbox = document.getElementById('restream-autostart-checkbox');
 
+  // Delegates to FRUtils (single source of truth), passing the current names.
   function uniquePlatformName(base) {
-    if (currentPlatformNames.indexOf(base) === -1) return base;
-    for (var i = 2; i <= 99; i++) {
-      var candidate = base + ' ' + i;
-      if (currentPlatformNames.indexOf(candidate) === -1) return candidate;
-    }
-    return base + ' ' + Date.now();
+    return FRU.uniquePlatformName(base, currentPlatformNames);
   }
 
   function applyPreset(key) {
@@ -2931,16 +2921,10 @@
   var broadcastState = { streaming: false, broadcast: false, streamMode: 'standby', standbyVisual: null, visualMode: 'visual-radio', arming: false, liveMode: { source: 'obs', afkFallback: 'visual-radio', obsStatus: 'offline', ingestKey: '' }, uiMode: 'radio', uiSubMode: 'visual-radio' };
   var armAborted = false;
 
-  // Derived phase from state
+  // Derived phase from state.
+  // Delegates to FRUtils (single source of truth), passing the broadcast state.
   function getBroadcastPhase() {
-    if (broadcastState.arming) return 'arming';
-    if (broadcastState.streamMode === 'armed') {
-      return broadcastState.broadcast ? 'broadcasting' : 'armed';
-    }
-    if (broadcastState.streamMode === 'live') {
-      return broadcastState.broadcast ? 'live' : 'playing';
-    }
-    return 'idle';
+    return FRU.getBroadcastPhase(broadcastState);
   }
 
   var btnArm = document.getElementById('btn-arm');
@@ -3105,21 +3089,14 @@
     updateBroadcastUI();
   }
 
-  // Reverse map: backend → UI mode (on load/WS)
+  // Reverse map: backend → UI mode (on load/WS).
+  // Delegates to FRUtils for the derivation, then applies the AS-IS mutation of
+  // broadcastState (FRUtils returns a value; app.js keeps mutating in place and
+  // returns undefined, exactly as before).
   function deriveUiMode() {
-    var vm = broadcastState.visualMode;
-
-    if (vm === 'live') {
-      broadcastState.uiMode = 'takeover';
-      broadcastState.uiSubMode = 'obs';
-      return;
-    }
-
-    // Phase 1: Talk Over has no backend representation
-    // Restore from localStorage
-    // Phase 1: radio mode only — ignore talkover/takeover from localStorage
-    broadcastState.uiMode = 'radio';
-    broadcastState.uiSubMode = vm || 'visual-radio';
+    var d = FRU.deriveUiMode(broadcastState.visualMode);
+    broadcastState.uiMode = d.uiMode;
+    broadcastState.uiSubMode = d.uiSubMode;
   }
 
   // Update UI: card highlighting, CSS classes, locking
@@ -5877,5 +5854,23 @@
   // --- Init canvas on load + resize ---
   window.addEventListener('resize', azResize);
   azResize();
+
+  // Test-only drift hook: exposes the 4 helpers that were cut over from inline
+  // copies to FRUtils delegations (C3), plus the closure handles tests need to
+  // drive them (broadcastState, and setters for currentMixMode /
+  // currentPlatformNames). Placed at the bottom of the IIFE so all three vars
+  // are already declared. Guarded by window.__APP_TEST__ — completely inert in
+  // production (flag unset).
+  if (typeof window !== 'undefined' && window.__APP_TEST__) {
+    window.__appDrift = {
+      computeMixDur: computeMixDur,
+      getBroadcastPhase: getBroadcastPhase,
+      uniquePlatformName: uniquePlatformName,
+      deriveUiMode: deriveUiMode,
+      broadcastState: broadcastState,
+      setMixMode: function (m) { currentMixMode = m; },
+      setPlatformNames: function (a) { currentPlatformNames = a; }
+    };
+  }
 
 })();

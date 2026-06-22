@@ -156,3 +156,166 @@ describe('app.js jsdom load-smoke (C2 FRUtils cutover)', () => {
     }
   });
 });
+
+/**
+ * C3 drift-gate characterization: the 4 helpers that DIVERGED from their FRUtils
+ * twins (computeMixDur, getBroadcastPhase, uniquePlatformName, deriveUiMode) were
+ * cut over to thin delegations that pass the closure value. The canonical LOGIC
+ * is already pinned in utils.test.js against FRUtils. These tests pin the WIRING
+ * through the REAL app.js: that each delegation forwards the right closure value,
+ * and that deriveUiMode keeps mutating broadcastState in place (AS-IS).
+ *
+ * Driven via the guarded window.__appDrift hook (inert in production).
+ */
+describe('app.js drift-gate (C3 FRUtils delegation of the 4 diverged helpers)', () => {
+  let win;
+  let drift;
+
+  beforeAll(() => {
+    const virtualConsole = new VirtualConsole();
+    virtualConsole.on('error', () => {});
+
+    const dom = new JSDOM(indexHtml, {
+      runScripts: 'outside-only',
+      pretendToBeVisual: true,
+      url: 'http://localhost/',
+      virtualConsole,
+    });
+    win = dom.window;
+    installStubs(win);
+
+    runScript(dom, utilsSrc, 'utils.js');
+    runScript(dom, appSrc, 'app.js');
+    drift = win.__appDrift;
+  });
+
+  it('the guarded __appDrift hook populated (all 4 functions + handles present)', () => {
+    expect(drift).toBeTruthy();
+    expect(typeof drift.computeMixDur).toBe('function');
+    expect(typeof drift.getBroadcastPhase).toBe('function');
+    expect(typeof drift.uniquePlatformName).toBe('function');
+    expect(typeof drift.deriveUiMode).toBe('function');
+    expect(drift.broadcastState).toBeTruthy();
+    expect(typeof drift.setMixMode).toBe('function');
+    expect(typeof drift.setPlatformNames).toBe('function');
+  });
+
+  describe('computeMixDur (delegates with currentMixMode)', () => {
+    it("mixMode 'cut' → 0", () => {
+      drift.setMixMode('cut');
+      expect(drift.computeMixDur(128)).toBe(0);
+    });
+
+    it("mixMode 'crossfade' → 5.0", () => {
+      drift.setMixMode('crossfade');
+      expect(drift.computeMixDur(128)).toBe(5.0);
+    });
+
+    it('smart mode with a bpm → matches the FRUtils computation', () => {
+      drift.setMixMode('smart');
+      expect(drift.computeMixDur(120)).toBe(win.FRUtils.computeMixDur(120, 'smart'));
+    });
+
+    it('smart mode with no bpm → 10.0 default', () => {
+      drift.setMixMode('smart');
+      expect(drift.computeMixDur(0)).toBe(10.0);
+    });
+
+    it('forwards currentMixMode as the 2nd arg to FRUtils.computeMixDur', () => {
+      drift.setMixMode('cut');
+      const orig = win.FRUtils.computeMixDur;
+      const calls = [];
+      win.FRUtils.computeMixDur = (bpm, mode) => { calls.push([bpm, mode]); return 42; };
+      try {
+        const out = drift.computeMixDur(99);
+        expect(out).toBe(42);
+        expect(calls).toEqual([[99, 'cut']]);
+      } finally {
+        win.FRUtils.computeMixDur = orig;
+      }
+    });
+  });
+
+  describe('getBroadcastPhase (delegates with broadcastState) — full phase table AS-IS', () => {
+    function setState(patch) {
+      Object.assign(drift.broadcastState, {
+        arming: false, streamMode: 'standby', broadcast: false,
+      }, patch);
+    }
+
+    it("arming → 'arming'", () => {
+      setState({ arming: true });
+      expect(drift.getBroadcastPhase()).toBe('arming');
+    });
+
+    it("armed + !broadcast → 'armed'", () => {
+      setState({ streamMode: 'armed', broadcast: false });
+      expect(drift.getBroadcastPhase()).toBe('armed');
+    });
+
+    it("armed + broadcast → 'broadcasting'", () => {
+      setState({ streamMode: 'armed', broadcast: true });
+      expect(drift.getBroadcastPhase()).toBe('broadcasting');
+    });
+
+    it("live + !broadcast → 'playing'", () => {
+      setState({ streamMode: 'live', broadcast: false });
+      expect(drift.getBroadcastPhase()).toBe('playing');
+    });
+
+    it("live + broadcast → 'live'", () => {
+      setState({ streamMode: 'live', broadcast: true });
+      expect(drift.getBroadcastPhase()).toBe('live');
+    });
+
+    it("else (standby) → 'idle'", () => {
+      setState({ streamMode: 'standby' });
+      expect(drift.getBroadcastPhase()).toBe('idle');
+    });
+  });
+
+  describe('uniquePlatformName (delegates with currentPlatformNames)', () => {
+    it('empty names → base unchanged', () => {
+      drift.setPlatformNames([]);
+      expect(drift.uniquePlatformName('YouTube')).toBe('YouTube');
+    });
+
+    it("collision → 'base 2'", () => {
+      drift.setPlatformNames(['YouTube']);
+      expect(drift.uniquePlatformName('YouTube')).toBe('YouTube 2');
+    });
+
+    it("base + 2..99 all taken → 'base <timestamp>' (prefix only, ts not pinned)", () => {
+      const names = ['YouTube'];
+      for (let i = 2; i <= 99; i++) names.push('YouTube ' + i);
+      drift.setPlatformNames(names);
+      expect(drift.uniquePlatformName('YouTube')).toMatch(/^YouTube \d+$/);
+    });
+  });
+
+  describe('deriveUiMode (delegates, then MUTATES broadcastState AS-IS)', () => {
+    it("visualMode 'live' → mutates to {uiMode:'takeover', uiSubMode:'obs'} and returns undefined", () => {
+      drift.broadcastState.visualMode = 'live';
+      drift.broadcastState.uiMode = 'dirty';
+      drift.broadcastState.uiSubMode = 'dirty';
+      const ret = drift.deriveUiMode();
+      expect(ret).toBeUndefined();
+      expect(drift.broadcastState.uiMode).toBe('takeover');
+      expect(drift.broadcastState.uiSubMode).toBe('obs');
+    });
+
+    it("other visualMode → mutates to {uiMode:'radio', uiSubMode: vm}", () => {
+      drift.broadcastState.visualMode = 'video-playlist';
+      drift.deriveUiMode();
+      expect(drift.broadcastState.uiMode).toBe('radio');
+      expect(drift.broadcastState.uiSubMode).toBe('video-playlist');
+    });
+
+    it("falsy visualMode → uiSubMode falls back to 'visual-radio'", () => {
+      drift.broadcastState.visualMode = '';
+      drift.deriveUiMode();
+      expect(drift.broadcastState.uiMode).toBe('radio');
+      expect(drift.broadcastState.uiSubMode).toBe('visual-radio');
+    });
+  });
+});
