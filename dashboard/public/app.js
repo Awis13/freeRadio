@@ -5522,6 +5522,21 @@
       setMixMode: function (m) { currentMixMode = m; },
       setPlatformNames: function (a) { currentPlatformNames = a; }
     };
+
+    // Test-only analytics hook: exposes the 4 analytics render/load functions
+    // plus setters for the read-only state they consume (listenerHistory and
+    // peakListeners, normally fed only by the WebSocket updateIcecast handler).
+    // This is the characterization baseline for the C2 extraction of the
+    // analytics UI out of the IIFE. Guarded by window.__APP_TEST__ — completely
+    // inert in production (flag unset).
+    window.__appAnalytics = {
+      loadAnalytics: loadAnalytics,
+      drawListenerChart: drawListenerChart,
+      loadHistoryStats: loadHistoryStats,
+      drawTopTracksChart: drawTopTracksChart,
+      setListenerHistory: function (arr) { listenerHistory = arr; },
+      setPeakListeners: function (n) { peakListeners = n; }
+    };
   }
 
 })();
