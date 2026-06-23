@@ -217,7 +217,7 @@
       if (tab === 'playlists') FRPlaylists.loadPlaylists();
       if (tab === 'schedule') { loadSchedule(); loadPlaylistsForSelect(); }
       if (tab === 'visuals') { loadVisualProfiles(); loadVideoPlaylists(); loadOverlays(); loadOverlayAssets(); }
-      if (tab === 'analytics') loadAnalytics();
+      if (tab === 'analytics') FRAnalytics.loadAnalytics();
     });
   });
 
@@ -1428,6 +1428,16 @@
     getBpmMap: function () { return bpmMap; }
   });
 
+  // Wire the analytics UI module (analytics.js / window.FRAnalytics) with
+  // authFetch plus live getters for the read-only listener state. The getters are
+  // read at call time so the module always sees the latest listenerHistory /
+  // peakListeners written by the WS updateIcecast handler.
+  FRAnalytics.init({
+    authFetch: authFetch,
+    getListenerHistory: function () { return listenerHistory; },
+    getPeakListeners: function () { return peakListeners; }
+  });
+
   // ============================
   // SCHEDULE
   // ============================
@@ -2234,119 +2244,11 @@
   // ============================
   // ANALYTICS
   // ============================
-  function loadAnalytics() {
-    drawListenerChart();
-    loadHistoryStats();
-  }
-
-  function drawListenerChart() {
-    var canvas = document.getElementById('listeners-chart');
-    if (!canvas) return;
-    var ctx = canvas.getContext('2d');
-    var w = canvas.width = canvas.parentElement.offsetWidth - 24;
-    var h = canvas.height = 200;
-
-    ctx.clearRect(0, 0, w, h);
-
-    if (listenerHistory.length < 2) {
-      ctx.fillStyle = '#9fb6cc';
-      ctx.font = '13px monospace';
-      ctx.fillText('Collecting data...', w / 2 - 60, h / 2);
-      return;
-    }
-
-    var maxCount = Math.max.apply(null, listenerHistory.map(function(p) { return p.count; })) || 1;
-    var padding = 40;
-    var graphW = w - padding * 2;
-    var graphH = h - padding * 2;
-
-    ctx.strokeStyle = '#1c2631';
-    ctx.lineWidth = 1;
-    for (var i = 0; i <= 4; i++) {
-      var gy = padding + graphH * (1 - i / 4);
-      ctx.beginPath();
-      ctx.moveTo(padding, gy);
-      ctx.lineTo(w - padding, gy);
-      ctx.stroke();
-      ctx.fillStyle = '#9fb6cc';
-      ctx.font = '10px monospace';
-      ctx.fillText(Math.round(maxCount * i / 4), 2, gy + 4);
-    }
-
-    var accentColor = getComputedStyle(document.documentElement).getPropertyValue('--accent').trim() || '#c4ffcb';
-    var accentRgb = getComputedStyle(document.documentElement).getPropertyValue('--accent-rgb').trim() || '196, 255, 203';
-    ctx.strokeStyle = accentColor;
-    ctx.lineWidth = 2;
-    ctx.beginPath();
-    listenerHistory.forEach(function(p, idx) {
-      var x = padding + (idx / (listenerHistory.length - 1)) * graphW;
-      var y = padding + graphH * (1 - p.count / maxCount);
-      if (idx === 0) ctx.moveTo(x, y);
-      else ctx.lineTo(x, y);
-    });
-    ctx.stroke();
-
-    ctx.lineTo(padding + graphW, padding + graphH);
-    ctx.lineTo(padding, padding + graphH);
-    ctx.closePath();
-    ctx.fillStyle = 'rgba(' + accentRgb + ', 0.1)';
-    ctx.fill();
-  }
-
-  function loadHistoryStats() {
-    authFetch('/api/history/stats')
-      .then(function(r) { return r.json(); })
-      .then(function(data) {
-        document.getElementById('analytics-total-tracks').textContent = data.totalPlayed || 0;
-        document.getElementById('analytics-unique-tracks').textContent = data.uniqueTracks || 0;
-        document.getElementById('analytics-peak-listeners').textContent = peakListeners;
-        drawTopTracksChart(data.topTracks || []);
-        if (data.uptimeMs) {
-          var hrs = Math.floor(data.uptimeMs / 3600000);
-          var mins = Math.floor((data.uptimeMs % 3600000) / 60000);
-          document.getElementById('analytics-uptime-value').textContent = hrs + 'h ' + mins + 'm';
-        }
-      })
-      .catch(function() {
-        document.getElementById('analytics-total-tracks').textContent = '0';
-        document.getElementById('analytics-unique-tracks').textContent = '0';
-        document.getElementById('analytics-peak-listeners').textContent = peakListeners;
-      });
-  }
-
-  function drawTopTracksChart(tracks) {
-    var canvas = document.getElementById('tracks-chart');
-    if (!canvas || !tracks.length) return;
-    var ctx = canvas.getContext('2d');
-    var w = canvas.width = canvas.parentElement.offsetWidth - 24;
-    var h = canvas.height = Math.max(200, tracks.length * 30 + 40);
-
-    ctx.clearRect(0, 0, w, h);
-
-    var top10 = tracks.slice(0, 10);
-    var maxPlays = top10[0] ? top10[0].count : 1;
-    var barH = 22;
-    var gap = 6;
-    var labelW = 200;
-
-    top10.forEach(function(t, idx) {
-      var y = 20 + idx * (barH + gap);
-      var barW = (w - labelW - 60) * (t.count / maxPlays);
-
-      ctx.fillStyle = '#243244';
-      ctx.fillRect(labelW, y, w - labelW - 60, barH);
-      ctx.fillStyle = getComputedStyle(document.documentElement).getPropertyValue('--accent').trim() || '#c4ffcb';
-      ctx.fillRect(labelW, y, barW, barH);
-
-      ctx.fillStyle = '#d7e1ea';
-      ctx.font = '11px monospace';
-      var name = t.track.length > 28 ? t.track.substr(0, 28) + '...' : t.track;
-      ctx.fillText(name, 4, y + 15);
-
-      ctx.fillStyle = '#9fb6cc';
-      ctx.fillText(t.count + 'x', w - 50, y + 15);
-    });
-  }
+  // Analytics UI (loadAnalytics / drawListenerChart / loadHistoryStats /
+  // drawTopTracksChart) lives in analytics.js (window.FRAnalytics), wired up via
+  // FRAnalytics.init near the FRPlaylists.init call. listenerHistory and
+  // peakListeners stay here (fed by the WS updateIcecast handler) and are read by
+  // the module live through the injected getters.
 
   // ============================
   // STREAM PLATFORMS (Studio sidebar)
