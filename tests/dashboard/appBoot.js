@@ -30,6 +30,7 @@ const publicDir = path.resolve(here, '../../dashboard/public');
 const indexHtml = readFileSync(path.join(publicDir, 'index.html'), 'utf8');
 const utilsSrc = readFileSync(path.join(publicDir, 'utils.js'), 'utf8');
 const playlistsSrc = readFileSync(path.join(publicDir, 'playlists.js'), 'utf8');
+const analyticsSrc = readFileSync(path.join(publicDir, 'analytics.js'), 'utf8');
 const appSrc = readFileSync(path.join(publicDir, 'app.js'), 'utf8');
 
 /**
@@ -118,9 +119,11 @@ export function bootWindow() {
   installStubs(win);
 
   // Load order mirrors index.html: utils.js (window.FRUtils), playlists.js
-  // (window.FRPlaylists), then app.js (which calls FRPlaylists.init on boot).
+  // (window.FRPlaylists), analytics.js (window.FRAnalytics), then app.js (which
+  // calls FRPlaylists.init / FRAnalytics.init on boot).
   dom.window.eval(utilsSrc);
   dom.window.eval(playlistsSrc);
+  dom.window.eval(analyticsSrc);
   let loadError = null;
   try {
     dom.window.eval(appSrc);

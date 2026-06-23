@@ -24,12 +24,14 @@
  * assert on the recorded calls. Otherwise we assert DOM side-effects (canvas
  * width/height set) + no-throw.
  *
- * How the backend is controlled: loadHistoryStats calls authFetch, which wraps
- * the global fetch. The shared boot stubs fetch as a never-resolving promise;
- * each test that needs stats installs a recording win.fetch (makeFetchStub) that
- * records every { method, url, body } and resolves canned JSON mirroring the
- * real /api/history/stats shape. We drive the functions via window.__appAnalytics
- * (with setListenerHistory/setPeakListeners controlling the read-only state),
+ * How the backend is controlled: loadHistoryStats calls deps.authFetch. Each test
+ * that needs stats builds a recording authFetch (makeFetchStub) that records every
+ * { method, url, body } and resolves canned JSON mirroring the real
+ * /api/history/stats shape. app.js init's window.FRAnalytics on boot with its own
+ * deps; the test then re-init's window.FRAnalytics with its OWN controllable deps
+ * — the recording authFetch plus getListenerHistory/getPeakListeners getters that
+ * return test-controlled local vars (replacing the old setListenerHistory/
+ * setPeakListeners setters). We drive the 4 functions on window.FRAnalytics,
  * flush() the microtasks, then assert DOM text + recorded fetch calls.
  */
 
@@ -37,14 +39,31 @@ import { describe, it, expect } from 'vitest';
 import { bootWindow, makeFetchStub, routeExact, flush } from './appBoot.js';
 
 /**
- * Boot a fresh window and swap in a controllable fetch built from `routes`.
- * Returns the analytics hook plus the recorded fetch calls.
+ * Boot a fresh window and re-init window.FRAnalytics with test-controlled deps:
+ * a recording authFetch built from `routes`, and getters returning local vars the
+ * test can set. Returns the module (`an`) plus the recorded fetch calls and the
+ * state setters (which mutate the local vars the getters read at call time).
  */
 function bootWithFetch(routes) {
   const { win, doc } = bootWindow();
   const stub = makeFetchStub(routes);
   win.fetch = stub.fetch;
-  return { win, doc, an: win.__appAnalytics, calls: stub.calls };
+
+  // Local, test-controlled read-only state. The injected getters read these at
+  // call time (mirroring how app.js feeds listenerHistory/peakListeners live).
+  const state = { listenerHistory: [], peakListeners: 0 };
+  const an = win.FRAnalytics;
+  an.init({
+    authFetch: (url, opts) => win.fetch(url, opts),
+    getListenerHistory: () => state.listenerHistory,
+    getPeakListeners: () => state.peakListeners,
+  });
+  // Adapter so the existing assertions keep their setListenerHistory/
+  // setPeakListeners driving calls unchanged.
+  an.setListenerHistory = (arr) => { state.listenerHistory = arr; };
+  an.setPeakListeners = (n) => { state.peakListeners = n; };
+
+  return { win, doc, an, calls: stub.calls };
 }
 
 /**
@@ -70,14 +89,14 @@ function recordCanvas(canvas) {
   return rec;
 }
 
-describe('analytics UI characterization (window.__appAnalytics)', () => {
-  it('window.__appAnalytics exposes the 4 fns + state setters', () => {
+describe('analytics UI characterization (window.FRAnalytics)', () => {
+  it('window.FRAnalytics exposes init + the 4 analytics fns', () => {
     const { win } = bootWindow();
-    const an = win.__appAnalytics;
+    const an = win.FRAnalytics;
     expect(an).toBeTruthy();
     for (const fn of [
+      'init',
       'loadAnalytics', 'drawListenerChart', 'loadHistoryStats', 'drawTopTracksChart',
-      'setListenerHistory', 'setPeakListeners',
     ]) {
       expect(typeof an[fn]).toBe('function');
     }
