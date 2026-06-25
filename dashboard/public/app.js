@@ -5424,6 +5424,24 @@
       setMixMode: function (m) { currentMixMode = m; },
       setPlatformNames: function (a) { currentPlatformNames = a; }
     };
+
+    // Test-only file-management hook: exposes the file-mgmt UI fns + the closure
+    // state tests must drive (musicFiles / visualFiles owned here, bpmMap written
+    // by the WS handler). This is the equivalence baseline for the C2 extraction
+    // of this UI out of the IIFE. Inert in production (flag unset).
+    window.__appFileMgmt = {
+      refreshBpmInList: refreshBpmInList,
+      loadFileList: loadFileList,
+      renderFileList: renderFileList,
+      deleteFile: deleteFile,
+      initDropZone: initDropZone,
+      uploadOneFile: uploadOneFile,
+      getMusicFiles: function () { return musicFiles; },
+      setMusicFiles: function (a) { musicFiles = a; },
+      getVisualFiles: function () { return visualFiles; },
+      setVisualFiles: function (a) { visualFiles = a; },
+      setBpmMap: function (o) { bpmMap = o; }
+    };
   }
 
 })();
