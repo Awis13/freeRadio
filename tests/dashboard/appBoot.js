@@ -31,6 +31,7 @@ const indexHtml = readFileSync(path.join(publicDir, 'index.html'), 'utf8');
 const utilsSrc = readFileSync(path.join(publicDir, 'utils.js'), 'utf8');
 const playlistsSrc = readFileSync(path.join(publicDir, 'playlists.js'), 'utf8');
 const analyticsSrc = readFileSync(path.join(publicDir, 'analytics.js'), 'utf8');
+const fileMgmtSrc = readFileSync(path.join(publicDir, 'filemgmt.js'), 'utf8');
 const appSrc = readFileSync(path.join(publicDir, 'app.js'), 'utf8');
 
 /**
@@ -119,11 +120,13 @@ export function bootWindow() {
   installStubs(win);
 
   // Load order mirrors index.html: utils.js (window.FRUtils), playlists.js
-  // (window.FRPlaylists), analytics.js (window.FRAnalytics), then app.js (which
-  // calls FRPlaylists.init / FRAnalytics.init on boot).
+  // (window.FRPlaylists), analytics.js (window.FRAnalytics), filemgmt.js
+  // (window.FRFileMgmt), then app.js (which calls FRPlaylists.init /
+  // FRAnalytics.init / FRFileMgmt.init on boot).
   dom.window.eval(utilsSrc);
   dom.window.eval(playlistsSrc);
   dom.window.eval(analyticsSrc);
+  dom.window.eval(fileMgmtSrc);
   let loadError = null;
   try {
     dom.window.eval(appSrc);
@@ -214,6 +217,88 @@ export function routeExact(method, pathname, respond) {
       return p === pathname;
     },
   };
+}
+
+/**
+ * Install a controllable XMLHttpRequest stub on the jsdom `win`.
+ *
+ * The harness only stubs `fetch`; `uploadOneFile` uses raw XHR for its multipart
+ * upload + progress bar, so without this nothing drives that path. This mirrors
+ * makeFetchStub's "record every call, let the test drive the result" style.
+ *
+ * Each `new win.XMLHttpRequest()` is recorded in `calls` as an instance handle:
+ *   { method, url, async, headers, body, upload, fireProgress(), complete(),
+ *     fail() }
+ * where:
+ *   - method/url/async  — captured by `.open(method, url, async)`
+ *   - headers           — map captured by `.setRequestHeader(k, v)`
+ *   - body              — the argument passed to `.send(body)` (a FormData)
+ *   - upload            — the object app code attaches `.onprogress` to
+ *   - fireProgress({loaded,total,lengthComputable}) — invokes upload.onprogress
+ *   - complete(status, responseText) — sets status/statusText/responseText and
+ *     invokes `.onload` (the success / 401 / non-2xx branches all run here)
+ *   - fail()            — invokes `.onerror` (network-error branch)
+ *
+ * `.send()` does NOT auto-resolve — the test decides when/how the request ends,
+ * exactly like the never-resolving fetch default. Returns { calls } — the array
+ * is populated as instances are constructed (one per upload).
+ */
+export function installXhrStub(win) {
+  const calls = [];
+
+  class StubXHR {
+    constructor() {
+      this.method = null;
+      this.url = null;
+      this.async = true;
+      this.headers = {};
+      this.body = undefined;
+      this.status = 0;
+      this.statusText = '';
+      this.responseText = '';
+      this.onload = null;
+      this.onerror = null;
+      // app code does `xhr.upload.onprogress = ...`
+      this.upload = { onprogress: null };
+      calls.push(this);
+    }
+
+    open(method, url, async) {
+      this.method = String(method || 'GET').toUpperCase();
+      this.url = url;
+      this.async = async !== false;
+    }
+
+    setRequestHeader(key, value) {
+      this.headers[key] = value;
+    }
+
+    send(body) {
+      this.body = body;
+    }
+
+    // --- test drivers (not part of the real XHR API) ---
+
+    fireProgress(evt) {
+      if (typeof this.upload.onprogress === 'function') {
+        this.upload.onprogress(evt || {});
+      }
+    }
+
+    complete(status, responseText) {
+      this.status = status;
+      this.statusText = responseText != null ? String(responseText) : '';
+      this.responseText = responseText != null ? String(responseText) : '';
+      if (typeof this.onload === 'function') this.onload();
+    }
+
+    fail() {
+      if (typeof this.onerror === 'function') this.onerror();
+    }
+  }
+
+  win.XMLHttpRequest = StubXHR;
+  return { calls };
 }
 
 /** Flush pending microtasks/promise chains so .then() handlers run. */

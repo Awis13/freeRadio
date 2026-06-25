@@ -36,6 +36,7 @@ const indexHtml = readFileSync(path.join(publicDir, 'index.html'), 'utf8');
 const utilsSrc = readFileSync(path.join(publicDir, 'utils.js'), 'utf8');
 const playlistsSrc = readFileSync(path.join(publicDir, 'playlists.js'), 'utf8');
 const analyticsSrc = readFileSync(path.join(publicDir, 'analytics.js'), 'utf8');
+const fileMgmtSrc = readFileSync(path.join(publicDir, 'filemgmt.js'), 'utf8');
 const appSrc = readFileSync(path.join(publicDir, 'app.js'), 'utf8');
 
 /**
@@ -126,11 +127,13 @@ describe('app.js jsdom load-smoke (C2 FRUtils cutover)', () => {
     installStubs(win);
 
     // Load order mirrors index.html: utils.js (window.FRUtils), playlists.js
-    // (window.FRPlaylists), analytics.js (window.FRAnalytics), then app.js (which
-    // calls FRPlaylists.init / FRAnalytics.init on boot).
+    // (window.FRPlaylists), analytics.js (window.FRAnalytics), filemgmt.js
+    // (window.FRFileMgmt), then app.js (which calls FRPlaylists.init /
+    // FRAnalytics.init / FRFileMgmt.init on boot).
     runScript(dom, utilsSrc, 'utils.js');
     runScript(dom, playlistsSrc, 'playlists.js');
     runScript(dom, analyticsSrc, 'analytics.js');
+    runScript(dom, fileMgmtSrc, 'filemgmt.js');
     try {
       runScript(dom, appSrc, 'app.js');
     } catch (err) {
@@ -193,6 +196,7 @@ describe('app.js drift-gate (C3 FRUtils delegation of the 4 diverged helpers)', 
     runScript(dom, utilsSrc, 'utils.js');
     runScript(dom, playlistsSrc, 'playlists.js');
     runScript(dom, analyticsSrc, 'analytics.js');
+    runScript(dom, fileMgmtSrc, 'filemgmt.js');
     runScript(dom, appSrc, 'app.js');
     drift = win.__appDrift;
   });
