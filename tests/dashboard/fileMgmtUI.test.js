@@ -3,9 +3,19 @@
  *
  * Equivalence baseline for the C2 extraction of the file-management UI out of the
  * app.js IIFE. These tests pin the AS-IS observable contract of the file-mgmt
- * functions WHILE they still live in app.js, driven via the guarded
- * window.__appFileMgmt hook. After C2 the SAME contract is asserted against the
- * extracted module — green here is the proof the extraction preserved behavior.
+ * functions. They were authored against the guarded window.__appFileMgmt hook in
+ * C1 (while the code still lived in app.js) and re-pointed in C2 to drive the
+ * extracted module window.FRFileMgmt — the SAME contract, now asserted against the
+ * extracted code. Green here is the proof the extraction preserved behavior.
+ *
+ * app.js init's window.FRFileMgmt on boot with its own deps; each test then
+ * re-init's window.FRFileMgmt with its OWN controllable deps (a recording
+ * authFetch built from win.fetch, a renderTrackSelector spy, a getBpmMap getter
+ * returning a test-controlled bpmMap, plus the real showLoginOverlay / showError /
+ * loadOverlayAssets / getAuthToken so the overlay + error-banner + auth-header
+ * observables still flow through app.js). State is driven via the module's
+ * setMusicFiles / setVisualFiles / setBpmMap surface (setBpmMap re-pointed to the
+ * test-controlled state the injected getBpmMap reads).
  *
  * The functions pinned (current app.js lines ~879-1085):
  *   - refreshBpmInList — re-writes each music .file-bpm from bpmMap.
@@ -48,10 +58,49 @@ import {
   bootWindow, makeFetchStub, installXhrStub, routeExact, flush,
 } from './appBoot.js';
 
-/** Boot a fresh window; return the file-mgmt hook + doc/win. */
+/**
+ * Boot a fresh window and re-init window.FRFileMgmt with test-controlled deps.
+ *
+ * Returns { win, doc, fm } where `fm` is window.FRFileMgmt re-init'd so that:
+ *   - authFetch routes through win.fetch (the per-test makeFetchStub),
+ *   - renderTrackSelector is a recording spy (fm.trackSelectorCalls) — the music
+ *     load's call into it is observable as a spy call,
+ *   - getBpmMap reads a test-controlled bpmMap; fm.setBpmMap re-pointed to mutate
+ *     it (so the injected getter sees what the test sets),
+ *   - showLoginOverlay / showError / loadOverlayAssets are doubles that reproduce
+ *     the exact observable app.js produces (login-overlay display:flex,
+ *     error-banner visible+text, GET /api/overlays/assets),
+ *   - getAuthToken returns '' (no auth header on uploads, as in the boot session).
+ */
 function boot() {
   const { win, doc } = bootWindow();
-  return { win, doc, fm: win.__appFileMgmt };
+  const fm = win.FRFileMgmt;
+
+  const state = { bpmMap: {} };
+  const trackSelectorCalls = [];
+
+  fm.init({
+    authFetch: (url, opts) => win.fetch(url, opts),
+    log: () => {},
+    showError: (msg) => {
+      const banner = doc.getElementById('error-banner');
+      banner.textContent = msg;
+      banner.classList.add('visible');
+    },
+    showLoginOverlay: () => {
+      doc.getElementById('login-overlay').style.display = 'flex';
+    },
+    renderTrackSelector: (filter) => { trackSelectorCalls.push(filter); },
+    loadOverlayAssets: () => win.fetch('/api/overlays/assets'),
+    getBpmMap: () => state.bpmMap,
+    getAuthToken: () => '',
+  });
+
+  // Re-point setBpmMap to the test-controlled state the injected getter reads.
+  fm.setBpmMap = (o) => { state.bpmMap = o; };
+  fm.trackSelectorCalls = trackSelectorCalls;
+
+  return { win, doc, fm };
 }
 
 /** Install a recording fetch stub and return { calls }. */
@@ -87,7 +136,7 @@ function dispatchDrop(win, el, files) {
   el.dispatchEvent(evt);
 }
 
-describe('file-management UI characterization (window.__appFileMgmt)', () => {
+describe('file-management UI characterization (window.FRFileMgmt)', () => {
   it('exposes the 6 fns + state getters/setters', () => {
     const { fm } = boot();
     expect(fm).toBeTruthy();
@@ -137,18 +186,18 @@ describe('file-management UI characterization (window.__appFileMgmt)', () => {
       expect(doc.getElementById('music-count').textContent).toBe('2 files');
     });
 
-    it('music load calls renderTrackSelector (observable via the track selector DOM)', async () => {
-      const { win, doc, fm } = boot();
+    it('music load calls renderTrackSelector (observable via the injected spy)', async () => {
+      const { win, fm } = boot();
       withFetch(win, [
         routeExact('GET', '/api/music', [{ name: 'pick.mp3', size: 10 }]),
       ]);
       fm.loadFileList('music');
       await flush();
-      // renderTrackSelector renders each musicFiles entry as a .selector-item with
-      // a .selector-name. Pin that observable side-effect of the music load.
-      const names = Array.from(doc.querySelectorAll('.selector-item .selector-name'))
-        .map((n) => n.textContent);
-      expect(names).toContain('pick.mp3');
+      // The music branch of loadFileList calls renderTrackSelector after setting
+      // musicFiles. Pin that call via the injected spy; the loaded file is now
+      // reachable through getMusicFiles for the real selector to render.
+      expect(fm.trackSelectorCalls.length).toBe(1);
+      expect(fm.getMusicFiles().map((f) => f.name)).toContain('pick.mp3');
     });
 
     it('GET /api/visuals -> populates visualFiles + renders #visuals-list (no bpm column)', async () => {

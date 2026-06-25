@@ -33,10 +33,8 @@
   var statSpeed = document.getElementById('stat-speed');
   var statVideoBr = document.getElementById('stat-video-br');
   var statTime = document.getElementById('stat-time');
-  var musicList = document.getElementById('music-list');
-  var musicCount = document.getElementById('music-count');
-  var visualsList = document.getElementById('visuals-list');
-  var visualsCount = document.getElementById('visuals-count');
+  // music-list / music-count / visuals-list / visuals-count refs moved into
+  // filemgmt.js (window.FRFileMgmt), which resolves them via getElementById.
   var logEl = document.getElementById('log');
   var dbgClear = document.getElementById('dbg-clear');
   var dbgPause = document.getElementById('dbg-pause');
@@ -88,8 +86,8 @@
   var logsPaused = false;
   var logs = [];
   var startTime = Date.now();
-  var musicFiles = [];
-  var visualFiles = [];
+  // musicFiles / visualFiles moved into filemgmt.js (window.FRFileMgmt); read via
+  // FRFileMgmt.getMusicFiles() / getVisualFiles().
   var processedVisualFiles = [];
   var activeTab = 'studio';
   var selectedVisualProfileId = null;
@@ -175,8 +173,8 @@
       if (ws) { try { ws.close(); } catch(e) {} }
       connectWs();
       // Reload data
-      loadFileList('music');
-      loadFileList('visuals');
+      FRFileMgmt.loadFileList('music');
+      FRFileMgmt.loadFileList('visuals');
       loadBroadcastState();
     }).catch(function() {
       loginError.textContent = 'invalid token';
@@ -637,9 +635,24 @@
     }
   });
 
+  // Wire the file-management UI module (filemgmt.js / window.FRFileMgmt) BEFORE the
+  // initial loads below. It owns musicFiles/visualFiles; app.js injects the host
+  // services plus live getters for the WS-owned bpmMap and the mutable auth token
+  // (both read at call time, never cached). renderTrackSelector / loadOverlayAssets
+  // are app.js functions (hoisted declarations) called back into after a music load
+  // / overlay-asset upload.
+  FRFileMgmt.init({
+    authFetch: authFetch, log: log, showError: showError,
+    showLoginOverlay: showLoginOverlay,
+    renderTrackSelector: renderTrackSelector,
+    loadOverlayAssets: loadOverlayAssets,
+    getBpmMap: function () { return bpmMap; },
+    getAuthToken: function () { return authToken; }
+  });
+
   // Load file lists immediately
-  loadFileList('music');
-  loadFileList('visuals');
+  FRFileMgmt.loadFileList('music');
+  FRFileMgmt.loadFileList('visuals');
 
   // --- WebSocket ---
   var ws = null;
@@ -722,8 +735,8 @@
         updateIcecast(msg.data.icecast);
         updateFfmpeg(msg.data.ffmpeg);
         if (msg.data.rtmpHealth) updateRestreamStatus(msg.data.rtmpHealth);
-        loadFileList('music');
-        loadFileList('visuals');
+        FRFileMgmt.loadFileList('music');
+        FRFileMgmt.loadFileList('visuals');
         break;
       case 'audio':
         lastAudioMsg = msg.data;
@@ -750,7 +763,7 @@
         break;
       case 'bpm':
         bpmMap = msg.data || {};
-        refreshBpmInList();
+        FRFileMgmt.refreshBpmInList();
         break;
       case 'rtmp-health':
         updateRestreamStatus(msg.data);
@@ -876,219 +889,20 @@
     statTime.textContent = data.time || '--';
   }
 
-  function refreshBpmInList() {
-    var items = musicList.querySelectorAll('.file-item');
-    items.forEach(function (el) {
-      var name = el.dataset.name;
-      var bpmEl = el.querySelector('.file-bpm');
-      if (bpmEl && name) {
-        var bpm = bpmMap[name];
-        bpmEl.textContent = bpm ? Math.round(bpm) + ' BPM' : '';
-      }
-    });
-  }
-
   connectWs();
 
   // --- File Management ---
-  function loadFileList(type) {
-    if (!type) return;
-    authFetch('/api/' + type)
-      .then(function (r) { return r.json(); })
-      .then(function (files) {
-        renderFileList(type, files);
-        if (type === 'music') {
-          musicFiles = files;
-          renderTrackSelector();
-        }
-        if (type === 'visuals') {
-          visualFiles = files;
-        }
-      })
-      .catch(function (e) { log('files: error loading ' + type + ': ' + e); });
-  }
+  // The file-management UI (refreshBpmInList, loadFileList, renderFileList,
+  // deleteFile, the drop-zone upload system) plus the musicFiles/visualFiles
+  // state it owns were extracted into filemgmt.js (window.FRFileMgmt). app.js
+  // calls FRFileMgmt.init({...}) at boot (further down) and reaches the state via
+  // FRFileMgmt.getMusicFiles()/getVisualFiles(). bpmMap stays here (WS-owned) and
+  // is injected as a getter.
 
-  function renderFileList(type, files) {
-    var container = type === 'music' ? musicList : visualsList;
-    var countEl = type === 'music' ? musicCount : visualsCount;
-    countEl.textContent = files.length + ' files';
+  FRFileMgmt.initDropZones();
 
-    container.innerHTML = '';
-    files.forEach(function (f) {
-      var div = document.createElement('div');
-      div.className = 'file-item';
-      div.dataset.name = f.name;
-
-      var nameEl = document.createElement('span');
-      nameEl.className = 'file-name';
-      nameEl.textContent = f.name;
-      nameEl.title = f.name;
-      div.appendChild(nameEl);
-
-      if (type === 'music') {
-        var bpmEl = document.createElement('span');
-        bpmEl.className = 'file-bpm';
-        var bpm = bpmMap[f.name];
-        bpmEl.textContent = bpm ? Math.round(bpm) + ' BPM' : '';
-        div.appendChild(bpmEl);
-      }
-
-      var sizeEl = document.createElement('span');
-      sizeEl.className = 'file-size';
-      sizeEl.textContent = fmtSize(f.size);
-      div.appendChild(sizeEl);
-
-      var delBtn = document.createElement('button');
-      delBtn.className = 'file-del';
-      delBtn.textContent = 'x';
-      delBtn.title = 'Delete ' + f.name;
-      delBtn.onclick = function () { deleteFile(type, f.name); };
-      div.appendChild(delBtn);
-
-      container.appendChild(div);
-    });
-  }
-
-  function deleteFile(type, name) {
-    if (!confirm('Delete ' + name + '?')) return;
-    authFetch('/api/' + type + '/' + encodeURIComponent(name), { method: 'DELETE' })
-      .then(function (r) { return r.json(); })
-      .then(function () {
-        log('deleted ' + type + ': ' + name);
-        loadFileList(type);
-      })
-      .catch(function (e) { showError('Delete failed: ' + e); });
-  }
-
-  // --- Drop Zone upload system ---
-
-  function initDropZone(el) {
-    var input = el.querySelector('.drop-zone-input');
-    var browseBtn = el.querySelector('.drop-zone-browse');
-    var queueEl = el.querySelector('.drop-zone-queue');
-    var type = el.dataset.type;
-    var acceptStr = el.dataset.accept || '';
-    var acceptExts = acceptStr.split(',').map(function(e) { return e.trim().toLowerCase(); });
-
-    browseBtn.addEventListener('click', function(e) {
-      e.stopPropagation();
-      input.click();
-    });
-    el.addEventListener('click', function(e) {
-      if (e.target === el || e.target.closest('.drop-zone-prompt')) input.click();
-    });
-
-    el.addEventListener('dragenter', function(e) { e.preventDefault(); el.classList.add('drag-over'); });
-    el.addEventListener('dragover', function(e) { e.preventDefault(); el.classList.add('drag-over'); });
-    el.addEventListener('dragleave', function(e) {
-      if (!el.contains(e.relatedTarget)) el.classList.remove('drag-over');
-    });
-    el.addEventListener('drop', function(e) {
-      e.preventDefault();
-      el.classList.remove('drag-over');
-      handleFiles(e.dataTransfer.files);
-    });
-
-    input.addEventListener('change', function() {
-      handleFiles(input.files);
-      input.value = '';
-    });
-
-    function handleFiles(files) {
-      for (var i = 0; i < files.length; i++) {
-        var f = files[i];
-        var ext = '.' + f.name.split('.').pop().toLowerCase();
-        if (acceptExts.length && acceptExts[0] && acceptExts.indexOf(ext) === -1) {
-          log('skipped ' + f.name + ' (unsupported format)');
-          continue;
-        }
-        uploadOneFile(type, f, queueEl);
-      }
-    }
-  }
-
-  function uploadOneFile(type, file, queueEl) {
-    var item = document.createElement('div');
-    item.className = 'upload-item';
-    var nameSpan = document.createElement('span');
-    nameSpan.className = 'upload-item-name';
-    nameSpan.textContent = file.name;
-    var sizeSpan = document.createElement('span');
-    sizeSpan.className = 'upload-item-size';
-    sizeSpan.textContent = fmtSize(file.size);
-    var progressDiv = document.createElement('div');
-    progressDiv.className = 'upload-item-progress';
-    var fill = document.createElement('div');
-    fill.className = 'upload-item-progress-fill';
-    progressDiv.appendChild(fill);
-    var badge = document.createElement('span');
-    badge.className = 'upload-item-status uploading';
-    badge.textContent = '0%';
-
-    item.appendChild(nameSpan);
-    item.appendChild(sizeSpan);
-    item.appendChild(progressDiv);
-    item.appendChild(badge);
-    queueEl.appendChild(item);
-
-    var isOverlay = (type === 'overlay-assets');
-    var endpoint = isOverlay ? '/api/overlays/assets' : '/api/' + type;
-    var fieldName = isOverlay ? 'file' : 'files';
-
-    var formData = new FormData();
-    formData.append(fieldName, file);
-
-    var xhr = new XMLHttpRequest();
-    xhr.open('POST', endpoint, true);
-    if (authToken) xhr.setRequestHeader('Authorization', 'Bearer ' + authToken);
-
-    xhr.upload.onprogress = function(e) {
-      if (e.lengthComputable) {
-        var pct = Math.round(e.loaded / e.total * 100);
-        fill.style.width = pct + '%';
-        badge.textContent = pct + '%';
-      }
-    };
-
-    xhr.onload = function() {
-      if (xhr.status >= 200 && xhr.status < 300) {
-        fill.style.width = '100%';
-        badge.className = 'upload-item-status ready';
-        badge.textContent = 'OK';
-        log('uploaded ' + file.name + ' to ' + type);
-        if (type === 'overlay-assets') loadOverlayAssets();
-        loadFileList(type === 'overlay-assets' ? null : type);
-        setTimeout(function() {
-          item.style.transition = 'opacity 0.4s';
-          item.style.opacity = '0';
-          setTimeout(function() { if (item.parentNode) item.parentNode.removeChild(item); }, 500);
-        }, 3000);
-      } else if (xhr.status === 401) {
-        showLoginOverlay();
-        badge.className = 'upload-item-status error';
-        badge.textContent = 'AUTH';
-      } else {
-        badge.className = 'upload-item-status error';
-        badge.textContent = 'ERROR';
-        showError('Upload failed: ' + xhr.statusText);
-      }
-    };
-
-    xhr.onerror = function() {
-      badge.className = 'upload-item-status error';
-      badge.textContent = 'ERROR';
-      showError('Upload failed: network error');
-    };
-
-    xhr.send(formData);
-    log('uploading ' + file.name + ' to ' + type);
-  }
-
-
-  document.querySelectorAll('.drop-zone').forEach(initDropZone);
-
-  setInterval(function () { loadFileList('music'); }, 30000);
-  setInterval(function () { loadFileList('visuals'); }, 30000);
+  setInterval(function () { FRFileMgmt.loadFileList('music'); }, 30000);
+  setInterval(function () { FRFileMgmt.loadFileList('visuals'); }, 30000);
 
   // --- Queue Control ---
   function loadQueue() {
@@ -1223,7 +1037,7 @@
   function renderTrackSelector(filter) {
     trackSelector.innerHTML = '';
     var isVideoMode = broadcastState.visualMode === 'video-playlist';
-    var sourceFiles = isVideoMode ? processedVisualFiles : musicFiles;
+    var sourceFiles = isVideoMode ? processedVisualFiles : FRFileMgmt.getMusicFiles();
     var search = (filter || '').toLowerCase();
     var filtered = sourceFiles.filter(function(f) {
       return !search || f.name.toLowerCase().indexOf(search) !== -1;
@@ -1424,7 +1238,7 @@
     openGenericModal: openGenericModal,
     closeGenericModal: function () { return window.closeGenericModal(); },
     loadQueue: loadQueue,
-    getMusicFiles: function () { return musicFiles; },
+    getMusicFiles: function () { return FRFileMgmt.getMusicFiles(); },
     getBpmMap: function () { return bpmMap; }
   });
 
@@ -5423,24 +5237,6 @@
       broadcastState: broadcastState,
       setMixMode: function (m) { currentMixMode = m; },
       setPlatformNames: function (a) { currentPlatformNames = a; }
-    };
-
-    // Test-only file-management hook: exposes the file-mgmt UI fns + the closure
-    // state tests must drive (musicFiles / visualFiles owned here, bpmMap written
-    // by the WS handler). This is the equivalence baseline for the C2 extraction
-    // of this UI out of the IIFE. Inert in production (flag unset).
-    window.__appFileMgmt = {
-      refreshBpmInList: refreshBpmInList,
-      loadFileList: loadFileList,
-      renderFileList: renderFileList,
-      deleteFile: deleteFile,
-      initDropZone: initDropZone,
-      uploadOneFile: uploadOneFile,
-      getMusicFiles: function () { return musicFiles; },
-      setMusicFiles: function (a) { musicFiles = a; },
-      getVisualFiles: function () { return visualFiles; },
-      setVisualFiles: function (a) { visualFiles = a; },
-      setBpmMap: function (o) { bpmMap = o; }
     };
   }
 
