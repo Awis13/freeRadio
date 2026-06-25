@@ -227,16 +227,16 @@ export function routeExact(method, pathname, respond) {
  * makeFetchStub's "record every call, let the test drive the result" style.
  *
  * Each `new win.XMLHttpRequest()` is recorded in `calls` as an instance handle:
- *   { method, url, async, headers, body, upload, fireProgress(), complete(),
- *     fail() }
+ *   { method, url, async, headers, body, upload, fireProgress(),
+ *     complete(status, statusText, responseText), fail() }
  * where:
  *   - method/url/async  — captured by `.open(method, url, async)`
  *   - headers           — map captured by `.setRequestHeader(k, v)`
  *   - body              — the argument passed to `.send(body)` (a FormData)
  *   - upload            — the object app code attaches `.onprogress` to
  *   - fireProgress({loaded,total,lengthComputable}) — invokes upload.onprogress
- *   - complete(status, responseText) — sets status/statusText/responseText and
- *     invokes `.onload` (the success / 401 / non-2xx branches all run here)
+ *   - complete(status, statusText, responseText) — sets status/statusText/responseText
+ *     and invokes `.onload` (the success / 401 / non-2xx branches all run here)
  *   - fail()            — invokes `.onerror` (network-error branch)
  *
  * `.send()` does NOT auto-resolve — the test decides when/how the request ends,
@@ -285,9 +285,9 @@ export function installXhrStub(win) {
       }
     }
 
-    complete(status, responseText) {
+    complete(status, statusText, responseText) {
       this.status = status;
-      this.statusText = responseText != null ? String(responseText) : '';
+      this.statusText = statusText != null ? String(statusText) : '';
       this.responseText = responseText != null ? String(responseText) : '';
       if (typeof this.onload === 'function') this.onload();
     }

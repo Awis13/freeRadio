@@ -395,7 +395,7 @@ describe('file-management UI characterization (window.FRFileMgmt)', () => {
       const q = queueEl(doc);
       fm.uploadOneFile('music', new win.File(['x'], 'a.mp3'), q);
       const call = xhr.calls[xhr.calls.length - 1];
-      call.complete(200, '{}');
+      call.complete(200, '{}', '{}');
 
       const fill = q.querySelector('.upload-item-progress-fill');
       const badge = q.querySelector('.upload-item-status');
@@ -412,7 +412,7 @@ describe('file-management UI characterization (window.FRFileMgmt)', () => {
       const xhr = installXhrStub(win);
       const q = queueEl(doc);
       fm.uploadOneFile('music', new win.File(['x'], 'a.mp3'), q);
-      xhr.calls[xhr.calls.length - 1].complete(401, 'Unauthorized');
+      xhr.calls[xhr.calls.length - 1].complete(401, 'Unauthorized', 'Unauthorized');
 
       const badge = q.querySelector('.upload-item-status');
       expect(badge.textContent).toBe('AUTH');
@@ -427,7 +427,7 @@ describe('file-management UI characterization (window.FRFileMgmt)', () => {
       const xhr = installXhrStub(win);
       const q = queueEl(doc);
       fm.uploadOneFile('music', new win.File(['x'], 'a.mp3'), q);
-      xhr.calls[xhr.calls.length - 1].complete(500, 'Server Error');
+      xhr.calls[xhr.calls.length - 1].complete(500, 'Server Error', 'Server Error');
 
       expect(q.querySelector('.upload-item-status').textContent).toBe('ERROR');
       const banner = doc.getElementById('error-banner');
@@ -462,7 +462,7 @@ describe('file-management UI characterization (window.FRFileMgmt)', () => {
       expect(call.body.get('file').name).toBe('logo.png');
       expect(call.body.has('files')).toBe(false);
 
-      call.complete(200, '{}');
+      call.complete(200, '{}', '{}');
       // overlay success reloads via loadOverlayAssets (GET /api/overlays/assets)
       expect(stub.calls.some((c) => c.method === 'GET' && c.url === '/api/overlays/assets')).toBe(true);
     });
