@@ -4686,6 +4686,24 @@
       setMixMode: function (m) { currentMixMode = m; },
       setPlatformNames: function (a) { currentPlatformNames = a; }
     };
+    // Test-only platforms hook (C1 characterization): exposes the stream-keys
+    // domain fns + closure handles for currentPlatformNames / maxPlatforms so
+    // platformsUI.test.js can pin the AS-IS behaviour before the C2 extraction.
+    // window.savePlatform / window.closePlatformModal already exist as globals
+    // (driven via inline onclick), so they are not re-exposed here. Inert in
+    // production (guarded by window.__APP_TEST__).
+    window.__appPlatforms = {
+      loadPlatforms: loadPlatforms,
+      renderPlatforms: renderPlatforms,
+      deletePlatform: deletePlatform,
+      togglePlatform: togglePlatform,
+      syncPlatformHints: syncPlatformHints,
+      uniquePlatformName: uniquePlatformName,
+      applyPreset: applyPreset,
+      getCurrentPlatformNames: function () { return currentPlatformNames; },
+      setCurrentPlatformNames: function (a) { currentPlatformNames = a; },
+      getMaxPlatforms: function () { return maxPlatforms; }
+    };
   }
 
 })();
