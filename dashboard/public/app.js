@@ -25,7 +25,6 @@
   var studioPlayer = document.getElementById('studio-player');
   var modeTag = document.getElementById('mode-tag');
   var uptimeEl = document.getElementById('uptime');
-  var qualitySelect = document.getElementById('quality-select');
   var errorBanner = document.getElementById('error-banner');
   var statListeners = document.getElementById('stat-listeners');
   var statAudioBr = document.getElementById('stat-audio-br');
@@ -1291,6 +1290,13 @@
   // no openGenericModal/closeGenericModal is needed.
   FRPlatforms.init({ authFetch: authFetch, log: log, showError: showError });
 
+  // Wire the quality-settings UI module (quality.js / window.FRQuality) with the
+  // host services. init() binds the #quality-select onchange; the boot-time GET
+  // /api/quality is re-sourced here as an explicit loadQuality() call to
+  // preserve the original boot order.
+  FRQuality.init({ authFetch: authFetch, log: log, showError: showError });
+  FRQuality.loadQuality();
+
   // Wire the analytics UI module (analytics.js / window.FRAnalytics) with
   // authFetch plus live getters for the read-only listener state. The getters are
   // read at call time so the module always sees the latest listenerHistory /
@@ -2143,37 +2149,6 @@
   loadBroadcastState();
   setInterval(loadBroadcastState, 15000);
   setInterval(loadProcessedVisuals, 30000);
-
-  // --- Quality Settings ---
-  function loadQuality() {
-    authFetch('/api/quality')
-      .then(function(r) { return r.json(); })
-      .then(function(data) {
-        if (data.current && data.current.preset) {
-          qualitySelect.value = data.current.preset;
-          log('quality: current = ' + data.current.preset);
-        }
-      })
-      .catch(function(e) { log('quality: error loading: ' + e); });
-  }
-
-  qualitySelect.onchange = function() {
-    var preset = qualitySelect.value;
-    authFetch('/api/quality', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ preset: preset })
-    })
-      .then(function(r) { return r.json(); })
-      .then(function(data) {
-        if (data.success) {
-          log('quality: changed to ' + preset + ' (' + data.settings.name + ')');
-        }
-      })
-      .catch(function(e) { showError('Quality change failed: ' + e); });
-  };
-
-  loadQuality();
 
   // --- Mixing Mode ---
   function loadMixingConfig() {
@@ -4346,9 +4321,6 @@
       broadcastState: broadcastState,
       setMixMode: function (m) { currentMixMode = m; },
       setPlatformNames: function (a) { window.FRPlatforms.setCurrentPlatformNames(a); }
-    };
-    window.__appQuality = {
-      loadQuality: loadQuality
     };
   }
 

@@ -41,7 +41,7 @@ import { bootWindow, makeFetchStub, routeExact, flush } from './appBoot.js';
  */
 function boot() {
   const { win, doc } = bootWindow();
-  const q = win.__appQuality;
+  const q = win.FRQuality;
   return { win, doc, q };
 }
 
