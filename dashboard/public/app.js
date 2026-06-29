@@ -5110,6 +5110,23 @@
       setMixMode: function (m) { currentMixMode = m; },
       setPlatformNames: function (a) { currentPlatformNames = a; }
     };
+    // Test-only schedule hook: exposes the schedule-domain functions plus
+    // accessors for the closure state (scheduleData, DAYS) so characterization
+    // tests can drive the domain and assert the AS-IS contract. Inert in
+    // production (flag unset). No function is moved/renamed by adding this.
+    window.__appSchedule = {
+      loadSchedule: loadSchedule,
+      loadScheduleCurrent: loadScheduleCurrent,
+      renderScheduleGrid: renderScheduleGrid,
+      renderEventsList: renderEventsList,
+      renderScheduleSettings: renderScheduleSettings,
+      loadPlaylistsForSelect: loadPlaylistsForSelect,
+      deleteWeeklySlot: deleteWeeklySlot,
+      deleteEvent: deleteEvent,
+      getScheduleData: function () { return scheduleData; },
+      setScheduleData: function (d) { scheduleData = d; },
+      getDAYS: function () { return DAYS; }
+    };
   }
 
 })();
