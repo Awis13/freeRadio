@@ -2406,6 +2406,23 @@
     }, 2000);
   }
 
+  // Test-only hook for the channel-strip DSP cluster. Guarded by
+  // window.__APP_TEST__ — completely inert in production.
+  if (typeof window !== 'undefined' && window.__APP_TEST__) {
+    window.__appChannelStrip = {
+      STRIP_PARAMS: STRIP_PARAMS,
+      stripUpdateVal: stripUpdateVal,
+      stripLoadConfig: stripLoadConfig,
+      stripUpdateBadge: stripUpdateBadge,
+      stripSendConfig: stripSendConfig,
+      stripStartMetering: stripStartMetering,
+      stripStopMetering: stripStopMetering,
+      getMeteringInterval: function () { return stripMeteringInterval; },
+      getStripLoaded: function () { return stripLoaded; },
+      setStripLoaded: function (v) { stripLoaded = v; }
+    };
+  }
+
   // ============================
   // GENERIC MODAL
   // ============================
