@@ -1,18 +1,17 @@
 /**
  * tests/dashboard/visualProfilesUI.test.js
  *
- * Characterization baseline (C1) for the upcoming extraction of the visual-profiles
- * UI out of the app.js IIFE. These tests pin the AS-IS observable contract of the
- * visual-profiles domain functions while the code still lives in app.js, driven
- * through the guarded window.__appVisualProfiles hook. In C2 (the actual move) they
- * must stay green to prove behavioural equivalence.
+ * Characterization pins for the visual-profiles UI, now extracted out of the app.js
+ * IIFE into dashboard/public/visualprofiles.js (window.FRVisualProfiles). These tests
+ * pin the AS-IS observable contract of the visual-profiles domain functions. They were
+ * authored in C1 against the code in app.js and re-pointed in C2 to the extracted
+ * module, with assertions unchanged to prove behavioural equivalence.
  *
- * Unlike file-management, this domain has NO init/dependency-injection surface:
- * window.__appVisualProfiles holds the REAL closure functions, which use the REAL
- * closure deps (authFetch -> win.fetch, log, showError, fmtSize = FRUtils.fmtSize).
- * So the only backend control is replacing the boot's never-resolving win.fetch
- * with a recording makeFetchStub AFTER boot, then calling the hook fns and asserting
- * DOM (in `doc`) + recorded fetches (stub.calls).
+ * This domain has NO init/dependency-injection surface: window.FRVisualProfiles holds
+ * the REAL functions, which use the REAL deps (authFetch -> win.fetch, log, showError,
+ * fmtSize = FRUtils.fmtSize). So the only backend control is replacing the boot's
+ * never-resolving win.fetch with a recording makeFetchStub AFTER boot, then calling
+ * the module fns and asserting DOM (in `doc`) + recorded fetches (stub.calls).
  *
  * Functions pinned (current app.js lines ~1494-1633):
  *   - loadVisualProfiles()           GET /api/visual-profiles -> renderVisualProfilesList
@@ -43,7 +42,7 @@ import { bootWindow, makeFetchStub, routeExact, flush } from './appBoot.js';
  */
 function boot() {
   const { win, doc } = bootWindow();
-  const vp = win.__appVisualProfiles;
+  const vp = win.FRVisualProfiles;
   return { win, doc, vp };
 }
 
@@ -54,7 +53,7 @@ function withFetch(win, routes) {
   return stub;
 }
 
-describe('visual-profiles UI characterization (window.__appVisualProfiles)', () => {
+describe('visual-profiles UI characterization (window.FRVisualProfiles)', () => {
   it('exposes the 5 fns + selection getter/setter', () => {
     const { vp } = boot();
     expect(vp).toBeTruthy();
@@ -322,7 +321,7 @@ describe('visual-profiles UI characterization (window.__appVisualProfiles)', () 
 
   // -------------------------------------------------------------------------
   // create-visual-profile-btn — generic modal -> POST (drives the REAL button,
-  // not the hook: create is not exposed via __appVisualProfiles)
+  // create is not exposed via window.FRVisualProfiles' public surface)
   // -------------------------------------------------------------------------
   describe('create flow (real #create-visual-profile-btn)', () => {
     it('opens the modal, then save POSTs {name, videos:[]} and selects the new profile', async () => {

@@ -90,7 +90,6 @@
   // FRFileMgmt.getMusicFiles() / getVisualFiles().
   var processedVisualFiles = [];
   var activeTab = 'studio';
-  var selectedVisualProfileId = null;
   var listenerHistory = [];
   var peakListeners = 0;
 
@@ -214,7 +213,7 @@
       document.getElementById('tab-' + tab).classList.add('active');
       if (tab === 'playlists') FRPlaylists.loadPlaylists();
       if (tab === 'schedule') { loadSchedule(); loadPlaylistsForSelect(); }
-      if (tab === 'visuals') { loadVisualProfiles(); loadVideoPlaylists(); loadOverlays(); loadOverlayAssets(); }
+      if (tab === 'visuals') { FRVisualProfiles.loadVisualProfiles(); loadVideoPlaylists(); loadOverlays(); loadOverlayAssets(); }
       if (tab === 'analytics') FRAnalytics.loadAnalytics();
     });
   });
@@ -1242,6 +1241,16 @@
     getBpmMap: function () { return bpmMap; }
   });
 
+  // Wire the visual-profiles UI module (visualprofiles.js /
+  // window.FRVisualProfiles) with the host services. init() also binds the
+  // create-visual-profile-btn. closeGenericModal is assigned to window further
+  // down the IIFE, so it is wrapped to defer the lookup to call time.
+  FRVisualProfiles.init({
+    authFetch: authFetch, log: log, showError: showError,
+    openGenericModal: openGenericModal,
+    closeGenericModal: function () { return window.closeGenericModal(); }
+  });
+
   // Wire the analytics UI module (analytics.js / window.FRAnalytics) with
   // authFetch plus live getters for the read-only listener state. The getters are
   // read at call time so the module always sees the latest listenerHistory /
@@ -1491,146 +1500,9 @@
   // ============================
   // VISUAL PROFILES
   // ============================
-  function loadVisualProfiles() {
-    authFetch('/api/visual-profiles')
-      .then(function(r) { return r.json(); })
-      .then(function(data) { renderVisualProfilesList(data); })
-      .catch(function(e) { log('visual profiles: error: ' + e); });
-  }
-
-  function renderVisualProfilesList(data) {
-    var container = document.getElementById('visual-profiles-list');
-    container.innerHTML = '';
-    var profiles = data.profiles || [];
-    if (profiles.length === 0) {
-      container.innerHTML = '<div class="empty-state">No visual profiles</div>';
-      return;
-    }
-    profiles.forEach(function(p) {
-      var div = document.createElement('div');
-      div.className = 'vp-item' + (p.isActive ? ' active' : '') + (selectedVisualProfileId === p.id ? ' selected' : '');
-      div.onclick = function() { selectVisualProfile(p.id); };
-
-      var nameEl = document.createElement('span');
-      nameEl.className = 'vp-item-name';
-      nameEl.textContent = p.name;
-      div.appendChild(nameEl);
-
-      if (p.isActive) {
-        var badge = document.createElement('span');
-        badge.className = 'vp-active-badge';
-        badge.textContent = 'ACTIVE';
-        div.appendChild(badge);
-      }
-
-      var count = document.createElement('span');
-      count.className = 'vp-count';
-      count.textContent = (p.videoCount || 0) + ' videos';
-      div.appendChild(count);
-
-      container.appendChild(div);
-    });
-  }
-
-  function selectVisualProfile(id) {
-    selectedVisualProfileId = id;
-    var detail = document.getElementById('visual-profile-detail');
-    detail.style.display = 'block';
-
-    authFetch('/api/visual-profiles/' + id)
-      .then(function(r) { return r.json(); })
-      .then(function(p) { renderVisualProfileDetail(p); })
-      .catch(function(e) { showError('Failed to load profile: ' + e); });
-  }
-
-  function renderVisualProfileDetail(profile) {
-    document.getElementById('vp-detail-title').textContent = profile.name;
-    var grid = document.getElementById('vp-video-grid');
-    grid.innerHTML = '';
-
-    authFetch('/api/visuals')
-      .then(function(r) { return r.json(); })
-      .then(function(allVideos) {
-        var selectedSet = new Set(profile.videos || []);
-        allVideos.forEach(function(v) {
-          var div = document.createElement('div');
-          div.className = 'video-tile' + (selectedSet.has(v.name) ? ' selected' : '');
-          div.onclick = function() {
-            div.classList.toggle('selected');
-            saveVisualProfileVideos(profile.id);
-          };
-
-          var nameEl = document.createElement('div');
-          nameEl.className = 'video-tile-name';
-          nameEl.textContent = v.name;
-          div.appendChild(nameEl);
-
-          var sizeEl = document.createElement('div');
-          sizeEl.className = 'video-tile-size';
-          sizeEl.textContent = fmtSize(v.size);
-          div.appendChild(sizeEl);
-
-          grid.appendChild(div);
-        });
-      });
-
-    document.getElementById('vp-activate-btn').onclick = function() {
-      authFetch('/api/visual-profiles/' + profile.id + '/activate', { method: 'POST' })
-        .then(function() {
-          log('visual: activated ' + profile.name);
-          loadVisualProfiles();
-        })
-        .catch(function(e) { showError('Activate failed: ' + e); });
-    };
-
-    document.getElementById('vp-delete-btn').onclick = function() {
-      if (!confirm('Delete profile "' + profile.name + '"?')) return;
-      authFetch('/api/visual-profiles/' + profile.id, { method: 'DELETE' })
-        .then(function() {
-          log('visual: deleted ' + profile.name);
-          document.getElementById('visual-profile-detail').style.display = 'none';
-          selectedVisualProfileId = null;
-          loadVisualProfiles();
-        })
-        .catch(function(e) { showError('Delete failed: ' + e); });
-    };
-  }
-
-  function saveVisualProfileVideos(profileId) {
-    var grid = document.getElementById('vp-video-grid');
-    var selected = [];
-    grid.querySelectorAll('.video-tile.selected').forEach(function(tile) {
-      selected.push(tile.querySelector('.video-tile-name').textContent);
-    });
-    authFetch('/api/visual-profiles/' + profileId, {
-      method: 'PUT',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ videos: selected })
-    }).catch(function(e) { showError('Save videos failed: ' + e); });
-  }
-
-  document.getElementById('create-visual-profile-btn').onclick = function() {
-    openGenericModal('Create Visual Profile',
-      '<div class="form-group"><label>Name</label><input type="text" id="new-vp-name" placeholder="Night Visuals"></div>',
-      function() {
-        var name = document.getElementById('new-vp-name').value.trim();
-        if (!name) return;
-        authFetch('/api/visual-profiles', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ name: name, videos: [] })
-        })
-          .then(function(r) { return r.json(); })
-          .then(function(p) {
-            log('visual: created ' + name);
-            closeGenericModal();
-            loadVisualProfiles();
-            selectVisualProfile(p.id);
-          })
-          .catch(function(e) { showError('Create failed: ' + e); });
-      }
-    );
-  };
+  // The visual-profiles UI lives in visualprofiles.js (window.FRVisualProfiles),
+  // wired up via FRVisualProfiles.init(...) above (which also binds the
+  // create-visual-profile-btn). Callers use FRVisualProfiles.loadVisualProfiles().
 
 
   // ============================
@@ -1781,7 +1653,7 @@
         .then(function(r) { return r.json(); })
         .then(function(data) {
           log('video playlist: activated as shuffle profile (' + data.activated + ' videos)');
-          loadVisualProfiles();
+          FRVisualProfiles.loadVisualProfiles();
         })
         .catch(function(e) { showError('Activate profile failed: ' + e); });
     };
@@ -5237,19 +5109,6 @@
       broadcastState: broadcastState,
       setMixMode: function (m) { currentMixMode = m; },
       setPlatformNames: function (a) { currentPlatformNames = a; }
-    };
-    // Test-only visual-profiles hook (C1 characterization baseline for the
-    // upcoming extraction). Exposes the 5 domain functions plus a getter/setter
-    // for the selectedVisualProfileId closure var so tests can pin the AS-IS
-    // contract without moving any code. Inert in production (flag unset).
-    window.__appVisualProfiles = {
-      loadVisualProfiles: loadVisualProfiles,
-      selectVisualProfile: selectVisualProfile,
-      renderVisualProfilesList: renderVisualProfilesList,
-      renderVisualProfileDetail: renderVisualProfileDetail,
-      saveVisualProfileVideos: saveVisualProfileVideos,
-      getSelectedVisualProfileId: function () { return selectedVisualProfileId; },
-      setSelectedVisualProfileId: function (v) { selectedVisualProfileId = v; }
     };
   }
 
