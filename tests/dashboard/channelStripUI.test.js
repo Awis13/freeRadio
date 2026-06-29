@@ -64,7 +64,7 @@ import { bootWindow, makeFetchStub, routeExact, flush } from './appBoot.js';
  */
 function boot() {
   const { win, doc } = bootWindow();
-  const cs = win.__appChannelStrip;
+  const cs = win.FRChannelStrip;
   return { win, doc, cs };
 }
 
@@ -117,7 +117,7 @@ afterEach(() => {
   vi.useRealTimers();
 });
 
-describe('channel-strip UI characterization (window.__appChannelStrip)', () => {
+describe('channel-strip UI characterization (window.FRChannelStrip)', () => {
   it('exposes the 7 cluster fns + the 3 state accessors + STRIP_PARAMS (17 entries)', () => {
     const { cs } = boot();
     expect(cs).toBeTruthy();
