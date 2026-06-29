@@ -45,7 +45,7 @@ import { bootWindow, makeFetchStub, routeExact, route, flush } from './appBoot.j
  */
 function boot() {
   const { win, doc } = bootWindow();
-  const ov = win.__appOverlays;
+  const ov = win.FROverlays;
   return { win, doc, ov };
 }
 
@@ -56,7 +56,7 @@ function withFetch(win, routes) {
   return stub;
 }
 
-describe('overlays UI characterization (window.__appOverlays)', () => {
+describe('overlays UI characterization (window.FROverlays)', () => {
   it('exposes the cluster fns + overlayConfig getter/setter', () => {
     const { ov } = boot();
     expect(ov).toBeTruthy();

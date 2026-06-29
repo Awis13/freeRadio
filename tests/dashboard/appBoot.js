@@ -36,6 +36,7 @@ const visualProfilesSrc = readFileSync(path.join(publicDir, 'visualprofiles.js')
 const scheduleSrc = readFileSync(path.join(publicDir, 'schedule.js'), 'utf8');
 const videoPlaylistsSrc = readFileSync(path.join(publicDir, 'videoplaylists.js'), 'utf8');
 const platformsSrc = readFileSync(path.join(publicDir, 'platforms.js'), 'utf8');
+const overlaysSrc = readFileSync(path.join(publicDir, 'overlays.js'), 'utf8');
 const appSrc = readFileSync(path.join(publicDir, 'app.js'), 'utf8');
 
 /**
@@ -136,6 +137,7 @@ export function bootWindow() {
   dom.window.eval(scheduleSrc);
   dom.window.eval(videoPlaylistsSrc);
   dom.window.eval(platformsSrc);
+  dom.window.eval(overlaysSrc);
   let loadError = null;
   try {
     dom.window.eval(appSrc);
