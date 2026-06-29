@@ -4347,6 +4347,9 @@
       setMixMode: function (m) { currentMixMode = m; },
       setPlatformNames: function (a) { window.FRPlatforms.setCurrentPlatformNames(a); }
     };
+    window.__appQuality = {
+      loadQuality: loadQuality
+    };
   }
 
 })();
