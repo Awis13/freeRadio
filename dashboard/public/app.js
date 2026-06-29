@@ -213,7 +213,7 @@
       document.getElementById('tab-' + tab).classList.add('active');
       if (tab === 'playlists') FRPlaylists.loadPlaylists();
       if (tab === 'schedule') { FRSchedule.loadSchedule(); FRSchedule.loadPlaylistsForSelect(); }
-      if (tab === 'visuals') { FRVisualProfiles.loadVisualProfiles(); loadVideoPlaylists(); loadOverlays(); loadOverlayAssets(); }
+      if (tab === 'visuals') { FRVisualProfiles.loadVisualProfiles(); FRVideoPlaylists.loadVideoPlaylists(); loadOverlays(); loadOverlayAssets(); }
       if (tab === 'analytics') FRAnalytics.loadAnalytics();
     });
   });
@@ -1261,6 +1261,17 @@
     closeGenericModal: function () { return window.closeGenericModal(); }
   });
 
+  // Wire the video-playlists UI module (videoplaylists.js /
+  // window.FRVideoPlaylists) with the host services. init() also binds the
+  // create-video-playlist-btn and the vpl-update-rules-btn. closeGenericModal is
+  // assigned to window further down the IIFE, so it is wrapped to defer the
+  // lookup to call time.
+  FRVideoPlaylists.init({
+    authFetch: authFetch, log: log, showError: showError,
+    openGenericModal: openGenericModal,
+    closeGenericModal: function () { return window.closeGenericModal(); }
+  });
+
   // Wire the analytics UI module (analytics.js / window.FRAnalytics) with
   // authFetch plus live getters for the read-only listener state. The getters are
   // read at call time so the module always sees the latest listenerHistory /
@@ -1290,227 +1301,10 @@
   // ============================
   // VIDEO PLAYLISTS
   // ============================
-  var selectedVideoPlaylistId = null;
-
-  function loadVideoPlaylists() {
-    authFetch('/api/video-playlists')
-      .then(function(r) { return r.json(); })
-      .then(function(data) { renderVideoPlaylistsList(data); })
-      .catch(function(e) { log('video playlists: error: ' + e); });
-  }
-
-  function renderVideoPlaylistsList(data) {
-    var container = document.getElementById('video-playlists-list');
-    container.innerHTML = '';
-    var playlists = data || [];
-    if (playlists.length === 0) {
-      container.innerHTML = '<div class="empty-state">No video playlists</div>';
-      return;
-    }
-    playlists.forEach(function(pl) {
-      var div = document.createElement('div');
-      div.className = 'vp-item' + (selectedVideoPlaylistId === pl.id ? ' selected' : '');
-      div.onclick = function() { selectVideoPlaylist(pl.id); };
-
-      var nameEl = document.createElement('span');
-      nameEl.className = 'vp-item-name';
-      nameEl.textContent = pl.name;
-      div.appendChild(nameEl);
-
-      var typeBadge = document.createElement('span');
-      typeBadge.className = 'vp-active-badge';
-      typeBadge.textContent = pl.type === 'smart' ? 'SMART' : 'MANUAL';
-      typeBadge.style.background = pl.type === 'smart' ? '#8b5cf6' : '#6b7280';
-      div.appendChild(typeBadge);
-
-      var count = document.createElement('span');
-      count.className = 'vp-count';
-      count.textContent = (pl.trackCount || 0) + ' videos';
-      div.appendChild(count);
-
-      container.appendChild(div);
-    });
-  }
-
-  function selectVideoPlaylist(id) {
-    selectedVideoPlaylistId = id;
-    var detail = document.getElementById('video-playlist-detail');
-    detail.style.display = 'block';
-
-    authFetch('/api/video-playlists/' + id)
-      .then(function(r) { return r.json(); })
-      .then(function(pl) { renderVideoPlaylistDetail(pl); })
-      .catch(function(e) { showError('Failed to load video playlist: ' + e); });
-  }
-
-  function renderVideoPlaylistDetail(playlist) {
-    document.getElementById('vpl-detail-title').textContent = playlist.name;
-
-    var indicator = document.getElementById('vpl-type-indicator');
-    indicator.textContent = playlist.type === 'smart' ? 'Smart playlist \u2014 auto-resolves by rules' : 'Manual playlist \u2014 click to add/remove';
-    indicator.style.cssText = 'padding:6px 10px;margin-bottom:8px;border-radius:4px;font-size:12px;background:#1a1a2e;color:#aaa';
-
-    var smartRules = document.getElementById('vpl-smart-rules');
-    if (playlist.type === 'smart') {
-      smartRules.style.display = 'block';
-      var rules = playlist.rules || {};
-      document.getElementById('vpl-name-pattern').value = rules.namePattern || '';
-      document.getElementById('vpl-tags').value = (rules.tags || []).join(', ');
-      document.getElementById('vpl-tag-mode').value = rules.tagMode || 'any';
-    } else {
-      smartRules.style.display = 'none';
-    }
-
-    var grid = document.getElementById('vpl-video-grid');
-    grid.innerHTML = '';
-
-    if (playlist.type === 'manual') {
-      authFetch('/api/visuals-processed')
-        .then(function(r) { return r.json(); })
-        .then(function(allVideos) {
-          var selectedSet = new Set(playlist.tracks || []);
-          var ordered = [];
-          (playlist.tracks || []).forEach(function(t) {
-            var found = allVideos.find(function(v) { return v.name === t; });
-            if (found) ordered.push({ video: found, selected: true });
-          });
-          allVideos.forEach(function(v) {
-            if (!selectedSet.has(v.name)) {
-              ordered.push({ video: v, selected: false });
-            }
-          });
-
-          ordered.forEach(function(item) {
-            var div = document.createElement('div');
-            div.className = 'video-tile' + (item.selected ? ' selected' : '');
-            div.onclick = function() {
-              div.classList.toggle('selected');
-              saveVideoPlaylistVideos(playlist.id);
-            };
-
-            var nameEl = document.createElement('div');
-            nameEl.className = 'video-tile-name';
-            nameEl.textContent = item.video.name;
-            div.appendChild(nameEl);
-
-            var sizeEl = document.createElement('div');
-            sizeEl.className = 'video-tile-size';
-            sizeEl.textContent = fmtSize(item.video.size);
-            div.appendChild(sizeEl);
-
-            grid.appendChild(div);
-          });
-        });
-    } else {
-      var resolved = playlist.resolvedTracks || [];
-      if (resolved.length === 0) {
-        grid.innerHTML = '<div class="empty-state">No matching videos</div>';
-      } else {
-        resolved.forEach(function(name) {
-          var div = document.createElement('div');
-          div.className = 'video-tile selected';
-          div.style.cursor = 'default';
-
-          var nameEl = document.createElement('div');
-          nameEl.className = 'video-tile-name';
-          nameEl.textContent = name;
-          div.appendChild(nameEl);
-
-          grid.appendChild(div);
-        });
-      }
-    }
-
-    document.getElementById('vpl-load-queue-btn').onclick = function() {
-      authFetch('/api/video-playlists/' + playlist.id + '/load-queue', { method: 'POST' })
-        .then(function(r) { return r.json(); })
-        .then(function(data) {
-          log('video playlist: loaded ' + data.loaded + ' videos to queue');
-        })
-        .catch(function(e) { showError('Load to queue failed: ' + e); });
-    };
-
-    document.getElementById('vpl-activate-profile-btn').onclick = function() {
-      authFetch('/api/video-playlists/' + playlist.id + '/activate-profile', { method: 'POST' })
-        .then(function(r) { return r.json(); })
-        .then(function(data) {
-          log('video playlist: activated as shuffle profile (' + data.activated + ' videos)');
-          FRVisualProfiles.loadVisualProfiles();
-        })
-        .catch(function(e) { showError('Activate profile failed: ' + e); });
-    };
-
-    document.getElementById('vpl-delete-btn').onclick = function() {
-      if (!confirm('Delete video playlist "' + playlist.name + '"?')) return;
-      authFetch('/api/video-playlists/' + playlist.id, { method: 'DELETE' })
-        .then(function() {
-          log('video playlist: deleted ' + playlist.name);
-          document.getElementById('video-playlist-detail').style.display = 'none';
-          selectedVideoPlaylistId = null;
-          loadVideoPlaylists();
-        })
-        .catch(function(e) { showError('Delete failed: ' + e); });
-    };
-  }
-
-  function saveVideoPlaylistVideos(playlistId) {
-    var grid = document.getElementById('vpl-video-grid');
-    var selected = [];
-    grid.querySelectorAll('.video-tile.selected').forEach(function(tile) {
-      selected.push(tile.querySelector('.video-tile-name').textContent);
-    });
-    authFetch('/api/video-playlists/' + playlistId, {
-      method: 'PUT',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ tracks: selected })
-    }).catch(function(e) { showError('Save video playlist failed: ' + e); });
-  }
-
-  document.getElementById('vpl-update-rules-btn').onclick = function() {
-    if (!selectedVideoPlaylistId) return;
-    var tagsRaw = document.getElementById('vpl-tags').value.trim();
-    var rules = {
-      namePattern: document.getElementById('vpl-name-pattern').value.trim(),
-      tags: tagsRaw ? tagsRaw.split(',').map(function(t) { return t.trim(); }).filter(Boolean) : [],
-      tagMode: document.getElementById('vpl-tag-mode').value
-    };
-    authFetch('/api/video-playlists/' + selectedVideoPlaylistId, {
-      method: 'PUT',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ rules: rules })
-    })
-      .then(function() {
-        log('video playlist: rules updated');
-        selectVideoPlaylist(selectedVideoPlaylistId);
-        loadVideoPlaylists();
-      })
-      .catch(function(e) { showError('Update rules failed: ' + e); });
-  };
-
-  document.getElementById('create-video-playlist-btn').onclick = function() {
-    openGenericModal('Create Video Playlist',
-      '<div class="form-group"><label>Name</label><input type="text" id="new-vpl-name" placeholder="Cyberpunk Visuals"></div>' +
-      '<div class="form-group"><label>Type</label><select id="new-vpl-type"><option value="manual">Manual</option><option value="smart">Smart</option></select></div>',
-      function() {
-        var name = document.getElementById('new-vpl-name').value.trim();
-        var type = document.getElementById('new-vpl-type').value;
-        if (!name) return;
-        authFetch('/api/video-playlists', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ name: name, type: type })
-        })
-          .then(function(r) { return r.json(); })
-          .then(function(pl) {
-            log('video playlist: created ' + name);
-            closeGenericModal();
-            loadVideoPlaylists();
-            selectVideoPlaylist(pl.id);
-          })
-          .catch(function(e) { showError('Create failed: ' + e); });
-      }
-    );
-  };
+  // The video-playlists UI lives in videoplaylists.js (window.FRVideoPlaylists),
+  // wired up via FRVideoPlaylists.init(...) above (which also binds the
+  // create-video-playlist-btn and the vpl-update-rules-btn). Callers use
+  // FRVideoPlaylists.loadVideoPlaylists().
 
   // ============================
   // OVERLAYS
@@ -4891,15 +4685,6 @@
       broadcastState: broadcastState,
       setMixMode: function (m) { currentMixMode = m; },
       setPlatformNames: function (a) { currentPlatformNames = a; }
-    };
-    window.__appVideoPlaylists = {
-      loadVideoPlaylists: loadVideoPlaylists,
-      renderVideoPlaylistsList: renderVideoPlaylistsList,
-      selectVideoPlaylist: selectVideoPlaylist,
-      renderVideoPlaylistDetail: renderVideoPlaylistDetail,
-      saveVideoPlaylistVideos: saveVideoPlaylistVideos,
-      getSelectedVideoPlaylistId: function () { return selectedVideoPlaylistId; },
-      setSelectedVideoPlaylistId: function (v) { selectedVideoPlaylistId = v; }
     };
   }
 

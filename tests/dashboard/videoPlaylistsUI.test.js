@@ -40,7 +40,7 @@ import { bootWindow, makeFetchStub, routeExact, flush } from './appBoot.js';
 /** Boot a fresh window and grab the (C1) video-playlists hook. */
 function boot() {
   const { win, doc } = bootWindow();
-  const vpl = win.__appVideoPlaylists;
+  const vpl = win.FRVideoPlaylists;
   return { win, doc, vpl };
 }
 
