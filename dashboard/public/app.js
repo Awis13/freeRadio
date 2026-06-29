@@ -212,7 +212,7 @@
       document.querySelectorAll('.tab-content').forEach(function(c) { c.classList.remove('active'); });
       document.getElementById('tab-' + tab).classList.add('active');
       if (tab === 'playlists') FRPlaylists.loadPlaylists();
-      if (tab === 'schedule') { loadSchedule(); loadPlaylistsForSelect(); }
+      if (tab === 'schedule') { FRSchedule.loadSchedule(); FRSchedule.loadPlaylistsForSelect(); }
       if (tab === 'visuals') { FRVisualProfiles.loadVisualProfiles(); loadVideoPlaylists(); loadOverlays(); loadOverlayAssets(); }
       if (tab === 'analytics') FRAnalytics.loadAnalytics();
     });
@@ -1251,6 +1251,16 @@
     closeGenericModal: function () { return window.closeGenericModal(); }
   });
 
+  // Wire the schedule UI module (schedule.js / window.FRSchedule) with the host
+  // services. init() also binds the save/add-slot/add-event buttons and starts
+  // the 30s current-slot poll. closeGenericModal is assigned to window further
+  // down the IIFE, so it is wrapped to defer the lookup to call time.
+  FRSchedule.init({
+    authFetch: authFetch, log: log, showError: showError,
+    openGenericModal: openGenericModal,
+    closeGenericModal: function () { return window.closeGenericModal(); }
+  });
+
   // Wire the analytics UI module (analytics.js / window.FRAnalytics) with
   // authFetch plus live getters for the read-only listener state. The getters are
   // read at call time so the module always sees the latest listenerHistory /
@@ -1264,238 +1274,10 @@
   // ============================
   // SCHEDULE
   // ============================
-  var scheduleData = { weekly: {}, events: {}, settings: {} };
-
-  function loadSchedule() {
-    authFetch('/api/schedule')
-      .then(function(r) { return r.json(); })
-      .then(function(data) {
-        scheduleData = data;
-        renderScheduleGrid();
-        renderEventsList();
-        renderScheduleSettings();
-        loadScheduleCurrent();
-      })
-      .catch(function(e) { log('schedule: error: ' + e); });
-  }
-
-  function loadScheduleCurrent() {
-    authFetch('/api/schedule/current')
-      .then(function(r) { return r.json(); })
-      .then(function(data) {
-        document.getElementById('sched-active-slot').textContent = data.label || data.slotId || '--';
-        document.getElementById('sched-active-playlist').textContent = data.playlistName || '--';
-        var vplEl = document.getElementById('sched-active-video-playlist');
-        if (vplEl) vplEl.textContent = data.videoPlaylistName || '--';
-        document.getElementById('sw-now').textContent = data.label || 'No active slot';
-        document.getElementById('sw-next').textContent = data.nextLabel || '--';
-      })
-      .catch(function() {
-        document.getElementById('sw-now').textContent = 'Schedule off';
-      });
-  }
-
-  var DAYS = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
-
-  function renderScheduleGrid() {
-    var grid = document.getElementById('schedule-grid');
-    grid.innerHTML = '';
-
-    var headerRow = document.createElement('div');
-    headerRow.className = 'sched-header-row';
-    headerRow.innerHTML = '<div class="sched-time-col"></div>';
-    DAYS.forEach(function(d) {
-      headerRow.innerHTML += '<div class="sched-day-col">' + d + '</div>';
-    });
-    grid.appendChild(headerRow);
-
-    for (var h = 0; h < 24; h += 2) {
-      var row = document.createElement('div');
-      row.className = 'sched-row';
-
-      var timeCell = document.createElement('div');
-      timeCell.className = 'sched-time-col';
-      timeCell.textContent = pad(h) + ':00';
-      row.appendChild(timeCell);
-
-      for (var d = 0; d < 7; d++) {
-        var cell = document.createElement('div');
-        cell.className = 'sched-cell';
-        cell.dataset.day = d;
-        cell.dataset.hour = h;
-
-        var slots = Object.values(scheduleData.weekly || {}).filter(function(s) {
-          if (s.day !== d) return false;
-          var startH = parseInt(s.startTime.split(':')[0]);
-          var endH = parseInt(s.endTime.split(':')[0]);
-          if (endH <= startH) endH += 24;
-          return h >= startH && h < endH || (h + 24 >= startH && h + 24 < endH);
-        });
-
-        if (slots.length > 0) {
-          cell.className += ' sched-cell-filled';
-          cell.textContent = slots[0].label || 'Slot';
-          cell.title = slots[0].label + ' (' + slots[0].startTime + '-' + slots[0].endTime + ')';
-          (function(slot) {
-            cell.onclick = function() {
-              if (confirm('Delete slot "' + (slot.label || slot.id) + '"?')) {
-                deleteWeeklySlot(slot.id);
-              }
-            };
-          })(slots[0]);
-        }
-
-        row.appendChild(cell);
-      }
-      grid.appendChild(row);
-    }
-  }
-
-  function renderEventsList() {
-    var container = document.getElementById('events-list');
-    var events = Object.values(scheduleData.events || {});
-    container.innerHTML = '';
-    if (events.length === 0) {
-      container.innerHTML = '<div class="empty-state">No events</div>';
-      return;
-    }
-    events.sort(function(a, b) { return a.date < b.date ? -1 : 1; });
-    events.forEach(function(ev) {
-      var div = document.createElement('div');
-      div.className = 'event-item';
-      div.innerHTML =
-        '<span class="event-date">' + escapeHtml(ev.date) + '</span>' +
-        '<span class="event-time">' + escapeHtml(ev.startTime) + '-' + escapeHtml(ev.endTime) + '</span>' +
-        '<span class="event-label">' + escapeHtml(ev.label || 'Event') + '</span>' +
-        '<button class="file-del" title="Delete">x</button>';
-      div.querySelector('button').onclick = function() {
-        deleteEvent(ev.id);
-      };
-      container.appendChild(div);
-    });
-  }
-
-  function renderScheduleSettings() {
-    var s = scheduleData.settings || {};
-    document.getElementById('schedule-timezone').value = s.timezone || 'Europe/Moscow';
-    document.getElementById('schedule-enabled').checked = s.enabled !== false;
-    loadPlaylistsForSelect();
-    setTimeout(function() {
-      var sel = document.getElementById('schedule-default-playlist');
-      sel.value = s.defaultPlaylistId || '';
-    }, 500);
-  }
-
-  function loadPlaylistsForSelect() {
-    // Music playlist selects live in playlists.js (window.FRPlaylists).
-    FRPlaylists.loadForSelect();
-
-    // Load video playlists for video-playlist-select dropdowns
-    authFetch('/api/video-playlists')
-      .then(function(r) { return r.json(); })
-      .then(function(data) {
-        var selects = document.querySelectorAll('.video-playlist-select');
-        selects.forEach(function(sel) {
-          var current = sel.value;
-          sel.innerHTML = '<option value="">-- None --</option>';
-          data.forEach(function(pl) {
-            sel.innerHTML += '<option value="' + escapeHtml(pl.id) + '">' + escapeHtml(pl.name) + ' (' + escapeHtml('' + (pl.trackCount || 0)) + ' videos)</option>';
-          });
-          sel.value = current;
-        });
-      })
-      .catch(function() {});
-  }
-
-  document.getElementById('save-schedule-settings').onclick = function() {
-    var settings = {
-      timezone: document.getElementById('schedule-timezone').value,
-      defaultPlaylistId: document.getElementById('schedule-default-playlist').value || null,
-      enabled: document.getElementById('schedule-enabled').checked
-    };
-    authFetch('/api/schedule', {
-      method: 'PUT',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ settings: settings })
-    })
-      .then(function() { log('schedule: settings saved'); })
-      .catch(function(e) { showError('Save schedule settings failed: ' + e); });
-  };
-
-  document.getElementById('add-weekly-slot-btn').onclick = function() {
-    openGenericModal('Add Weekly Slot',
-      '<div class="form-group"><label>Day</label><select id="slot-day">' +
-      DAYS.map(function(d, i) { return '<option value="' + i + '">' + d + '</option>'; }).join('') +
-      '</select></div>' +
-      '<div class="form-group"><label>Start Time</label><input type="time" id="slot-start" value="22:00"></div>' +
-      '<div class="form-group"><label>End Time</label><input type="time" id="slot-end" value="06:00"></div>' +
-      '<div class="form-group"><label>Playlist</label><select id="slot-playlist" class="playlist-select"><option value="">-- None --</option></select></div>' +
-      '<div class="form-group"><label>Video Playlist</label><select id="slot-video-playlist" class="video-playlist-select"><option value="">-- None --</option></select></div>' +
-      '<div class="form-group"><label>Label</label><input type="text" id="slot-label" placeholder="Friday Night"></div>',
-      function() {
-        var slot = {
-          day: parseInt(document.getElementById('slot-day').value),
-          startTime: document.getElementById('slot-start').value,
-          endTime: document.getElementById('slot-end').value,
-          playlistId: document.getElementById('slot-playlist').value || null,
-          videoPlaylistId: document.getElementById('slot-video-playlist').value || null,
-          label: document.getElementById('slot-label').value.trim()
-        };
-        authFetch('/api/schedule/weekly', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(slot)
-        })
-          .then(function() { closeGenericModal(); loadSchedule(); })
-          .catch(function(e) { showError('Add slot failed: ' + e); });
-      }
-    );
-    loadPlaylistsForSelect();
-  };
-
-  function deleteWeeklySlot(id) {
-    authFetch('/api/schedule/weekly/' + id, { method: 'DELETE' })
-      .then(function() { loadSchedule(); })
-      .catch(function(e) { showError('Delete slot failed: ' + e); });
-  }
-
-  document.getElementById('add-event-btn').onclick = function() {
-    openGenericModal('Add Event',
-      '<div class="form-group"><label>Date</label><input type="date" id="event-date"></div>' +
-      '<div class="form-group"><label>Start Time</label><input type="time" id="event-start" value="20:00"></div>' +
-      '<div class="form-group"><label>End Time</label><input type="time" id="event-end" value="23:00"></div>' +
-      '<div class="form-group"><label>Playlist</label><select id="event-playlist" class="playlist-select"><option value="">-- None --</option></select></div>' +
-      '<div class="form-group"><label>Video Playlist</label><select id="event-video-playlist" class="video-playlist-select"><option value="">-- None --</option></select></div>' +
-      '<div class="form-group"><label>Label</label><input type="text" id="event-label" placeholder="Guest DJ"></div>',
-      function() {
-        var ev = {
-          date: document.getElementById('event-date').value,
-          startTime: document.getElementById('event-start').value,
-          endTime: document.getElementById('event-end').value,
-          playlistId: document.getElementById('event-playlist').value || null,
-          videoPlaylistId: document.getElementById('event-video-playlist').value || null,
-          label: document.getElementById('event-label').value.trim()
-        };
-        authFetch('/api/schedule/events', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(ev)
-        })
-          .then(function() { closeGenericModal(); loadSchedule(); })
-          .catch(function(e) { showError('Add event failed: ' + e); });
-      }
-    );
-    loadPlaylistsForSelect();
-  };
-
-  function deleteEvent(id) {
-    if (!confirm('Delete this event?')) return;
-    authFetch('/api/schedule/events/' + id, { method: 'DELETE' })
-      .then(function() { loadSchedule(); })
-      .catch(function(e) { showError('Delete event failed: ' + e); });
-  }
-
-  setInterval(loadScheduleCurrent, 30000);
+  // The schedule UI lives in schedule.js (window.FRSchedule), wired up via
+  // FRSchedule.init(...) above (which also binds the save/add-slot/add-event
+  // buttons and starts the 30s current-slot poll). Callers use
+  // FRSchedule.loadSchedule() / FRSchedule.loadPlaylistsForSelect().
 
   // ============================
   // VISUAL PROFILES
@@ -5109,23 +4891,6 @@
       broadcastState: broadcastState,
       setMixMode: function (m) { currentMixMode = m; },
       setPlatformNames: function (a) { currentPlatformNames = a; }
-    };
-    // Test-only schedule hook: exposes the schedule-domain functions plus
-    // accessors for the closure state (scheduleData, DAYS) so characterization
-    // tests can drive the domain and assert the AS-IS contract. Inert in
-    // production (flag unset). No function is moved/renamed by adding this.
-    window.__appSchedule = {
-      loadSchedule: loadSchedule,
-      loadScheduleCurrent: loadScheduleCurrent,
-      renderScheduleGrid: renderScheduleGrid,
-      renderEventsList: renderEventsList,
-      renderScheduleSettings: renderScheduleSettings,
-      loadPlaylistsForSelect: loadPlaylistsForSelect,
-      deleteWeeklySlot: deleteWeeklySlot,
-      deleteEvent: deleteEvent,
-      getScheduleData: function () { return scheduleData; },
-      setScheduleData: function (d) { scheduleData = d; },
-      getDAYS: function () { return DAYS; }
     };
   }
 

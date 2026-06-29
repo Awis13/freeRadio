@@ -57,7 +57,7 @@ import { bootWindow, makeFetchStub, routeExact, flush } from './appBoot.js';
  */
 function boot() {
   const { win, doc } = bootWindow();
-  const sched = win.__appSchedule;
+  const sched = win.FRSchedule;
   return { win, doc, sched };
 }
 

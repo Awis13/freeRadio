@@ -33,6 +33,7 @@ const playlistsSrc = readFileSync(path.join(publicDir, 'playlists.js'), 'utf8');
 const analyticsSrc = readFileSync(path.join(publicDir, 'analytics.js'), 'utf8');
 const fileMgmtSrc = readFileSync(path.join(publicDir, 'filemgmt.js'), 'utf8');
 const visualProfilesSrc = readFileSync(path.join(publicDir, 'visualprofiles.js'), 'utf8');
+const scheduleSrc = readFileSync(path.join(publicDir, 'schedule.js'), 'utf8');
 const appSrc = readFileSync(path.join(publicDir, 'app.js'), 'utf8');
 
 /**
@@ -130,6 +131,7 @@ export function bootWindow() {
   dom.window.eval(analyticsSrc);
   dom.window.eval(fileMgmtSrc);
   dom.window.eval(visualProfilesSrc);
+  dom.window.eval(scheduleSrc);
   let loadError = null;
   try {
     dom.window.eval(appSrc);
