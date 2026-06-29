@@ -4524,6 +4524,24 @@
       setMixMode: function (m) { currentMixMode = m; },
       setPlatformNames: function (a) { window.FRPlatforms.setCurrentPlatformNames(a); }
     };
+
+    // Test-only hook for the OVERLAYS config UI cluster (app.js:1320-1512).
+    // Exposes the closure-trapped fns + overlayConfig accessor so the
+    // characterization pins can drive the cluster before it is extracted into
+    // its own module (window.FROverlays) in C2. The toggle/update/remove fns are
+    // already true window.* globals; they are re-exposed here so the C2 re-point
+    // only renames the object, leaving assertions byte-identical.
+    window.__appOverlays = {
+      loadOverlays: loadOverlays,
+      renderOverlayLayers: renderOverlayLayers,
+      saveOverlays: saveOverlays,
+      loadOverlayAssets: loadOverlayAssets,
+      toggleOverlayLayer: function (i, e) { return window.toggleOverlayLayer(i, e); },
+      updateOverlayLayer: function (i, p, v) { return window.updateOverlayLayer(i, p, v); },
+      removeOverlayLayer: function (i) { return window.removeOverlayLayer(i); },
+      getOverlayConfig: function () { return overlayConfig; },
+      setOverlayConfig: function (c) { overlayConfig = c; }
+    };
   }
 
 })();
