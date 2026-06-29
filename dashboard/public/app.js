@@ -4322,6 +4322,19 @@
       setMixMode: function (m) { currentMixMode = m; },
       setPlatformNames: function (a) { window.FRPlatforms.setCurrentPlatformNames(a); }
     };
+
+    // Test-only hook for the audio/video enhancement-settings cluster
+    // (app.js ~2210-2278). Exposes the two boot loaders plus accessors for the
+    // cached checkbox refs so pins can drive the loaders directly and reach the
+    // exact nodes app.js bound onchange to. Both function declarations are
+    // hoisted and both vars are assigned by the time this end-of-IIFE block
+    // runs. Guarded by window.__APP_TEST__ — inert in production. C2 removes it.
+    window.__appEnhance = {
+      loadAudioSettings: loadAudioSettings,
+      loadVideoSettings: loadVideoSettings,
+      getAudioEnhanceCheck: function () { return audioEnhanceCheck; },
+      getVideoEnhanceCheck: function () { return videoEnhanceCheck; }
+    };
   }
 
 })();
