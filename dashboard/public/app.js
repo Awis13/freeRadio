@@ -5238,6 +5238,19 @@
       setMixMode: function (m) { currentMixMode = m; },
       setPlatformNames: function (a) { currentPlatformNames = a; }
     };
+    // Test-only visual-profiles hook (C1 characterization baseline for the
+    // upcoming extraction). Exposes the 5 domain functions plus a getter/setter
+    // for the selectedVisualProfileId closure var so tests can pin the AS-IS
+    // contract without moving any code. Inert in production (flag unset).
+    window.__appVisualProfiles = {
+      loadVisualProfiles: loadVisualProfiles,
+      selectVisualProfile: selectVisualProfile,
+      renderVisualProfilesList: renderVisualProfilesList,
+      renderVisualProfileDetail: renderVisualProfileDetail,
+      saveVisualProfileVideos: saveVisualProfileVideos,
+      getSelectedVisualProfileId: function () { return selectedVisualProfileId; },
+      setSelectedVisualProfileId: function (v) { selectedVisualProfileId = v; }
+    };
   }
 
 })();
