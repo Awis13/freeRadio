@@ -4892,6 +4892,15 @@
       setMixMode: function (m) { currentMixMode = m; },
       setPlatformNames: function (a) { currentPlatformNames = a; }
     };
+    window.__appVideoPlaylists = {
+      loadVideoPlaylists: loadVideoPlaylists,
+      renderVideoPlaylistsList: renderVideoPlaylistsList,
+      selectVideoPlaylist: selectVideoPlaylist,
+      renderVideoPlaylistDetail: renderVideoPlaylistDetail,
+      saveVideoPlaylistVideos: saveVideoPlaylistVideos,
+      getSelectedVideoPlaylistId: function () { return selectedVideoPlaylistId; },
+      setSelectedVideoPlaylistId: function (v) { selectedVideoPlaylistId = v; }
+    };
   }
 
 })();
