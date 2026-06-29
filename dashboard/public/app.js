@@ -4048,6 +4048,30 @@
       setMixMode: function (m) { currentMixMode = m; },
       setPlatformNames: function (a) { window.FRPlatforms.setCurrentPlatformNames(a); }
     };
+    // Test-only push-to-talk hook (C1 characterization). Mirrors the C2 FRPtt
+    // return shape so re-pointing the pins is a literal __appPtt -> FRPtt swap.
+    window.__appPtt = {
+      pttSetStatus: pttSetStatus,
+      pttReset: pttReset,
+      pttClearWaveform: pttClearWaveform,
+      pttDrawWaveform: pttDrawWaveform,
+      pttDrawStaticWaveform: pttDrawStaticWaveform,
+      pttStartRecording: pttStartRecording,
+      pttStopRecording: pttStopRecording,
+      pttSend: pttSend,
+      pttDown: pttDown,
+      pttUp: pttUp,
+      pttLoadConfig: pttLoadConfig,
+      pttSaveConfig: pttSaveConfig,
+      getStatus: function () { return pttStatus; },
+      setStatus: function (v) { pttStatus = v; },
+      getBlob: function () { return pttBlob; },
+      setBlob: function (v) { pttBlob = v; },
+      getBlobUrl: function () { return pttBlobUrl; },
+      setBlobUrl: function (v) { pttBlobUrl = v; },
+      getIsHold: function () { return pttIsHold; },
+      setIsHold: function (v) { pttIsHold = v; }
+    };
   }
 
 })();
