@@ -34,7 +34,7 @@ import { bootWindow, makeFetchStub, routeExact, flush } from './appBoot.js';
  *  fns are the real closure fns using the real deps (authFetch -> win.fetch). */
 function boot() {
   const { win, doc } = bootWindow();
-  const ptt = win.__appPtt;
+  const ptt = win.FRPtt;
   return { win, doc, ptt };
 }
 
@@ -45,7 +45,7 @@ function withFetch(win, routes) {
   return stub;
 }
 
-describe('push-to-talk UI characterization (window.__appPtt)', () => {
+describe('push-to-talk UI characterization (window.FRPtt)', () => {
   it('exposes the cluster fns + state accessors', () => {
     const { ptt } = boot();
     expect(ptt).toBeTruthy();
