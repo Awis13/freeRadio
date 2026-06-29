@@ -1306,6 +1306,14 @@
   FREnhance.loadAudioSettings();
   FREnhance.loadVideoSettings();
 
+  // Wire the restream auto-start UI module (restreamSettings.js /
+  // window.FRRestreamSettings) with the host services. init() resolves the
+  // #restream-autostart-checkbox and binds its onchange; the boot-time GET
+  // /api/restream/settings is re-sourced here as an explicit loadRestreamSettings()
+  // call to preserve the original boot order.
+  FRRestreamSettings.init({ authFetch: authFetch, log: log, showError: showError });
+  FRRestreamSettings.loadRestreamSettings();
+
   // Wire the analytics UI module (analytics.js / window.FRAnalytics) with
   // authFetch plus live getters for the read-only listener state. The getters are
   // read at call time so the module always sees the latest listenerHistory /
@@ -1361,35 +1369,12 @@
   // ============================
   // RESTREAM SETTINGS (Studio sidebar)
   // ============================
-  // The stream-platforms / stream-keys domain now lives in platforms.js
+  // The stream-platforms / stream-keys domain lives in platforms.js
   // (window.FRPlatforms), wired up via FRPlatforms.init(...) near the other
-  // FRx.init calls. Only the restream auto-start control stays here.
-  var restreamAutoStartCheckbox = document.getElementById('restream-autostart-checkbox');
-
-  function loadRestreamSettings() {
-    authFetch('/api/restream/settings')
-      .then(function(r) { return r.json(); })
-      .then(function(data) {
-        restreamAutoStartCheckbox.checked = !!data.autoStart;
-      })
-      .catch(function(e) { log('restream settings: error loading: ' + e); });
-  }
-
-  restreamAutoStartCheckbox.onchange = function() {
-    authFetch('/api/restream/settings', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ autoStart: restreamAutoStartCheckbox.checked })
-    })
-      .then(function(r) { return r.json(); })
-      .then(function(data) {
-        if (!data.success) throw new Error(data.error || 'save failed');
-        log('restream autostart: ' + (data.autoStart ? 'ON' : 'OFF'));
-      })
-      .catch(function(e) { showError('Restream autostart save failed: ' + e); });
-  };
-
-  loadRestreamSettings();
+  // FRx.init calls. The restream auto-start control now lives in
+  // restreamSettings.js (window.FRRestreamSettings), wired via
+  // FRRestreamSettings.init(...) below. The WS-fed restream-STATUS widget
+  // (updateRestreamStatus / lastRtmpHealth) stays here.
 
   // --- Broadcast Control ---
   // States: idle → arming → armed → broadcasting → live
@@ -4260,11 +4245,6 @@
       broadcastState: broadcastState,
       setMixMode: function (m) { currentMixMode = m; },
       setPlatformNames: function (a) { window.FRPlatforms.setCurrentPlatformNames(a); }
-    };
-    window.__appRestreamSettings = {
-      loadRestreamSettings: loadRestreamSettings,
-      getAutoStart: function () { return restreamAutoStartCheckbox.checked; },
-      setAutoStart: function (v) { restreamAutoStartCheckbox.checked = v; }
     };
   }
 

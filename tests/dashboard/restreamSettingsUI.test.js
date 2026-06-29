@@ -31,7 +31,7 @@ import { bootWindow, makeFetchStub, routeExact, flush } from './appBoot.js';
 /** Boot a fresh window and grab the restream-settings hook. */
 function boot() {
   const { win, doc } = bootWindow();
-  const rs = win.__appRestreamSettings;
+  const rs = win.FRRestreamSettings;
   return { win, doc, rs };
 }
 
@@ -47,7 +47,7 @@ function checkbox(doc) {
   return doc.getElementById('restream-autostart-checkbox');
 }
 
-describe('restream-settings UI characterization (window.__appRestreamSettings)', () => {
+describe('restream-settings UI characterization (window.FRRestreamSettings)', () => {
   it('exposes loadRestreamSettings + getAutoStart/setAutoStart', () => {
     const { rs } = boot();
     expect(rs).toBeTruthy();
