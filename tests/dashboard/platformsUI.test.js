@@ -42,7 +42,7 @@ import { bootWindow, makeFetchStub, routeExact, flush } from './appBoot.js';
  */
 function boot() {
   const { win, doc } = bootWindow();
-  const hook = win.__appPlatforms;
+  const hook = win.FRPlatforms;
   return { win, doc, hook };
 }
 

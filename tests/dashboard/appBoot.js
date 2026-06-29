@@ -35,6 +35,7 @@ const fileMgmtSrc = readFileSync(path.join(publicDir, 'filemgmt.js'), 'utf8');
 const visualProfilesSrc = readFileSync(path.join(publicDir, 'visualprofiles.js'), 'utf8');
 const scheduleSrc = readFileSync(path.join(publicDir, 'schedule.js'), 'utf8');
 const videoPlaylistsSrc = readFileSync(path.join(publicDir, 'videoplaylists.js'), 'utf8');
+const platformsSrc = readFileSync(path.join(publicDir, 'platforms.js'), 'utf8');
 const appSrc = readFileSync(path.join(publicDir, 'app.js'), 'utf8');
 
 /**
@@ -134,6 +135,7 @@ export function bootWindow() {
   dom.window.eval(visualProfilesSrc);
   dom.window.eval(scheduleSrc);
   dom.window.eval(videoPlaylistsSrc);
+  dom.window.eval(platformsSrc);
   let loadError = null;
   try {
     dom.window.eval(appSrc);

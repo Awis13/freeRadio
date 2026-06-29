@@ -1272,6 +1272,14 @@
     closeGenericModal: function () { return window.closeGenericModal(); }
   });
 
+  // Wire the stream-platforms / stream-keys UI module (platforms.js /
+  // window.FRPlatforms) with the host services. init() captures the platform DOM
+  // refs, assigns window.savePlatform / window.closePlatformModal (driven via
+  // inline onclick in index.html), binds the add/preset/modal handlers, and
+  // starts the boot auto-load + 30s poll. The domain owns its #platform-modal, so
+  // no openGenericModal/closeGenericModal is needed.
+  FRPlatforms.init({ authFetch: authFetch, log: log, showError: showError });
+
   // Wire the analytics UI module (analytics.js / window.FRAnalytics) with
   // authFetch plus live getters for the read-only listener state. The getters are
   // read at call time so the module always sees the latest listenerHistory /
@@ -1513,180 +1521,12 @@
   // the module live through the injected getters.
 
   // ============================
-  // STREAM PLATFORMS (Studio sidebar)
+  // RESTREAM SETTINGS (Studio sidebar)
   // ============================
-  var PLATFORM_PRESETS = {
-    youtube:  { name: 'YouTube',  rtmpUrl: 'rtmp://a.rtmp.youtube.com/live2' },
-    kick:     { name: 'Kick',     rtmpUrl: '' },
-    twitch:   { name: 'Twitch',   rtmpUrl: 'rtmp://live.twitch.tv/app' },
-    facebook: { name: 'Facebook', rtmpUrl: 'rtmps://live-api-s.facebook.com:443/rtmp/' },
-    custom:   { name: '',         rtmpUrl: '' }
-  };
-
-  var platformList = document.getElementById('platform-list');
-  var addPlatformBtn = document.getElementById('add-platform-btn');
-  var platformModal = document.getElementById('platform-modal');
-  var platformNameInput = document.getElementById('platform-name-input');
-  var streamKeyInput = document.getElementById('stream-key-input');
-  var rtmpUrlInput = document.getElementById('rtmp-url-input');
-  var rtmpHelp = document.getElementById('rtmp-help');
-  var platformEnabled = document.getElementById('platform-enabled');
-  var presetGroup = document.getElementById('preset-group');
-  var presetSelect = document.getElementById('platform-preset-select');
+  // The stream-platforms / stream-keys domain now lives in platforms.js
+  // (window.FRPlatforms), wired up via FRPlatforms.init(...) near the other
+  // FRx.init calls. Only the restream auto-start control stays here.
   var restreamAutoStartCheckbox = document.getElementById('restream-autostart-checkbox');
-
-  // Delegates to FRUtils (single source of truth), passing the current names.
-  function uniquePlatformName(base) {
-    return FRU.uniquePlatformName(base, currentPlatformNames);
-  }
-
-  function applyPreset(key) {
-    var preset = PLATFORM_PRESETS[key];
-    if (!preset) return;
-    var isCustom = key === 'custom';
-    var urlEditable = isCustom || !preset.rtmpUrl;
-    platformNameInput.value = isCustom ? '' : uniquePlatformName(preset.name);
-    rtmpUrlInput.value = preset.rtmpUrl;
-    platformNameInput.readOnly = !isCustom;
-    rtmpUrlInput.readOnly = !urlEditable;
-    platformNameInput.style.opacity = isCustom ? '' : '.7';
-    rtmpUrlInput.style.opacity = urlEditable ? '' : '.7';
-    syncPlatformHints();
-  }
-
-  presetSelect.onchange = function() { applyPreset(presetSelect.value); };
-
-  function syncPlatformHints() {
-    var name = (platformNameInput.value || '').trim().toLowerCase();
-    if (name === 'kick') {
-      rtmpUrlInput.placeholder = 'rtmps://<ingest>.global-contribute.live-video.net/app';
-      if (rtmpHelp) rtmpHelp.textContent = 'Kick: server URL from Creator Dashboard, stream key separately.';
-      return;
-    }
-    rtmpUrlInput.placeholder = 'rtmp://... or rtmps://...';
-    if (rtmpHelp) rtmpHelp.textContent = 'Use server URL; stream key is stored separately.';
-  }
-
-  var maxPlatforms = 3;
-  var currentPlatformNames = [];
-
-  function loadPlatforms() {
-    authFetch('/api/stream-keys')
-      .then(function(r) { return r.json(); })
-      .then(function(data) {
-        maxPlatforms = data.maxPlatforms || 3;
-        currentPlatformNames = Object.keys(data.platforms);
-        renderPlatforms(data.platforms);
-      })
-      .catch(function(e) { log('platforms: error loading: ' + e); });
-  }
-
-  function renderPlatforms(platforms) {
-    platformList.innerHTML = '';
-    var entries = Object.entries(platforms);
-    entries.forEach(function(entry) {
-      var name = entry[0];
-      var config = entry[1];
-      var div = document.createElement('div');
-      div.className = 'platform-item' + (config.enabled ? ' enabled' : '');
-
-      var nameEl = document.createElement('span');
-      nameEl.className = 'platform-name';
-      nameEl.textContent = name;
-      div.appendChild(nameEl);
-
-      var statusEl = document.createElement('span');
-      statusEl.className = 'platform-status';
-      statusEl.textContent = config.enabled ? 'ON' : 'OFF';
-      div.appendChild(statusEl);
-
-      var toggleBtn = document.createElement('button');
-      toggleBtn.className = 'platform-toggle' + (config.enabled ? ' on' : ' off');
-      toggleBtn.textContent = config.enabled ? 'Disable' : 'Enable';
-      toggleBtn.onclick = function() { togglePlatform(name, !config.enabled); };
-      div.appendChild(toggleBtn);
-
-      var delBtn = document.createElement('button');
-      delBtn.className = 'platform-del';
-      delBtn.textContent = '\u00d7';
-      delBtn.onclick = function() { deletePlatform(name); };
-      div.appendChild(delBtn);
-
-      platformList.appendChild(div);
-    });
-
-    var atLimit = entries.length >= maxPlatforms;
-    addPlatformBtn.disabled = atLimit;
-    addPlatformBtn.title = atLimit ? 'Limit: max ' + maxPlatforms + ' platforms' : '';
-  }
-
-  function deletePlatform(name) {
-    if (!confirm('Remove ' + name + '?')) return;
-    authFetch('/api/stream-keys/' + encodeURIComponent(name), { method: 'DELETE' })
-      .then(function() {
-        log('platform removed: ' + name);
-        loadPlatforms();
-      })
-      .catch(function(e) { showError('Remove failed: ' + e); });
-  }
-
-  function togglePlatform(name, enabled) {
-    authFetch('/api/stream-keys/' + encodeURIComponent(name) + '/enabled', {
-      method: 'PATCH',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ enabled: enabled })
-    })
-      .then(function(r) { return r.json(); })
-      .then(function(data) {
-        if (!data.success) throw new Error(data.error || 'toggle failed');
-        log('platform ' + name + ': ' + (enabled ? 'ENABLED' : 'DISABLED'));
-        loadPlatforms();
-      })
-      .catch(function(e) { showError('Platform toggle failed: ' + e); });
-  }
-
-  addPlatformBtn.onclick = function() {
-    streamKeyInput.value = '';
-    platformEnabled.checked = true;
-    presetGroup.style.display = '';
-    presetSelect.value = 'youtube';
-    applyPreset('youtube');
-    platformModal.style.display = 'flex';
-  };
-
-  platformNameInput.oninput = syncPlatformHints;
-
-  window.closePlatformModal = function() {
-    platformModal.style.display = 'none';
-  };
-
-  window.savePlatform = function() {
-    var name = platformNameInput.value.trim();
-    var rtmpUrl = rtmpUrlInput.value.trim();
-    var key = streamKeyInput.value.trim();
-    var enabled = platformEnabled.checked;
-
-    if (!name) { alert('Please enter platform name'); return; }
-    if (!rtmpUrl) { alert('Please enter RTMP URL'); return; }
-    if (!key) { alert('Please enter stream key'); return; }
-
-    authFetch('/api/stream-keys/' + encodeURIComponent(name), {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ enabled: enabled, streamKey: key, rtmpUrl: rtmpUrl })
-    })
-      .then(function(r) {
-        if (!r.ok) return r.json().then(function(d) { throw new Error(d.error || 'save failed'); });
-        log('platform saved: ' + name);
-        closePlatformModal();
-        loadPlatforms();
-      })
-      .catch(function(e) { showError('Save failed: ' + e.message); });
-  };
-
-  platformModal.onclick = function(e) {
-    if (e.target === platformModal) closePlatformModal();
-  };
 
   function loadRestreamSettings() {
     authFetch('/api/restream/settings')
@@ -1711,9 +1551,7 @@
       .catch(function(e) { showError('Restream autostart save failed: ' + e); });
   };
 
-  loadPlatforms();
   loadRestreamSettings();
-  setInterval(loadPlatforms, 30000);
 
   // --- Broadcast Control ---
   // States: idle → arming → armed → broadcasting → live
@@ -4680,29 +4518,11 @@
     window.__appDrift = {
       computeMixDur: computeMixDur,
       getBroadcastPhase: getBroadcastPhase,
-      uniquePlatformName: uniquePlatformName,
+      uniquePlatformName: function (b) { return window.FRPlatforms.uniquePlatformName(b); },
       deriveUiMode: deriveUiMode,
       broadcastState: broadcastState,
       setMixMode: function (m) { currentMixMode = m; },
-      setPlatformNames: function (a) { currentPlatformNames = a; }
-    };
-    // Test-only platforms hook (C1 characterization): exposes the stream-keys
-    // domain fns + closure handles for currentPlatformNames / maxPlatforms so
-    // platformsUI.test.js can pin the AS-IS behaviour before the C2 extraction.
-    // window.savePlatform / window.closePlatformModal already exist as globals
-    // (driven via inline onclick), so they are not re-exposed here. Inert in
-    // production (guarded by window.__APP_TEST__).
-    window.__appPlatforms = {
-      loadPlatforms: loadPlatforms,
-      renderPlatforms: renderPlatforms,
-      deletePlatform: deletePlatform,
-      togglePlatform: togglePlatform,
-      syncPlatformHints: syncPlatformHints,
-      uniquePlatformName: uniquePlatformName,
-      applyPreset: applyPreset,
-      getCurrentPlatformNames: function () { return currentPlatformNames; },
-      setCurrentPlatformNames: function (a) { currentPlatformNames = a; },
-      getMaxPlatforms: function () { return maxPlatforms; }
+      setPlatformNames: function (a) { window.FRPlatforms.setCurrentPlatformNames(a); }
     };
   }
 
