@@ -4261,6 +4261,11 @@
       setMixMode: function (m) { currentMixMode = m; },
       setPlatformNames: function (a) { window.FRPlatforms.setCurrentPlatformNames(a); }
     };
+    window.__appRestreamSettings = {
+      loadRestreamSettings: loadRestreamSettings,
+      getAutoStart: function () { return restreamAutoStartCheckbox.checked; },
+      setAutoStart: function (v) { restreamAutoStartCheckbox.checked = v; }
+    };
   }
 
 })();
