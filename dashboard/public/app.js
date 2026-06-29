@@ -1297,6 +1297,15 @@
   FRQuality.init({ authFetch: authFetch, log: log, showError: showError });
   FRQuality.loadQuality();
 
+  // Wire the audio/video enhancement-settings UI module (enhanceSettings.js /
+  // window.FREnhance) with the host services. init() binds the #audio-enhance
+  // and #video-enhance onchange handlers; the boot-time GET /api/audio and
+  // GET /api/video are re-sourced here as explicit loader calls to preserve the
+  // original boot order.
+  FREnhance.init({ authFetch: authFetch, log: log, showError: showError });
+  FREnhance.loadAudioSettings();
+  FREnhance.loadVideoSettings();
+
   // Wire the analytics UI module (analytics.js / window.FRAnalytics) with
   // authFetch plus live getters for the read-only listener state. The getters are
   // read at call time so the module always sees the latest listenerHistory /
@@ -2206,76 +2215,6 @@
   });
 
   loadMixingConfig();
-
-  // --- Audio Enhancement Settings ---
-  var audioEnhanceCheck = document.getElementById('audio-enhance');
-
-  function loadAudioSettings() {
-    authFetch('/api/audio')
-      .then(function(r) { return r.json(); })
-      .then(function(data) {
-        if (audioEnhanceCheck) {
-          audioEnhanceCheck.checked = data.enhanced === true;
-          log('audio: enhancement = ' + (data.enhanced ? 'ON' : 'OFF'));
-        }
-      })
-      .catch(function(e) { log('audio: error loading settings: ' + e); });
-  }
-
-  if (audioEnhanceCheck) {
-    audioEnhanceCheck.onchange = function() {
-      var enabled = audioEnhanceCheck.checked;
-      authFetch('/api/audio', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ enhanced: enabled })
-      })
-        .then(function(r) { return r.json(); })
-        .then(function(data) {
-          if (data.success) {
-            log('audio: enhancement ' + (enabled ? 'ENABLED' : 'DISABLED'));
-          }
-        })
-        .catch(function(e) { showError('Audio settings change failed: ' + e); });
-    };
-  }
-
-  loadAudioSettings();
-
-  // --- Video Enhancement Settings ---
-  var videoEnhanceCheck = document.getElementById('video-enhance');
-
-  function loadVideoSettings() {
-    authFetch('/api/video')
-      .then(function(r) { return r.json(); })
-      .then(function(data) {
-        if (videoEnhanceCheck) {
-          videoEnhanceCheck.checked = data.enhanced === true;
-          log('video: enhancement = ' + (data.enhanced ? 'ON' : 'OFF'));
-        }
-      })
-      .catch(function(e) { log('video: error loading settings: ' + e); });
-  }
-
-  if (videoEnhanceCheck) {
-    videoEnhanceCheck.onchange = function() {
-      var enabled = videoEnhanceCheck.checked;
-      authFetch('/api/video', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ enhanced: enabled })
-      })
-        .then(function(r) { return r.json(); })
-        .then(function(data) {
-          if (data.success) {
-            log('video: enhancement ' + (enabled ? 'ENABLED' : 'DISABLED'));
-          }
-        })
-        .catch(function(e) { showError('Video settings change failed: ' + e); });
-    };
-  }
-
-  loadVideoSettings();
 
   // ============================
   // CHANNEL STRIP
@@ -4321,19 +4260,6 @@
       broadcastState: broadcastState,
       setMixMode: function (m) { currentMixMode = m; },
       setPlatformNames: function (a) { window.FRPlatforms.setCurrentPlatformNames(a); }
-    };
-
-    // Test-only hook for the audio/video enhancement-settings cluster
-    // (app.js ~2210-2278). Exposes the two boot loaders plus accessors for the
-    // cached checkbox refs so pins can drive the loaders directly and reach the
-    // exact nodes app.js bound onchange to. Both function declarations are
-    // hoisted and both vars are assigned by the time this end-of-IIFE block
-    // runs. Guarded by window.__APP_TEST__ — inert in production. C2 removes it.
-    window.__appEnhance = {
-      loadAudioSettings: loadAudioSettings,
-      loadVideoSettings: loadVideoSettings,
-      getAudioEnhanceCheck: function () { return audioEnhanceCheck; },
-      getVideoEnhanceCheck: function () { return videoEnhanceCheck; }
     };
   }
 

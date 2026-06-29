@@ -38,6 +38,7 @@ const videoPlaylistsSrc = readFileSync(path.join(publicDir, 'videoplaylists.js')
 const platformsSrc = readFileSync(path.join(publicDir, 'platforms.js'), 'utf8');
 const overlaysSrc = readFileSync(path.join(publicDir, 'overlays.js'), 'utf8');
 const qualitySrc = readFileSync(path.join(publicDir, 'quality.js'), 'utf8');
+const enhanceSettingsSrc = readFileSync(path.join(publicDir, 'enhanceSettings.js'), 'utf8');
 const appSrc = readFileSync(path.join(publicDir, 'app.js'), 'utf8');
 
 /**
@@ -140,6 +141,7 @@ export function bootWindow() {
   dom.window.eval(platformsSrc);
   dom.window.eval(overlaysSrc);
   dom.window.eval(qualitySrc);
+  dom.window.eval(enhanceSettingsSrc);
   let loadError = null;
   try {
     dom.window.eval(appSrc);

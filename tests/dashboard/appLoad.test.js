@@ -43,6 +43,7 @@ const videoPlaylistsSrc = readFileSync(path.join(publicDir, 'videoplaylists.js')
 const platformsSrc = readFileSync(path.join(publicDir, 'platforms.js'), 'utf8');
 const overlaysSrc = readFileSync(path.join(publicDir, 'overlays.js'), 'utf8');
 const qualitySrc = readFileSync(path.join(publicDir, 'quality.js'), 'utf8');
+const enhanceSettingsSrc = readFileSync(path.join(publicDir, 'enhanceSettings.js'), 'utf8');
 const appSrc = readFileSync(path.join(publicDir, 'app.js'), 'utf8');
 
 /**
@@ -146,6 +147,7 @@ describe('app.js jsdom load-smoke (C2 FRUtils cutover)', () => {
     runScript(dom, platformsSrc, 'platforms.js');
     runScript(dom, overlaysSrc, 'overlays.js');
     runScript(dom, qualitySrc, 'quality.js');
+    runScript(dom, enhanceSettingsSrc, 'enhanceSettings.js');
     try {
       runScript(dom, appSrc, 'app.js');
     } catch (err) {
@@ -215,6 +217,7 @@ describe('app.js drift-gate (C3 FRUtils delegation of the 4 diverged helpers)', 
     runScript(dom, platformsSrc, 'platforms.js');
     runScript(dom, overlaysSrc, 'overlays.js');
     runScript(dom, qualitySrc, 'quality.js');
+    runScript(dom, enhanceSettingsSrc, 'enhanceSettings.js');
     runScript(dom, appSrc, 'app.js');
     drift = win.__appDrift;
   });

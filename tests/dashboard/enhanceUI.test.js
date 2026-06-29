@@ -36,10 +36,10 @@
 import { describe, it, expect } from 'vitest';
 import { bootWindow, makeFetchStub, routeExact, flush } from './appBoot.js';
 
-/** Boot a fresh window and grab the enhancement hook. */
+/** Boot a fresh window and grab the enhancement module (window.FREnhance). */
 function boot() {
   const { win, doc } = bootWindow();
-  const enh = win.__appEnhance;
+  const enh = win.FREnhance;
   return { win, doc, enh };
 }
 
@@ -71,7 +71,7 @@ const TWINS = [
   },
 ];
 
-describe('enhancement-settings UI characterization (window.__appEnhance)', () => {
+describe('enhancement-settings UI characterization (window.FREnhance)', () => {
   it('exposes the two loaders + the two checkbox accessors', () => {
     const { enh } = boot();
     expect(enh).toBeTruthy();
