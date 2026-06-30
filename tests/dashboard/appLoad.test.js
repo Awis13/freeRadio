@@ -260,6 +260,11 @@ describe('app.js drift-gate (C3 FRUtils delegation of the 4 diverged helpers)', 
     expect(typeof drift.setPlatformNames).toBe('function');
   });
 
+  it('getBroadcastState seam returns the live broadcastState (no-op getter, stable identity)', () => {
+    expect(typeof drift.getBroadcastState).toBe('function');
+    expect(drift.getBroadcastState()).toBe(drift.broadcastState);
+  });
+
   describe('computeMixDur (delegates with currentMixMode)', () => {
     it("mixMode 'cut' → 0", () => {
       drift.setMixMode('cut');

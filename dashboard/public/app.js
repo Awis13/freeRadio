@@ -1194,6 +1194,10 @@
   // State: streaming=ffmpeg running, broadcast=RTMP active, streamMode=standby|armed|live
   // uiMode/uiSubMode — frontend mode (radio/talkover/takeover)
   var broadcastState = { streaming: false, broadcast: false, streamMode: 'standby', standbyVisual: null, visualMode: 'visual-radio', arming: false, liveMode: { source: 'obs', afkFallback: 'visual-radio', obsStatus: 'offline', ingestKey: '' }, uiMode: 'radio', uiSubMode: 'visual-radio' };
+  // Injection seam: sole closure accessor for broadcastState. Object identity is
+  // stable, so this getter is a no-op over the existing call sites — it lets
+  // future PRs source broadcastState through a single point. No behaviour change.
+  function getBroadcastState() { return broadcastState; }
   var armAborted = false;
 
   // Derived phase from state.
@@ -3473,6 +3477,7 @@
       uniquePlatformName: function (b) { return window.FRPlatforms.uniquePlatformName(b); },
       deriveUiMode: deriveUiMode,
       broadcastState: broadcastState,
+      getBroadcastState: getBroadcastState,
       setMixMode: function (m) { currentMixMode = m; },
       setPlatformNames: function (a) { window.FRPlatforms.setCurrentPlatformNames(a); }
     };
