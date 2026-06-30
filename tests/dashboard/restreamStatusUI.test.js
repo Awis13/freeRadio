@@ -44,7 +44,7 @@ import { bootWindow, makeFetchStub, routeExact, flush } from './appBoot.js';
  */
 function boot() {
   const { win, doc } = bootWindow();
-  const rs = win.__appRestreamStatus;
+  const rs = win.FRRestreamStatus;
   return { win, doc, rs };
 }
 

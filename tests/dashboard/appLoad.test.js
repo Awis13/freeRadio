@@ -47,6 +47,7 @@ const enhanceSettingsSrc = readFileSync(path.join(publicDir, 'enhanceSettings.js
 const restreamSettingsSrc = readFileSync(path.join(publicDir, 'restreamSettings.js'), 'utf8');
 const channelStripSrc = readFileSync(path.join(publicDir, 'channelstrip.js'), 'utf8');
 const pttSrc = readFileSync(path.join(publicDir, 'ptt.js'), 'utf8');
+const restreamStatusSrc = readFileSync(path.join(publicDir, 'restreamStatus.js'), 'utf8');
 const appSrc = readFileSync(path.join(publicDir, 'app.js'), 'utf8');
 
 /**
@@ -154,6 +155,7 @@ describe('app.js jsdom load-smoke (C2 FRUtils cutover)', () => {
     runScript(dom, restreamSettingsSrc, 'restreamSettings.js');
     runScript(dom, channelStripSrc, 'channelstrip.js');
     runScript(dom, pttSrc, 'ptt.js');
+    runScript(dom, restreamStatusSrc, 'restreamStatus.js');
     try {
       runScript(dom, appSrc, 'app.js');
     } catch (err) {
@@ -227,6 +229,7 @@ describe('app.js drift-gate (C3 FRUtils delegation of the 4 diverged helpers)', 
     runScript(dom, restreamSettingsSrc, 'restreamSettings.js');
     runScript(dom, channelStripSrc, 'channelstrip.js');
     runScript(dom, pttSrc, 'ptt.js');
+    runScript(dom, restreamStatusSrc, 'restreamStatus.js');
     runScript(dom, appSrc, 'app.js');
     drift = win.__appDrift;
   });

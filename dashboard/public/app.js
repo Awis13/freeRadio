@@ -717,7 +717,7 @@
         updateAudio(msg.data.audio);
         updateIcecast(msg.data.icecast);
         updateFfmpeg(msg.data.ffmpeg);
-        if (msg.data.rtmpHealth) updateRestreamStatus(msg.data.rtmpHealth);
+        if (msg.data.rtmpHealth) FRRestreamStatus.updateRestreamStatus(msg.data.rtmpHealth);
         FRFileMgmt.loadFileList('music');
         FRFileMgmt.loadFileList('visuals');
         break;
@@ -749,7 +749,7 @@
         FRFileMgmt.refreshBpmInList();
         break;
       case 'rtmp-health':
-        updateRestreamStatus(msg.data);
+        FRRestreamStatus.updateRestreamStatus(msg.data);
         break;
       case 'voice-status':
         if (msg.data && msg.data.status === 'on-air') {
@@ -1126,87 +1126,12 @@
   // ============================
   // RESTREAM STATUS WIDGET
   // ============================
-  var lastRtmpHealth = null;
-
-  function updateRestreamStatus(healthData) {
-    lastRtmpHealth = healthData;
-    var container = document.getElementById('restream-status-list');
-    container.innerHTML = '';
-
-    var outputs = (healthData && healthData.outputs) ? healthData.outputs : {};
-    var keys = Object.keys(outputs);
-
-    if (keys.length === 0) {
-      loadRestreamStatusFallback();
-      return;
-    }
-
-    keys.forEach(function(name) {
-      var info = outputs[name];
-      var status = info.status || 'offline';
-      var div = document.createElement('div');
-      div.className = 'restream-status-item';
-
-      var dotClass = 'restream-status-dot';
-      var statusText = 'OFF';
-      if (status === 'live') {
-        dotClass += ' live';
-        statusText = 'LIVE';
-      } else if (status === 'error') {
-        dotClass += ' error';
-        statusText = 'ERROR';
-      } else {
-        dotClass += ' off';
-        statusText = 'OFF';
-      }
-
-      var dot = document.createElement('span');
-      dot.className = dotClass;
-      div.appendChild(dot);
-
-      var nameEl = document.createElement('span');
-      nameEl.textContent = name;
-      div.appendChild(nameEl);
-
-      var statusEl = document.createElement('span');
-      statusEl.className = 'restream-status-text ' + status;
-      statusEl.textContent = statusText;
-      div.appendChild(statusEl);
-
-      if (status === 'error' && info.error) {
-        div.title = info.error;
-      }
-
-      container.appendChild(div);
-    });
-  }
-
-  function loadRestreamStatusFallback() {
-    authFetch('/api/stream-keys')
-      .then(function(r) { return r.json(); })
-      .then(function(data) {
-        var platforms = data.platforms || data;
-        var container = document.getElementById('restream-status-list');
-        container.innerHTML = '';
-        Object.entries(platforms).forEach(function(entry) {
-          var name = entry[0];
-          var config = entry[1];
-          var div = document.createElement('div');
-          div.className = 'restream-status-item';
-          div.innerHTML =
-            '<span class="restream-status-dot ' + (config.enabled ? 'on' : 'off') + '"></span>' +
-            '<span>' + escapeHtml(name) + '</span>' +
-            '<span class="restream-status-text off">' + (config.enabled ? 'READY' : 'OFF') + '</span>';
-          container.appendChild(div);
-        });
-        if (Object.keys(platforms).length === 0) {
-          container.innerHTML = '<div class="empty-state">No platforms</div>';
-        }
-      })
-      .catch(function() {});
-  }
-
-  loadRestreamStatusFallback();
+  // The WS-fed restream-STATUS widget (updateRestreamStatus /
+  // loadRestreamStatusFallback / lastRtmpHealth) now lives in restreamStatus.js
+  // (window.FRRestreamStatus), wired via FRRestreamStatus.init(...) below. The WS
+  // handleMessage dispatcher stays here and calls
+  // FRRestreamStatus.updateRestreamStatus(...); the boot-time fallback load is
+  // re-sourced as FRRestreamStatus.loadRestreamStatusFallback() in that wiring.
 
   // ============================
   // PLAYLISTS
@@ -1299,6 +1224,14 @@
   FRRestreamSettings.init({ authFetch: authFetch, log: log, showError: showError });
   FRRestreamSettings.loadRestreamSettings();
 
+  // Wire the WS-fed restream-STATUS widget module (restreamStatus.js /
+  // window.FRRestreamStatus) with the host services. init() just stores the deps
+  // (the cluster owns no buttons); the boot-time GET /api/stream-keys fallback is
+  // re-sourced here as an explicit loadRestreamStatusFallback() call to preserve
+  // the original boot order.
+  FRRestreamStatus.init({ authFetch: authFetch, log: log, showError: showError });
+  FRRestreamStatus.loadRestreamStatusFallback();
+
   // Wire the channel-strip DSP UI module (channelstrip.js /
   // window.FRChannelStrip) with the host services. init() captures the five
   // strip DOM refs (bypass/preset/badge/gate-LED/comp-GR), binds the bypass +
@@ -1372,7 +1305,8 @@
   // FRx.init calls. The restream auto-start control now lives in
   // restreamSettings.js (window.FRRestreamSettings), wired via
   // FRRestreamSettings.init(...) below. The WS-fed restream-STATUS widget
-  // (updateRestreamStatus / lastRtmpHealth) stays here.
+  // (updateRestreamStatus / lastRtmpHealth) now lives in restreamStatus.js
+  // (window.FRRestreamStatus), wired via FRRestreamStatus.init(...) below.
 
   // --- Broadcast Control ---
   // States: idle → arming → armed → broadcasting → live
@@ -3701,17 +3635,6 @@
       broadcastState: broadcastState,
       setMixMode: function (m) { currentMixMode = m; },
       setPlatformNames: function (a) { window.FRPlatforms.setCurrentPlatformNames(a); }
-    };
-    // Test-only restream-status hook: the updateRestreamStatus /
-    // loadRestreamStatusFallback cluster (render-only LED status per platform)
-    // plus get/set accessors for its owned write-only state (lastRtmpHealth).
-    // Accessor names match the C2 module return keys so extraction only renames
-    // the hook object. Guarded by window.__APP_TEST__ — inert in production.
-    window.__appRestreamStatus = {
-      updateRestreamStatus: updateRestreamStatus,
-      loadRestreamStatusFallback: loadRestreamStatusFallback,
-      getLastRtmpHealth: function () { return lastRtmpHealth; },
-      setLastRtmpHealth: function (v) { lastRtmpHealth = v; }
     };
   }
 

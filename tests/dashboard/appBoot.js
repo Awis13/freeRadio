@@ -42,6 +42,7 @@ const enhanceSettingsSrc = readFileSync(path.join(publicDir, 'enhanceSettings.js
 const restreamSettingsSrc = readFileSync(path.join(publicDir, 'restreamSettings.js'), 'utf8');
 const channelStripSrc = readFileSync(path.join(publicDir, 'channelstrip.js'), 'utf8');
 const pttSrc = readFileSync(path.join(publicDir, 'ptt.js'), 'utf8');
+const restreamStatusSrc = readFileSync(path.join(publicDir, 'restreamStatus.js'), 'utf8');
 const appSrc = readFileSync(path.join(publicDir, 'app.js'), 'utf8');
 
 /**
@@ -148,6 +149,7 @@ export function bootWindow() {
   dom.window.eval(restreamSettingsSrc);
   dom.window.eval(channelStripSrc);
   dom.window.eval(pttSrc);
+  dom.window.eval(restreamStatusSrc);
   let loadError = null;
   try {
     dom.window.eval(appSrc);
