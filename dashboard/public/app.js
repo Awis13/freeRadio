@@ -1123,6 +1123,14 @@
   loadTrackHistory();
   setInterval(loadTrackHistory, 15000);
 
+  // C1 characterization hook — track-history cluster (removed in C2 extraction).
+  if (typeof window !== 'undefined' && window.__APP_TEST__) {
+    window.__appTrackHistory = {
+      loadTrackHistory: loadTrackHistory,
+      renderTrackHistory: renderTrackHistory
+    };
+  }
+
   // ============================
   // RESTREAM STATUS WIDGET
   // ============================
