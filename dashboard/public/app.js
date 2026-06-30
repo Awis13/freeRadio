@@ -220,6 +220,20 @@
     }
   });
 
+  // Test-only hook: exposes the closure-private activeTab so the navigation pins
+  // can read it for assertions and drive the non-studio Space branch. The three
+  // handlers (tab-btn click, panel-toggle click, document keydown) are already
+  // bound to real DOM at boot, so pins drive them via real clicks / a dispatched
+  // keydown — activeTab is the only closure value tests need. Guarded by
+  // __APP_TEST__ — completely inert in production (flag unset). The accessor
+  // names match the C2 FRNavigation exports so the re-point is a pure swap.
+  if (typeof window !== 'undefined' && window.__APP_TEST__) {
+    window.__appNavigation = {
+      getActiveTab: function () { return activeTab; },
+      setActiveTab: function (v) { activeTab = v; }
+    };
+  }
+
   // --- Logging ---
   function log(msg) {
     var ts = new Date().toISOString().slice(11, 23);
