@@ -3467,6 +3467,16 @@
       setMixMode: function (m) { currentMixMode = m; },
       setPlatformNames: function (a) { window.FRPlatforms.setCurrentPlatformNames(a); }
     };
+    // Test-only WS reconnect handle: exposes the sole connection factory plus
+    // read access to the closure-held live socket and backoff delay, so the
+    // wsReconnectUI pins can drive onclose/onopen and assert the AS-IS backoff
+    // doubling (cap 10000) + reset-to-1000 sequence. Additive only; no
+    // production code path reads these — inert when __APP_TEST__ is unset.
+    window.__appWs = {
+      connectWs: connectWs,
+      getWs: function () { return ws; },
+      getWsReconnectDelay: function () { return wsReconnectDelay; }
+    };
   }
 
 })();
