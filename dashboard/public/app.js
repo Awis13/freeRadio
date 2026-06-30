@@ -2543,6 +2543,20 @@
   var azMain = null;
   var azL = null;
   var azR = null;
+
+  // Facade seam over the WebAudio graph nodes (core facade-foundation PR).
+  // Reads of these az* nodes route through these getters so a future PR can
+  // inject the audio graph without touching every call site. PURE indirection
+  // — each getter returns the same live var; zero behaviour change. There are
+  // no setters: azAudioCtx/azGainNode/azMain/azL/azR are assigned ONLY inside
+  // azInit/azInitAnalysers, which keep direct access, so no external writer
+  // needs a setter (unlike PR-1's setWs).
+  function getAudioCtx() { return azAudioCtx; }
+  function getGainNode() { return azGainNode; }
+  function getMainAnalyser() { return azMain; }
+  function getAzL() { return azL; }
+  function getAzR() { return azR; }
+
   var azMode = 'spectrum';
   var azAnimFrame = null;
   var azInited = false;
@@ -3491,6 +3505,17 @@
       getWs: getWs,
       setWs: setWs,
       getWsReconnectDelay: function () { return wsReconnectDelay; }
+    };
+    // Test-only WebAudio facade handle: exposes the five read-only graph
+    // getters so the analyzer-audio identity pins can assert getX() === the
+    // live var — null in jsdom where azInit never runs on boot. Additive only;
+    // inert when __APP_TEST__ is unset.
+    window.__appAudio = {
+      getAudioCtx: getAudioCtx,
+      getGainNode: getGainNode,
+      getMainAnalyser: getMainAnalyser,
+      getAzL: getAzL,
+      getAzR: getAzR
     };
   }
 
