@@ -195,6 +195,23 @@
     });
   })();
 
+  // Test-only hook: lets the jsdom characterization pins drive the auth cluster
+  // (authFetch / login-overlay / doLogin) and read+write authToken. Guarded by
+  // window.__APP_TEST__ — completely inert in production (flag unset). checkAuth
+  // is a named function EXPRESSION (above), so its name is out of scope here and
+  // cannot be exposed; its boot behaviour is pinned via the observable overlay
+  // state instead. Mirrors the window.__appHelpers / window.__appDrift hooks.
+  if (typeof window !== 'undefined' && window.__APP_TEST__) {
+    window.__appAuth = {
+      authFetch: authFetch,
+      showLoginOverlay: showLoginOverlay,
+      hideLoginOverlay: hideLoginOverlay,
+      doLogin: doLogin,
+      getAuthToken: function () { return authToken; },
+      setAuthToken: function (v) { authToken = v; }
+    };
+  }
+
   // --- Navigation (tab switching, collapsible panels, keyboard shortcuts) ---
   // Lives in navigation.js (window.FRNavigation), wired up via FRNavigation.init
   // below (which binds the three handlers and owns the activeTab state). The
