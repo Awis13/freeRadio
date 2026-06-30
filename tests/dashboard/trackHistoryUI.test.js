@@ -38,7 +38,7 @@ import { bootWindow, makeFetchStub, routeExact, flush } from './appBoot.js';
  */
 function boot() {
   const { win, doc } = bootWindow();
-  const th = win.__appTrackHistory;
+  const th = win.FRTrackHistory;
   return { win, doc, th };
 }
 
@@ -49,7 +49,7 @@ function withFetch(win, routes) {
   return stub;
 }
 
-describe('track-history UI characterization (window.__appTrackHistory)', () => {
+describe('track-history UI characterization (window.FRTrackHistory)', () => {
   it('exposes the 2 cluster fns', () => {
     const { th } = boot();
     expect(th).toBeTruthy();

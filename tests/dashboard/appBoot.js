@@ -43,6 +43,7 @@ const restreamSettingsSrc = readFileSync(path.join(publicDir, 'restreamSettings.
 const channelStripSrc = readFileSync(path.join(publicDir, 'channelstrip.js'), 'utf8');
 const pttSrc = readFileSync(path.join(publicDir, 'ptt.js'), 'utf8');
 const restreamStatusSrc = readFileSync(path.join(publicDir, 'restreamStatus.js'), 'utf8');
+const trackHistorySrc = readFileSync(path.join(publicDir, 'trackhistory.js'), 'utf8');
 const appSrc = readFileSync(path.join(publicDir, 'app.js'), 'utf8');
 
 /**
@@ -150,6 +151,7 @@ export function bootWindow() {
   dom.window.eval(channelStripSrc);
   dom.window.eval(pttSrc);
   dom.window.eval(restreamStatusSrc);
+  dom.window.eval(trackHistorySrc);
   let loadError = null;
   try {
     dom.window.eval(appSrc);

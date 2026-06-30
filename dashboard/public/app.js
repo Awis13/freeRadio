@@ -945,7 +945,7 @@
         if (data.ok) {
           log('queue: skipped track');
           setTimeout(loadQueue, 1000);
-          setTimeout(loadTrackHistory, 2000);
+          setTimeout(FRTrackHistory.loadTrackHistory, 2000);
         }
       })
       .catch(function(e) { showError('Skip failed: ' + e); });
@@ -1068,68 +1068,11 @@
   // ============================
   // TRACK HISTORY (Studio sidebar)
   // ============================
-  function loadTrackHistory() {
-    authFetch('/api/history?limit=10')
-      .then(function(r) { return r.json(); })
-      .then(function(entries) { renderTrackHistory(entries); })
-      .catch(function() {});
-  }
-
-  function renderTrackHistory(entries) {
-    var container = document.getElementById('track-history-list');
-    container.innerHTML = '';
-
-    if (!entries || entries.length === 0) {
-      container.innerHTML = '<div class="empty-state">No history yet</div>';
-      return;
-    }
-
-    // Show most recent first
-    var reversed = entries.slice().reverse();
-    reversed.forEach(function(entry, idx) {
-      var div = document.createElement('div');
-      div.className = 'track-history-item';
-
-      var name = cleanTrackName(entry.track);
-      var nameEl = document.createElement('span');
-      nameEl.className = 'track-history-name';
-      nameEl.textContent = name;
-      nameEl.title = name;
-      div.appendChild(nameEl);
-
-      if (idx === 0) {
-        var nowBadge = document.createElement('span');
-        nowBadge.className = 'now-badge';
-        nowBadge.textContent = 'NOW';
-        div.appendChild(nowBadge);
-      } else {
-        var timeEl = document.createElement('span');
-        timeEl.className = 'track-history-time';
-        timeEl.textContent = timeAgo(entry.ts);
-        div.appendChild(timeEl);
-      }
-
-      if (entry.bpm) {
-        var bpmEl = document.createElement('span');
-        bpmEl.className = 'track-history-bpm';
-        bpmEl.textContent = Math.round(entry.bpm);
-        div.appendChild(bpmEl);
-      }
-
-      container.appendChild(div);
-    });
-  }
-
-  loadTrackHistory();
-  setInterval(loadTrackHistory, 15000);
-
-  // C1 characterization hook — track-history cluster (removed in C2 extraction).
-  if (typeof window !== 'undefined' && window.__APP_TEST__) {
-    window.__appTrackHistory = {
-      loadTrackHistory: loadTrackHistory,
-      renderTrackHistory: renderTrackHistory
-    };
-  }
+  // The track-history sidebar (loadTrackHistory / renderTrackHistory) now lives
+  // in trackhistory.js (window.FRTrackHistory), wired via FRTrackHistory.init(...)
+  // below. init() runs the boot poll (loadTrackHistory() + 15s interval). The
+  // queue skip handlers re-source the post-skip refresh as
+  // FRTrackHistory.loadTrackHistory().
 
   // ============================
   // RESTREAM STATUS WIDGET
@@ -1239,6 +1182,12 @@
   // the original boot order.
   FRRestreamStatus.init({ authFetch: authFetch, log: log, showError: showError });
   FRRestreamStatus.loadRestreamStatusFallback();
+
+  // Wire the track-history sidebar module (trackhistory.js /
+  // window.FRTrackHistory) with the host services. init() stores the deps AND
+  // runs the boot poll (loadTrackHistory() + setInterval(loadTrackHistory,
+  // 15000)), so no separate boot call is needed here.
+  FRTrackHistory.init({ authFetch: authFetch, log: log, showError: showError });
 
   // Wire the channel-strip DSP UI module (channelstrip.js /
   // window.FRChannelStrip) with the host services. init() captures the five
@@ -1423,7 +1372,7 @@
           if (data.ok) {
             log('queue: skipped track');
             setTimeout(loadQueue, 1000);
-            setTimeout(loadTrackHistory, 2000);
+            setTimeout(FRTrackHistory.loadTrackHistory, 2000);
           }
         })
         .catch(function(e) { showError('Skip failed: ' + e); });
