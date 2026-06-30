@@ -3702,6 +3702,17 @@
       setMixMode: function (m) { currentMixMode = m; },
       setPlatformNames: function (a) { window.FRPlatforms.setCurrentPlatformNames(a); }
     };
+    // Test-only restream-status hook: the updateRestreamStatus /
+    // loadRestreamStatusFallback cluster (render-only LED status per platform)
+    // plus get/set accessors for its owned write-only state (lastRtmpHealth).
+    // Accessor names match the C2 module return keys so extraction only renames
+    // the hook object. Guarded by window.__APP_TEST__ — inert in production.
+    window.__appRestreamStatus = {
+      updateRestreamStatus: updateRestreamStatus,
+      loadRestreamStatusFallback: loadRestreamStatusFallback,
+      getLastRtmpHealth: function () { return lastRtmpHealth; },
+      setLastRtmpHealth: function (v) { lastRtmpHealth = v; }
+    };
   }
 
 })();
