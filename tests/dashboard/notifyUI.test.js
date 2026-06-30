@@ -39,7 +39,7 @@ import { bootWindow } from './appBoot.js';
  */
 function boot() {
   const { win, doc } = bootWindow();
-  const n = win.__appNotify;
+  const n = win.FRNotify;
   return { win, doc, n };
 }
 
@@ -48,7 +48,7 @@ afterEach(() => {
   vi.useRealTimers();
 });
 
-describe('notify UI characterization (window.__appNotify)', () => {
+describe('notify UI characterization (window.FRNotify)', () => {
   it('exposes log/showError + logs & logsPaused getter/setter', () => {
     const { n } = boot();
     expect(n).toBeTruthy();

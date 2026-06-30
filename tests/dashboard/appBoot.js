@@ -46,6 +46,7 @@ const restreamStatusSrc = readFileSync(path.join(publicDir, 'restreamStatus.js')
 const trackHistorySrc = readFileSync(path.join(publicDir, 'trackhistory.js'), 'utf8');
 const navigationSrc = readFileSync(path.join(publicDir, 'navigation.js'), 'utf8');
 const genericModalSrc = readFileSync(path.join(publicDir, 'genericModal.js'), 'utf8');
+const notifySrc = readFileSync(path.join(publicDir, 'notify.js'), 'utf8');
 const appSrc = readFileSync(path.join(publicDir, 'app.js'), 'utf8');
 
 /**
@@ -156,6 +157,7 @@ export function bootWindow() {
   dom.window.eval(trackHistorySrc);
   dom.window.eval(navigationSrc);
   dom.window.eval(genericModalSrc);
+  dom.window.eval(notifySrc);
   let loadError = null;
   try {
     dom.window.eval(appSrc);

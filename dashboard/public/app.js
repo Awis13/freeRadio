@@ -21,11 +21,23 @@
     };
   }
 
+  // --- Logging + error-toast (notify.js / window.FRNotify, loaded before this
+  // script) ---
+  // log() and showError() are sourced from FRNotify as the single source of
+  // truth. The names are kept identical so every existing call site — and every
+  // sibling init({ log, showError }) pass — is untouched. These aliases precede
+  // the first log/showError use (nothing above this line calls them), so the
+  // former hoisted `function log` / `function showError` declarations are safely
+  // replaced by these var bindings. FRNotify resolves #log / #error-banner via
+  // getElementById at call time, so both work immediately (log() fires early
+  // during WS connect, long before FRNotify.init wires the debug controls).
+  var log = window.FRNotify.log;
+  var showError = window.FRNotify.showError;
+
   // --- DOM refs ---
   var studioPlayer = document.getElementById('studio-player');
   var modeTag = document.getElementById('mode-tag');
   var uptimeEl = document.getElementById('uptime');
-  var errorBanner = document.getElementById('error-banner');
   var statListeners = document.getElementById('stat-listeners');
   var statAudioBr = document.getElementById('stat-audio-br');
   var statFps = document.getElementById('stat-fps');
@@ -34,9 +46,8 @@
   var statTime = document.getElementById('stat-time');
   // music-list / music-count / visuals-list / visuals-count refs moved into
   // filemgmt.js (window.FRFileMgmt), which resolves them via getElementById.
-  var logEl = document.getElementById('log');
-  var dbgClear = document.getElementById('dbg-clear');
-  var dbgPause = document.getElementById('dbg-pause');
+  // #log / #dbg-clear / #dbg-pause refs moved into notify.js (window.FRNotify),
+  // which resolves them via getElementById.
 
   // --- Studio DOM refs ---
   var studioAudioTrack = document.getElementById('studio-audio-track');
@@ -67,8 +78,7 @@
 
   // --- State ---
   var bpmMap = {};
-  var logsPaused = false;
-  var logs = [];
+  // logsPaused / logs (the #log ring buffer) moved into notify.js (window.FRNotify).
   var startTime = Date.now();
   // musicFiles / visualFiles moved into filemgmt.js (window.FRFileMgmt); read via
   // FRFileMgmt.getMusicFiles() / getVisualFiles().
@@ -191,50 +201,11 @@
   // per-tab lazy loaders are window.FRX.* module methods read directly off
   // window by the module.
 
-  // --- Logging ---
-  function log(msg) {
-    var ts = new Date().toISOString().slice(11, 23);
-    console.log('[S23 ' + ts + '] ' + msg);
-    logs.push('[' + ts + '] ' + msg);
-    if (logs.length > 500) logs.shift();
-    if (!logsPaused) {
-      logEl.textContent = logs.join('\n');
-      logEl.scrollTop = logEl.scrollHeight;
-    }
-  }
-
-  dbgClear.onclick = function () { logs.length = 0; logEl.textContent = ''; };
-  dbgPause.onclick = function () {
-    logsPaused = !logsPaused;
-    dbgPause.textContent = logsPaused ? 'Resume' : 'Pause';
-    if (!logsPaused) {
-      logEl.textContent = logs.join('\n');
-      logEl.scrollTop = logEl.scrollHeight;
-    }
-  };
-
-  function showError(msg) {
-    errorBanner.textContent = msg;
-    errorBanner.classList.add('visible');
-    log('ERROR: ' + msg);
-    setTimeout(function() { errorBanner.classList.remove('visible'); }, 5000);
-  }
-
-  // Test-only hook: lets the jsdom characterization pins drive the logging +
-  // error-toast cluster (log/showError) and read/write its ring-buffer state.
-  // Guarded by window.__APP_TEST__ — completely inert in production (flag unset).
-  // Accessors read live closure state (NOT value snapshots) so getLogs().length
-  // pins the ring-buffer trim + pause buffering against the live `logs` array.
-  if (typeof window !== 'undefined' && window.__APP_TEST__) {
-    window.__appNotify = {
-      log: log,
-      showError: showError,
-      getLogs: function () { return logs; },
-      setLogs: function (a) { logs = a; },
-      getLogsPaused: function () { return logsPaused; },
-      setLogsPaused: function (v) { logsPaused = v; }
-    };
-  }
+  // --- Logging + error-toast ---
+  // log() / showError() + the #log ring buffer, #dbg-clear/#dbg-pause handlers
+  // and showError's transient #error-banner toast moved into notify.js
+  // (window.FRNotify). The `log` / `showError` aliases at the top of this IIFE
+  // resolve to FRNotify; FRNotify.init() (wired below) binds the debug controls.
 
   // --- Uptime ---
   setInterval(function () {
@@ -611,6 +582,12 @@
   // (both read at call time, never cached). renderTrackSelector / loadOverlayAssets
   // are app.js functions (hoisted declarations) called back into after a music load
   // / overlay-asset upload.
+  // Wire the notify UI module (notify.js / window.FRNotify). It takes no host
+  // services (pure DOM); init() binds the #dbg-clear / #dbg-pause controls.
+  // log()/showError() already work pre-init (resolved via the aliases above),
+  // so this position is not load-bearing — it only binds the debug buttons.
+  FRNotify.init({});
+
   FRFileMgmt.init({
     authFetch: authFetch, log: log, showError: showError,
     showLoginOverlay: showLoginOverlay,
