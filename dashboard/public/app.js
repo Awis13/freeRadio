@@ -73,7 +73,6 @@
   // musicFiles / visualFiles moved into filemgmt.js (window.FRFileMgmt); read via
   // FRFileMgmt.getMusicFiles() / getVisualFiles().
   var processedVisualFiles = [];
-  var activeTab = 'studio';
   var listenerHistory = [];
   var peakListeners = 0;
 
@@ -186,53 +185,11 @@
     });
   })();
 
-  // --- Tab Switching ---
-  document.querySelectorAll('.tab-btn').forEach(function(btn) {
-    btn.addEventListener('click', function() {
-      var tab = btn.dataset.tab;
-      activeTab = tab;
-      document.querySelectorAll('.tab-btn').forEach(function(b) { b.classList.remove('active'); });
-      btn.classList.add('active');
-      document.querySelectorAll('.tab-content').forEach(function(c) { c.classList.remove('active'); });
-      document.getElementById('tab-' + tab).classList.add('active');
-      if (tab === 'playlists') FRPlaylists.loadPlaylists();
-      if (tab === 'schedule') { FRSchedule.loadSchedule(); FRSchedule.loadPlaylistsForSelect(); }
-      if (tab === 'visuals') { FRVisualProfiles.loadVisualProfiles(); FRVideoPlaylists.loadVideoPlaylists(); FROverlays.loadOverlays(); FROverlays.loadOverlayAssets(); }
-      if (tab === 'analytics') FRAnalytics.loadAnalytics();
-    });
-  });
-
-  // --- Collapsible panels ---
-  document.querySelectorAll('.panel-toggle').forEach(function(head) {
-    head.addEventListener('click', function(e) {
-      if (e.target.closest('.dbg-actions')) return;
-      var panel = head.closest('.panel-collapsible');
-      panel.classList.toggle('collapsed');
-    });
-  });
-
-  // --- Keyboard shortcuts ---
-  document.addEventListener('keydown', function(e) {
-    if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA' || e.target.tagName === 'SELECT') return;
-    if (e.code === 'Space' && activeTab === 'studio') {
-      e.preventDefault();
-      skipBtn.click();
-    }
-  });
-
-  // Test-only hook: exposes the closure-private activeTab so the navigation pins
-  // can read it for assertions and drive the non-studio Space branch. The three
-  // handlers (tab-btn click, panel-toggle click, document keydown) are already
-  // bound to real DOM at boot, so pins drive them via real clicks / a dispatched
-  // keydown — activeTab is the only closure value tests need. Guarded by
-  // __APP_TEST__ — completely inert in production (flag unset). The accessor
-  // names match the C2 FRNavigation exports so the re-point is a pure swap.
-  if (typeof window !== 'undefined' && window.__APP_TEST__) {
-    window.__appNavigation = {
-      getActiveTab: function () { return activeTab; },
-      setActiveTab: function (v) { activeTab = v; }
-    };
-  }
+  // --- Navigation (tab switching, collapsible panels, keyboard shortcuts) ---
+  // Lives in navigation.js (window.FRNavigation), wired up via FRNavigation.init
+  // below (which binds the three handlers and owns the activeTab state). The
+  // per-tab lazy loaders are window.FRX.* module methods read directly off
+  // window by the module.
 
   // --- Logging ---
   function log(msg) {
@@ -1225,6 +1182,11 @@
     getListenerHistory: function () { return listenerHistory; },
     getPeakListeners: function () { return peakListeners; }
   });
+
+  // Wire the navigation UI module (navigation.js / window.FRNavigation). init()
+  // binds the tab-switch / collapsible-panel / Space-shortcut handlers and owns
+  // the activeTab state. No deps: the per-tab loaders are window.FRX.* methods.
+  FRNavigation.init({});
 
   // ============================
   // SCHEDULE

@@ -44,6 +44,7 @@ const channelStripSrc = readFileSync(path.join(publicDir, 'channelstrip.js'), 'u
 const pttSrc = readFileSync(path.join(publicDir, 'ptt.js'), 'utf8');
 const restreamStatusSrc = readFileSync(path.join(publicDir, 'restreamStatus.js'), 'utf8');
 const trackHistorySrc = readFileSync(path.join(publicDir, 'trackhistory.js'), 'utf8');
+const navigationSrc = readFileSync(path.join(publicDir, 'navigation.js'), 'utf8');
 const appSrc = readFileSync(path.join(publicDir, 'app.js'), 'utf8');
 
 /**
@@ -152,6 +153,7 @@ export function bootWindow() {
   dom.window.eval(pttSrc);
   dom.window.eval(restreamStatusSrc);
   dom.window.eval(trackHistorySrc);
+  dom.window.eval(navigationSrc);
   let loadError = null;
   try {
     dom.window.eval(appSrc);

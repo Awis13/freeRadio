@@ -45,7 +45,7 @@ import { bootWindow } from './appBoot.js';
 /** Boot a fresh window and grab the navigation hook. */
 function boot() {
   const { win, doc } = bootWindow();
-  const nav = win.__appNavigation;
+  const nav = win.FRNavigation;
   return { win, doc, nav };
 }
 
@@ -116,7 +116,7 @@ describe('navigation UI characterization (window.__appNavigation)', () => {
         expect(activePanes[0].id).toBe(paneId);
 
         // activeTab updated
-        expect(win.__appNavigation.getActiveTab()).toBe(tab);
+        expect(win.FRNavigation.getActiveTab()).toBe(tab);
 
         // ONLY the expected loaders fired, each exactly once
         for (const name of expectedLoaders) {
