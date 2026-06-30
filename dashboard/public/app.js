@@ -2173,8 +2173,8 @@
     if (micStream) { micStream.getTracks().forEach(function(t) { t.stop(); }); micStream = null; }
 
     // Release duck if active
-    if (duckActive && azGainNode && azAudioCtx && !studioPlayer.muted) {
-      azGainNode.gain.setTargetAtTime(monitorMusicGain * mmMasterGain, azAudioCtx.currentTime, 0.05);
+    if (duckActive && getGainNode() && getAudioCtx() && !studioPlayer.muted) {
+      getGainNode().gain.setTargetAtTime(monitorMusicGain * mmMasterGain, getAudioCtx().currentTime, 0.05);
       duckActive = false;
     }
 
@@ -2212,8 +2212,8 @@
       });
     }
     // Music AudioContext (analyzer)
-    if (azAudioCtx && azAudioCtx.setSinkId) {
-      azAudioCtx.setSinkId(outputId).catch(function(e) {
+    if (getAudioCtx() && getAudioCtx().setSinkId) {
+      getAudioCtx().setSinkId(outputId).catch(function(e) {
         log('monitor: music output error — ' + e.message);
       });
     }
@@ -2262,7 +2262,7 @@
   function startMonitorMeters() {
     if (mmMeterRAF) cancelAnimationFrame(mmMeterRAF);
     var micData = micAnalyser ? new Uint8Array(micAnalyser.frequencyBinCount) : null;
-    var musicData = azMain ? new Uint8Array(azMain.frequencyBinCount) : null;
+    var musicData = getMainAnalyser() ? new Uint8Array(getMainAnalyser().frequencyBinCount) : null;
 
     function draw() {
       if (!micActive) return;
@@ -2278,8 +2278,8 @@
       }
 
       // MUSIC meter — read from azMain (main stream analyzer)
-      if (azMain && musicData && !studioPlayer.muted) {
-        musicLevel = computeLevels(azMain, musicData);
+      if (getMainAnalyser() && musicData && !studioPlayer.muted) {
+        musicLevel = computeLevels(getMainAnalyser(), musicData);
         var scaledRms = musicLevel.rms * monitorMusicGain;
         var scaledPeak = musicLevel.peak * monitorMusicGain;
         drawMeter(mmMusicMeterCtx, mmMusicMeterCanvas, scaledRms, scaledPeak);
@@ -2297,20 +2297,20 @@
       drawMeter(mmMasterMeterCtx, mmMasterMeterCanvas, masterRms, masterPeak);
 
       // AUTO-DUCK — envelope follower via setTargetAtTime
-      if (duckEnabled && micActive && azGainNode && azAudioCtx && !studioPlayer.muted) {
+      if (duckEnabled && micActive && getGainNode() && getAudioCtx() && !studioPlayer.muted) {
         var speeds = duckSpeeds[duckSpeed] || duckSpeeds.medium;
         if (micLevel.rms > duckThreshold) {
           // Voice detected — duck music
           if (!duckActive) {
             var duckedGain = monitorMusicGain * mmMasterGain * duckMultiplier;
-            azGainNode.gain.setTargetAtTime(duckedGain, azAudioCtx.currentTime, speeds.attack);
+            getGainNode().gain.setTargetAtTime(duckedGain, getAudioCtx().currentTime, speeds.attack);
             duckActive = true;
           }
         } else {
           // Voice gone — restore
           if (duckActive) {
             var normalGain = monitorMusicGain * mmMasterGain;
-            azGainNode.gain.setTargetAtTime(normalGain, azAudioCtx.currentTime, speeds.release);
+            getGainNode().gain.setTargetAtTime(normalGain, getAudioCtx().currentTime, speeds.release);
             duckActive = false;
           }
         }
@@ -2370,8 +2370,8 @@
     mmDuckBtn.addEventListener('click', function() {
       duckEnabled = !duckEnabled;
       // Release duck if disabling
-      if (!duckEnabled && duckActive && azGainNode && azAudioCtx && !studioPlayer.muted) {
-        azGainNode.gain.setTargetAtTime(monitorMusicGain * mmMasterGain, azAudioCtx.currentTime, 0.05);
+      if (!duckEnabled && duckActive && getGainNode() && getAudioCtx() && !studioPlayer.muted) {
+        getGainNode().gain.setTargetAtTime(monitorMusicGain * mmMasterGain, getAudioCtx().currentTime, 0.05);
         duckActive = false;
       }
       updateMonitorUI();
@@ -2393,8 +2393,8 @@
     mmMusicFader.addEventListener('input', function() {
       monitorMusicGain = parseInt(mmMusicFader.value) / 100;
       if (mmMusicVal) mmMusicVal.textContent = parseInt(mmMusicFader.value) + '%';
-      if (azGainNode && azAudioCtx && !studioPlayer.muted) {
-        azGainNode.gain.setValueAtTime(monitorMusicGain * mmMasterGain, azAudioCtx.currentTime);
+      if (getGainNode() && getAudioCtx() && !studioPlayer.muted) {
+        getGainNode().gain.setValueAtTime(monitorMusicGain * mmMasterGain, getAudioCtx().currentTime);
       }
     });
   }
@@ -2405,8 +2405,8 @@
       mmMasterGain = parseInt(mmMasterFader.value) / 100;
       if (mmMasterVal) mmMasterVal.textContent = parseInt(mmMasterFader.value) + '%';
       // Update music gain
-      if (azGainNode && azAudioCtx && !studioPlayer.muted) {
-        azGainNode.gain.setValueAtTime(monitorMusicGain * mmMasterGain, azAudioCtx.currentTime);
+      if (getGainNode() && getAudioCtx() && !studioPlayer.muted) {
+        getGainNode().gain.setValueAtTime(monitorMusicGain * mmMasterGain, getAudioCtx().currentTime);
       }
       // Update mic monitor gain
       if (micMonitorNode && micMonitorActive) {
@@ -2846,9 +2846,9 @@
     for (var j = 1; j <= azRingLen; j++) {
       var idx = (azRingHead - j + AZ_RING_CAP) % AZ_RING_CAP;
       if (azRingTs[idx] <= targetTs) {
-        azMain._freqTarget.set(azRingSpec[idx]);
-        azL._timeTarget.set(azRingWL[idx]);
-        azR._timeTarget.set(azRingWR[idx]);
+        getMainAnalyser()._freqTarget.set(azRingSpec[idx]);
+        getAzL()._timeTarget.set(azRingWL[idx]);
+        getAzR()._timeTarget.set(azRingWR[idx]);
         return;
       }
     }
@@ -2916,17 +2916,17 @@
 
     function playChunk(buf) {
       if (gen !== azStreamGen) return; // stale — stream already restarted
-      var src = azAudioCtx.createBufferSource();
+      var src = getAudioCtx().createBufferSource();
       src.buffer = buf;
-      src.connect(azMain);
+      src.connect(getMainAnalyser());
       if (buf.numberOfChannels >= 2) {
-        var sp = azAudioCtx.createChannelSplitter(2);
+        var sp = getAudioCtx().createChannelSplitter(2);
         src.connect(sp);
-        sp.connect(azL, 0);
-        sp.connect(azR, 1);
+        sp.connect(getAzL(), 0);
+        sp.connect(getAzR(), 1);
       } else {
-        src.connect(azL);
-        src.connect(azR);
+        src.connect(getAzL());
+        src.connect(getAzR());
       }
       src.start(0); // immediately — delay already handled in setTimeout
     }
@@ -2955,7 +2955,7 @@
             total = 0;
 
             var delayMs = azGetHlsDelay() * 1000;
-            azAudioCtx.decodeAudioData(merged.buffer).then(function(buf) {
+            getAudioCtx().decodeAudioData(merged.buffer).then(function(buf) {
               if (gen !== azStreamGen) return;
               setTimeout(function() { playChunk(buf); }, delayMs);
               if (!logged) {
@@ -3024,9 +3024,9 @@
   function setPlayerMuted(muted) {
     if (!muted && !userInteracted) return; // never unmute without user gesture
     studioPlayer.muted = muted;
-    if (azGainNode && azAudioCtx) {
+    if (getGainNode() && getAudioCtx()) {
       // Use monitorMusicGain * mmMasterGain instead of hardcoded 1
-      azGainNode.gain.setValueAtTime(muted ? 0 : monitorMusicGain * mmMasterGain, azAudioCtx.currentTime);
+      getGainNode().gain.setValueAtTime(muted ? 0 : monitorMusicGain * mmMasterGain, getAudioCtx().currentTime);
     }
   }
 
@@ -3046,7 +3046,7 @@
   // --- Main loop ---
   function azLoop() {
     azAnimFrame = requestAnimationFrame(azLoop);
-    if (!azInited || !azMain || !azCtx || azW < 1 || azH < 1) return;
+    if (!azInited || !getMainAnalyser() || !azCtx || azW < 1 || azH < 1) return;
     if (azServerFFT) azPickDelayedFrame();
     switch (azMode) {
       case 'spectrum': azDrawSpectrum(); break;
@@ -3074,9 +3074,9 @@
   // --- SPECTRUM ---
   function azDrawSpectrum() {
     var ctx = azCtx, w = azW, h = azH;
-    var bufLen = azMain.frequencyBinCount;
+    var bufLen = getMainAnalyser().frequencyBinCount;
     var data = new Uint8Array(bufLen);
-    azMain.getByteFrequencyData(data);
+    getMainAnalyser().getByteFrequencyData(data);
 
     ctx.clearRect(0, 0, w, h);
     azDrawGrid(ctx, w, h);
@@ -3084,7 +3084,7 @@
     var numBars = 64;
     var barW = w / numBars;
     var gap = 1;
-    var sr = azAudioCtx.sampleRate;
+    var sr = getAudioCtx().sampleRate;
     var logMin = Math.log10(20);
     var logMax = Math.log10(sr / 2);
     var usableH = h - 14;
@@ -3152,10 +3152,10 @@
   // --- SPECTROGRAM ---
   function azDrawSpectrogram() {
     var ctx = azCtx, w = azW, h = azH;
-    var bufLen = azMain.frequencyBinCount;
+    var bufLen = getMainAnalyser().frequencyBinCount;
     var data = new Uint8Array(bufLen);
-    azMain.getByteFrequencyData(data);
-    var sr = azAudioCtx.sampleRate;
+    getMainAnalyser().getByteFrequencyData(data);
+    var sr = getAudioCtx().sampleRate;
     var logMin = Math.log10(20);
     var logMax = Math.log10(sr / 2);
 
@@ -3208,13 +3208,13 @@
   // --- SCOPE (Vectorscope) ---
   function azDrawScope() {
     var ctx = azCtx, w = azW, h = azH;
-    if (!azL || !azR) return;
+    if (!getAzL() || !getAzR()) return;
 
-    var bufLen = azL.fftSize;
+    var bufLen = getAzL().fftSize;
     var dataL = new Float32Array(bufLen);
     var dataR = new Float32Array(bufLen);
-    azL.getFloatTimeDomainData(dataL);
-    azR.getFloatTimeDomainData(dataR);
+    getAzL().getFloatTimeDomainData(dataL);
+    getAzR().getFloatTimeDomainData(dataR);
 
     // Phosphor decay
     ctx.fillStyle = 'rgba(5,10,14,0.18)';
@@ -3273,13 +3273,13 @@
   // --- LEVELS ---
   function azDrawLevels() {
     var ctx = azCtx, w = azW, h = azH;
-    if (!azL || !azR) return;
+    if (!getAzL() || !getAzR()) return;
 
-    var bufLen = azL.fftSize;
+    var bufLen = getAzL().fftSize;
     var dataL = new Float32Array(bufLen);
     var dataR = new Float32Array(bufLen);
-    azL.getFloatTimeDomainData(dataL);
-    azR.getFloatTimeDomainData(dataR);
+    getAzL().getFloatTimeDomainData(dataL);
+    getAzR().getFloatTimeDomainData(dataR);
 
     ctx.clearRect(0, 0, w, h);
     azDrawGrid(ctx, w, h);
