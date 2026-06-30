@@ -220,6 +220,22 @@
     setTimeout(function() { errorBanner.classList.remove('visible'); }, 5000);
   }
 
+  // Test-only hook: lets the jsdom characterization pins drive the logging +
+  // error-toast cluster (log/showError) and read/write its ring-buffer state.
+  // Guarded by window.__APP_TEST__ — completely inert in production (flag unset).
+  // Accessors read live closure state (NOT value snapshots) so getLogs().length
+  // pins the ring-buffer trim + pause buffering against the live `logs` array.
+  if (typeof window !== 'undefined' && window.__APP_TEST__) {
+    window.__appNotify = {
+      log: log,
+      showError: showError,
+      getLogs: function () { return logs; },
+      setLogs: function (a) { logs = a; },
+      getLogsPaused: function () { return logsPaused; },
+      setLogsPaused: function (v) { logsPaused = v; }
+    };
+  }
+
   // --- Uptime ---
   setInterval(function () {
     var s = Math.floor((Date.now() - startTime) / 1000);
