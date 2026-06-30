@@ -2093,6 +2093,20 @@
     if (e.target === genericModal) closeGenericModal();
   };
 
+  // Test-only hook: lets the jsdom characterization pins drive the generic-modal
+  // cluster (openGenericModal / window.closeGenericModal / the genericModalCallback
+  // state) while it still lives in this IIFE closure. Member names match the C2
+  // module's public surface so the re-point flips only the accessor root and leaves
+  // assertions byte-identical. Guarded by window.__APP_TEST__ — inert in production.
+  if (typeof window !== 'undefined' && window.__APP_TEST__) {
+    window.__appGenericModal = {
+      openGenericModal: openGenericModal,
+      closeGenericModal: function () { return window.closeGenericModal(); },
+      getGenericModalCallback: function () { return genericModalCallback; },
+      setGenericModalCallback: function (v) { genericModalCallback = v; },
+    };
+  }
+
   // ============================================================
   // MONITOR MIXER — Talk Over mode + Live/AFK browser mic
   // ============================================================
