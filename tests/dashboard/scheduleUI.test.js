@@ -68,7 +68,7 @@ function withFetch(win, routes) {
   return stub;
 }
 
-describe('schedule UI characterization (window.__appSchedule)', () => {
+describe('schedule UI characterization (window.FRSchedule)', () => {
   it('exposes the 8 fns + the 3 state accessors', () => {
     const { sched } = boot();
     expect(sched).toBeTruthy();

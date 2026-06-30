@@ -55,7 +55,7 @@ function withFetch(win, routes) {
   return stub;
 }
 
-describe('restream-status UI characterization (window.__appRestreamStatus)', () => {
+describe('restream-status UI characterization (window.FRRestreamStatus)', () => {
   it('exposes the 2 fns + lastRtmpHealth getter/setter', () => {
     const { rs } = boot();
     expect(rs).toBeTruthy();

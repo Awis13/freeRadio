@@ -53,7 +53,7 @@ function withFetch(win, routes) {
   return stub;
 }
 
-describe('platforms / stream-keys UI characterization (window.__appPlatforms)', () => {
+describe('platforms / stream-keys UI characterization (window.FRPlatforms)', () => {
   it('exposes the domain fns + state getters/setters; save/close are window globals', () => {
     const { win, hook } = boot();
     expect(hook).toBeTruthy();

@@ -52,7 +52,7 @@ function withFetch(win, routes) {
   return stub;
 }
 
-describe('quality-settings UI characterization (window.__appQuality)', () => {
+describe('quality-settings UI characterization (window.FRQuality)', () => {
   it('exposes loadQuality', () => {
     const { q } = boot();
     expect(q).toBeTruthy();

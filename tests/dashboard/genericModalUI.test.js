@@ -41,7 +41,7 @@ function boot() {
   return { win, doc, gm };
 }
 
-describe('generic-modal UI characterization (window.__appGenericModal)', () => {
+describe('generic-modal UI characterization (window.FRGenericModal)', () => {
   it('exposes openGenericModal/closeGenericModal + callback getter/setter', () => {
     const { gm } = boot();
     expect(gm).toBeTruthy();

@@ -76,7 +76,7 @@ function totalCalls(calls) {
   return Object.keys(calls).reduce((n, k) => n + calls[k], 0);
 }
 
-describe('navigation UI characterization (window.__appNavigation)', () => {
+describe('navigation UI characterization (window.FRNavigation)', () => {
   it('exposes the activeTab get/set accessors and defaults to "studio"', () => {
     const { nav } = boot();
     expect(nav).toBeTruthy();

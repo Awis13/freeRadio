@@ -51,7 +51,7 @@ function withFetch(win, routes) {
   return stub;
 }
 
-describe('video-playlists UI characterization (window.__appVideoPlaylists)', () => {
+describe('video-playlists UI characterization (window.FRVideoPlaylists)', () => {
   it('exposes the 5 fns + selection getter/setter', () => {
     const { vpl } = boot();
     expect(vpl).toBeTruthy();
