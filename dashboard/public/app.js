@@ -460,7 +460,7 @@
     }
 
     // Reconnect WebSocket if dead
-    if (!ws || ws.readyState > 1) {
+    if (!getWs() || getWs().readyState > 1) {
       log('PAGE resume: WS dead, reconnecting');
       wsReconnectDelay = 1000;
       connectWs();
@@ -472,7 +472,7 @@
     if (e.persisted) {
       log('PAGE restored from bfcache');
       restartPlayer('bfcache');
-      if (!ws || ws.readyState > 1) {
+      if (!getWs() || getWs().readyState > 1) {
         wsReconnectDelay = 1000;
         connectWs();
       }
@@ -495,7 +495,7 @@
   // stay app.js-resident. checkAuth() then runs the boot auth check (was an IIFE in
   // app.js): empty/invalid token -> showLoginOverlay, valid -> hideLoginOverlay.
   FRAuth.init({ onLogin: function () {
-    if (ws) { try { ws.close(); } catch (e) {} }
+    if (getWs()) { try { getWs().close(); } catch (e) {} }
     connectWs();
     FRFileMgmt.loadFileList('music');
     FRFileMgmt.loadFileList('visuals');
@@ -523,44 +523,53 @@
   var wsReconnectDelay = 1000;
   var wsReconnectTimer = null;
 
+  // Facade seam over the shared-mutable `ws` socket handle (C2 of the core
+  // facade-foundation PR). All reads/writes of `ws` route through these so a
+  // future PR can inject the socket without touching every call site. PURE
+  // indirection — getWs() returns the same value, setWs() assigns the same
+  // value; zero behaviour change. wsReconnectDelay/wsReconnectTimer stay
+  // internal (not facaded).
+  function getWs() { return ws; }
+  function setWs(v) { ws = v; }
+
   function connectWs() {
     // Cancel any pending reconnect to avoid stacking (iOS resume can fire multiple times)
     if (wsReconnectTimer) { clearTimeout(wsReconnectTimer); wsReconnectTimer = null; }
     // Close stale socket if still lingering
-    if (ws) {
-      try { ws.onclose = null; ws.close(); } catch(e) {}
-      ws = null;
+    if (getWs()) {
+      try { getWs().onclose = null; getWs().close(); } catch(e) {}
+      setWs(null);
     }
     var proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
     var wsUrl = proto + '//' + location.host;
-    ws = new WebSocket(wsUrl);
+    setWs(new WebSocket(wsUrl));
 
-    ws.onopen = function () {
+    getWs().onopen = function () {
       log('ws: connected');
       wsReconnectDelay = 1000;
       // Send auth token as first message (read live from FRAuth — it is mutable).
       var token = window.FRAuth.getAuthToken();
       if (token) {
-        ws.send(JSON.stringify({type: 'auth', token: token}));
+        getWs().send(JSON.stringify({type: 'auth', token: token}));
       }
       // Subscribe to server-side FFT if Safari analyzer is active
       if (azServerFFT) {
-        ws.send(JSON.stringify({type: 'fft-subscribe'}));
+        getWs().send(JSON.stringify({type: 'fft-subscribe'}));
       }
     };
 
-    ws.onclose = function () {
+    getWs().onclose = function () {
       log('ws: disconnected, reconnecting in ' + (wsReconnectDelay / 1000) + 's');
       wsReconnectTimer = setTimeout(connectWs, wsReconnectDelay);
       wsReconnectDelay = Math.min(wsReconnectDelay * 2, 10000);
     };
 
-    ws.onerror = function () {
+    getWs().onerror = function () {
       log('ws: error');
     };
 
-    ws.binaryType = 'arraybuffer';
-    ws.onmessage = function (evt) {
+    getWs().binaryType = 'arraybuffer';
+    getWs().onmessage = function (evt) {
       if (typeof evt.data !== 'string') {
         // Binary FFT frame from server
         handleFftFrame(new Uint8Array(evt.data));
@@ -3474,7 +3483,8 @@
     // production code path reads these — inert when __APP_TEST__ is unset.
     window.__appWs = {
       connectWs: connectWs,
-      getWs: function () { return ws; },
+      getWs: getWs,
+      setWs: setWs,
       getWsReconnectDelay: function () { return wsReconnectDelay; }
     };
   }
