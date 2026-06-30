@@ -50,6 +50,7 @@ const pttSrc = readFileSync(path.join(publicDir, 'ptt.js'), 'utf8');
 const restreamStatusSrc = readFileSync(path.join(publicDir, 'restreamStatus.js'), 'utf8');
 const trackHistorySrc = readFileSync(path.join(publicDir, 'trackhistory.js'), 'utf8');
 const navigationSrc = readFileSync(path.join(publicDir, 'navigation.js'), 'utf8');
+const genericModalSrc = readFileSync(path.join(publicDir, 'genericModal.js'), 'utf8');
 const appSrc = readFileSync(path.join(publicDir, 'app.js'), 'utf8');
 
 /**
@@ -160,6 +161,7 @@ describe('app.js jsdom load-smoke (C2 FRUtils cutover)', () => {
     runScript(dom, restreamStatusSrc, 'restreamStatus.js');
     runScript(dom, trackHistorySrc, 'trackhistory.js');
     runScript(dom, navigationSrc, 'navigation.js');
+    runScript(dom, genericModalSrc, 'genericModal.js');
     try {
       runScript(dom, appSrc, 'app.js');
     } catch (err) {
@@ -236,6 +238,7 @@ describe('app.js drift-gate (C3 FRUtils delegation of the 4 diverged helpers)', 
     runScript(dom, restreamStatusSrc, 'restreamStatus.js');
     runScript(dom, trackHistorySrc, 'trackhistory.js');
     runScript(dom, navigationSrc, 'navigation.js');
+    runScript(dom, genericModalSrc, 'genericModal.js');
     runScript(dom, appSrc, 'app.js');
     drift = win.__appDrift;
   });

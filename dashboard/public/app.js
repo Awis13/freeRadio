@@ -1056,6 +1056,20 @@
   // re-sourced as FRRestreamStatus.loadRestreamStatusFallback() in that wiring.
 
   // ============================
+  // GENERIC MODAL
+  // ============================
+  // The generic-modal UI lives in genericModal.js (window.FRGenericModal). It is
+  // pure DOM, so init() takes no host services — it just resolves the modal DOM
+  // refs and binds #generic-modal-save + the backdrop. window.closeGenericModal
+  // is assigned by the module at load time, so the deferred
+  // `function(){ return window.closeGenericModal(); }` wrappers below keep
+  // working. The openGenericModal alias re-exposes the module function under the
+  // name the sibling init() calls below reference directly. This MUST run before
+  // those init() calls so the alias is assigned in time.
+  var openGenericModal = window.FRGenericModal.openGenericModal;
+  FRGenericModal.init({});
+
+  // ============================
   // PLAYLISTS
   // ============================
   // The music-playlists UI lives in playlists.js (window.FRPlaylists). Wire it
@@ -2065,47 +2079,6 @@
   });
 
   loadMixingConfig();
-
-  // ============================
-  // GENERIC MODAL
-  // ============================
-  var genericModal = document.getElementById('generic-modal');
-  var genericModalSave = document.getElementById('generic-modal-save');
-  var genericModalCallback = null;
-
-  function openGenericModal(title, bodyHtml, onSave) {
-    document.getElementById('generic-modal-title').textContent = title;
-    document.getElementById('generic-modal-body').innerHTML = bodyHtml;
-    genericModalCallback = onSave;
-    genericModal.style.display = 'flex';
-  }
-
-  window.closeGenericModal = function() {
-    genericModal.style.display = 'none';
-    genericModalCallback = null;
-  };
-
-  genericModalSave.onclick = function() {
-    if (genericModalCallback) genericModalCallback();
-  };
-
-  genericModal.onclick = function(e) {
-    if (e.target === genericModal) closeGenericModal();
-  };
-
-  // Test-only hook: lets the jsdom characterization pins drive the generic-modal
-  // cluster (openGenericModal / window.closeGenericModal / the genericModalCallback
-  // state) while it still lives in this IIFE closure. Member names match the C2
-  // module's public surface so the re-point flips only the accessor root and leaves
-  // assertions byte-identical. Guarded by window.__APP_TEST__ — inert in production.
-  if (typeof window !== 'undefined' && window.__APP_TEST__) {
-    window.__appGenericModal = {
-      openGenericModal: openGenericModal,
-      closeGenericModal: function () { return window.closeGenericModal(); },
-      getGenericModalCallback: function () { return genericModalCallback; },
-      setGenericModalCallback: function (v) { genericModalCallback = v; },
-    };
-  }
 
   // ============================================================
   // MONITOR MIXER — Talk Over mode + Live/AFK browser mic

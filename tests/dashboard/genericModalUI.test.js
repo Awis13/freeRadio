@@ -37,7 +37,7 @@ import { bootWindow } from './appBoot.js';
  */
 function boot() {
   const { win, doc } = bootWindow();
-  const gm = win.__appGenericModal;
+  const gm = win.FRGenericModal;
   return { win, doc, gm };
 }
 
