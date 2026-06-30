@@ -34,6 +34,7 @@ const here = path.dirname(fileURLToPath(import.meta.url));
 const publicDir = path.resolve(here, '../../dashboard/public');
 const indexHtml = readFileSync(path.join(publicDir, 'index.html'), 'utf8');
 const utilsSrc = readFileSync(path.join(publicDir, 'utils.js'), 'utf8');
+const authSrc = readFileSync(path.join(publicDir, 'auth.js'), 'utf8');
 const playlistsSrc = readFileSync(path.join(publicDir, 'playlists.js'), 'utf8');
 const analyticsSrc = readFileSync(path.join(publicDir, 'analytics.js'), 'utf8');
 const fileMgmtSrc = readFileSync(path.join(publicDir, 'filemgmt.js'), 'utf8');
@@ -146,6 +147,7 @@ describe('app.js jsdom load-smoke (C2 FRUtils cutover)', () => {
     // (window.FRFileMgmt), then app.js (which calls FRPlaylists.init /
     // FRAnalytics.init / FRFileMgmt.init on boot).
     runScript(dom, utilsSrc, 'utils.js');
+    runScript(dom, authSrc, 'auth.js');
     runScript(dom, playlistsSrc, 'playlists.js');
     runScript(dom, analyticsSrc, 'analytics.js');
     runScript(dom, fileMgmtSrc, 'filemgmt.js');
@@ -224,6 +226,7 @@ describe('app.js drift-gate (C3 FRUtils delegation of the 4 diverged helpers)', 
     installStubs(win);
 
     runScript(dom, utilsSrc, 'utils.js');
+    runScript(dom, authSrc, 'auth.js');
     runScript(dom, playlistsSrc, 'playlists.js');
     runScript(dom, analyticsSrc, 'analytics.js');
     runScript(dom, fileMgmtSrc, 'filemgmt.js');

@@ -29,6 +29,7 @@ const here = path.dirname(fileURLToPath(import.meta.url));
 const publicDir = path.resolve(here, '../../dashboard/public');
 const indexHtml = readFileSync(path.join(publicDir, 'index.html'), 'utf8');
 const utilsSrc = readFileSync(path.join(publicDir, 'utils.js'), 'utf8');
+const authSrc = readFileSync(path.join(publicDir, 'auth.js'), 'utf8');
 const playlistsSrc = readFileSync(path.join(publicDir, 'playlists.js'), 'utf8');
 const analyticsSrc = readFileSync(path.join(publicDir, 'analytics.js'), 'utf8');
 const fileMgmtSrc = readFileSync(path.join(publicDir, 'filemgmt.js'), 'utf8');
@@ -140,6 +141,7 @@ export function bootWindow() {
   // (which calls FRPlaylists.init / FRAnalytics.init / FRFileMgmt.init /
   // FRVisualProfiles.init on boot).
   dom.window.eval(utilsSrc);
+  dom.window.eval(authSrc);
   dom.window.eval(playlistsSrc);
   dom.window.eval(analyticsSrc);
   dom.window.eval(fileMgmtSrc);

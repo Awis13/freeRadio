@@ -87,130 +87,16 @@
   var peakListeners = 0;
 
   // --- Auth ---
-  var authToken = localStorage.getItem('s23_token') || '';
-
-  function authFetch(url, opts) {
-    opts = opts || {};
-    if (!opts.headers) {
-      opts.headers = {};
-    } else if (opts.headers instanceof Headers) {
-      // convert Headers to plain object for easy merge
-      var h = {};
-      opts.headers.forEach(function(v, k) { h[k] = v; });
-      opts.headers = h;
-    }
-    if (authToken) {
-      opts.headers['Authorization'] = 'Bearer ' + authToken;
-    }
-    return fetch(url, opts).then(function(resp) {
-      if (resp.status === 401) {
-        showLoginOverlay();
-        return Promise.reject(new Error('Unauthorized'));
-      }
-      return resp;
-    });
-  }
-
-  // --- Login Overlay ---
-  var loginOverlay = document.createElement('div');
-  loginOverlay.id = 'login-overlay';
-  loginOverlay.style.cssText = 'position:fixed;top:0;left:0;width:100%;height:100%;background:#0a0a0a;z-index:99999;display:flex;align-items:center;justify-content:center;';
-  loginOverlay.innerHTML =
-    '<div style="text-align:center;max-width:340px;width:100%;padding:20px;">' +
-      '<div style="font-family:monospace;font-size:28px;color:#00ff41;margin-bottom:8px;letter-spacing:2px;">STUDIO 23</div>' +
-      '<div style="font-family:monospace;font-size:12px;color:#555;margin-bottom:32px;">dashboard access</div>' +
-      '<input id="login-token" type="password" placeholder="token" ' +
-        'style="width:100%;box-sizing:border-box;padding:12px;background:#111;border:1px solid #333;color:#00ff41;font-family:monospace;font-size:14px;outline:none;margin-bottom:12px;border-radius:2px;" />' +
-      '<button id="login-btn" ' +
-        'style="width:100%;padding:12px;background:#00ff41;color:#0a0a0a;border:none;font-family:monospace;font-size:14px;font-weight:bold;cursor:pointer;border-radius:2px;">ENTER</button>' +
-      '<div id="login-error" style="font-family:monospace;font-size:12px;color:#ff4141;margin-top:12px;min-height:16px;"></div>' +
-    '</div>';
-  document.body.appendChild(loginOverlay);
-
-  var loginTokenInput = document.getElementById('login-token');
-  var loginBtn = document.getElementById('login-btn');
-  var loginError = document.getElementById('login-error');
-
-  function showLoginOverlay() {
-    authToken = '';
-    localStorage.removeItem('s23_token');
-    loginOverlay.style.display = 'flex';
-    loginError.textContent = '';
-    loginTokenInput.value = '';
-    loginTokenInput.focus();
-  }
-
-  function hideLoginOverlay() {
-    loginOverlay.style.display = 'none';
-  }
-
-  function doLogin() {
-    var val = loginTokenInput.value.trim();
-    if (!val) { loginError.textContent = 'enter token'; return; }
-    loginBtn.disabled = true;
-    loginError.textContent = '';
-    fetch('/api/auth/verify', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ token: val })
-    }).then(function(r) {
-      if (r.ok) return r.json();
-      throw new Error('bad token');
-    }).then(function() {
-      authToken = val;
-      localStorage.setItem('s23_token', val);
-      loginBtn.disabled = false;
-      hideLoginOverlay();
-      // Reconnect WebSocket with token
-      if (ws) { try { ws.close(); } catch(e) {} }
-      connectWs();
-      // Reload data
-      FRFileMgmt.loadFileList('music');
-      FRFileMgmt.loadFileList('visuals');
-      loadBroadcastState();
-    }).catch(function() {
-      loginError.textContent = 'invalid token';
-      loginBtn.disabled = false;
-    });
-  }
-
-  loginBtn.addEventListener('click', doLogin);
-  loginTokenInput.addEventListener('keydown', function(e) {
-    if (e.key === 'Enter') doLogin();
-  });
-
-  // Initial auth check
-  (function checkAuth() {
-    if (!authToken) { showLoginOverlay(); return; }
-    fetch('/api/auth/verify', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ token: authToken })
-    }).then(function(r) {
-      if (r.ok) { hideLoginOverlay(); return; }
-      showLoginOverlay();
-    }).catch(function() {
-      // Server unreachable — hide overlay (no auth configured or offline)
-      hideLoginOverlay();
-    });
-  })();
-
-  // Test-only hook: lets the jsdom characterization pins drive the auth cluster
-  // (authFetch / login-overlay / doLogin) and read+write authToken. Guarded by
-  // window.__APP_TEST__ — completely inert in production (flag unset). checkAuth
-  // is a named function EXPRESSION (above), so its name is out of scope here and
-  // cannot be exposed; its boot behaviour is pinned via the observable overlay
-  // state instead. Mirrors the window.__appHelpers / window.__appDrift hooks.
-  if (typeof window !== 'undefined' && window.__APP_TEST__) {
-    window.__appAuth = {
-      authFetch: authFetch,
-      showLoginOverlay: showLoginOverlay,
-      hideLoginOverlay: hideLoginOverlay,
-      doLogin: doLogin,
-      getAuthToken: function () { return authToken; },
-      setAuthToken: function (v) { authToken = v; }
-    };
-  }
+  // The auth/login cluster (authFetch wrapper, login overlay, doLogin, checkAuth,
+  // authToken state) lives in auth.js (window.FRAuth), loaded before app.js. These
+  // two aliases keep the ~37 in-file authFetch() call-sites, the sibling
+  // init({ authFetch }) passes, and the FRFileMgmt.init showLoginOverlay pass
+  // UNCHANGED. authFetch is captured here as a stable function reference because it
+  // is fired at factory load (FRFileMgmt.loadFileList runs it before any
+  // FRAuth.init). The mutable authToken is NOT aliased — read it live via
+  // window.FRAuth.getAuthToken() (connectWs + the FRFileMgmt.init getter below).
+  var authFetch = window.FRAuth.authFetch;
+  var showLoginOverlay = window.FRAuth.showLoginOverlay;
 
   // --- Navigation (tab switching, collapsible panels, keyboard shortcuts) ---
   // Lives in navigation.js (window.FRNavigation), wired up via FRNavigation.init
@@ -603,6 +489,20 @@
   // services (pure DOM); init() binds the #dbg-clear / #dbg-pause controls.
   // log()/showError() already work pre-init (resolved via the aliases above),
   // so this position is not load-bearing — it only binds the debug buttons.
+  // Wire the auth module (auth.js / window.FRAuth). The token + login overlay are
+  // already live (set up at FRAuth factory load, since authFetch runs before this);
+  // init only injects the post-login callback — the WS reconnect + data reload that
+  // stay app.js-resident. checkAuth() then runs the boot auth check (was an IIFE in
+  // app.js): empty/invalid token -> showLoginOverlay, valid -> hideLoginOverlay.
+  FRAuth.init({ onLogin: function () {
+    if (ws) { try { ws.close(); } catch (e) {} }
+    connectWs();
+    FRFileMgmt.loadFileList('music');
+    FRFileMgmt.loadFileList('visuals');
+    loadBroadcastState();
+  }});
+  FRAuth.checkAuth();
+
   FRNotify.init({});
 
   FRFileMgmt.init({
@@ -611,7 +511,7 @@
     renderTrackSelector: renderTrackSelector,
     loadOverlayAssets: function () { return FROverlays.loadOverlayAssets(); },
     getBpmMap: function () { return bpmMap; },
-    getAuthToken: function () { return authToken; }
+    getAuthToken: function () { return window.FRAuth.getAuthToken(); }
   });
 
   // Load file lists immediately
@@ -638,9 +538,10 @@
     ws.onopen = function () {
       log('ws: connected');
       wsReconnectDelay = 1000;
-      // Send auth token as first message
-      if (authToken) {
-        ws.send(JSON.stringify({type: 'auth', token: authToken}));
+      // Send auth token as first message (read live from FRAuth — it is mutable).
+      var token = window.FRAuth.getAuthToken();
+      if (token) {
+        ws.send(JSON.stringify({type: 'auth', token: token}));
       }
       // Subscribe to server-side FFT if Safari analyzer is active
       if (azServerFFT) {

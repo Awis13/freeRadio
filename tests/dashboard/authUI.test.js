@@ -35,10 +35,10 @@
 import { describe, it, expect } from 'vitest';
 import { bootWindow, makeFetchStub, routeExact, flush } from './appBoot.js';
 
-/** Boot a fresh window and grab the auth hook + document. */
+/** Boot a fresh window and grab the auth module + document. */
 function boot() {
   const { win, doc } = bootWindow();
-  return { win, doc, auth: win.__appAuth };
+  return { win, doc, auth: win.FRAuth };
 }
 
 /** Install a recording fetch stub (replacing the never-resolving boot fetch). */
@@ -48,7 +48,7 @@ function withFetch(win, routes) {
   return stub;
 }
 
-describe('auth UI characterization (window.__appAuth)', () => {
+describe('auth UI characterization (window.FRAuth)', () => {
   it('exposes the cluster fns + authToken accessors', () => {
     const { auth } = boot();
     expect(auth).toBeTruthy();
