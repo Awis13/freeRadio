@@ -36,6 +36,7 @@
 
   // --- DOM refs ---
   var studioPlayer = document.getElementById('studio-player');
+  function getStudioPlayer() { return studioPlayer; }
   var modeTag = document.getElementById('mode-tag');
   var uptimeEl = document.getElementById('uptime');
   var statListeners = document.getElementById('stat-listeners');
@@ -75,6 +76,7 @@
   var mixModeContainer = document.getElementById('transport-mix-mode');
   var mixPills = mixModeContainer ? mixModeContainer.querySelectorAll('.mix-pill') : [];
   var currentMixMode = 'smart';
+  function getMixMode() { return currentMixMode; }
 
   // --- State ---
   var bpmMap = {};
@@ -248,6 +250,7 @@
   var noiseActive = false;
   var playTransitionLock = false; // prevents loadBroadcastState from interfering during PLAY
   var userInteracted = false; // blocks unmuting until user clicks ARM/PLAY/mute
+  function getUserInteracted() { return userInteracted; }
 
   function startStaticNoise() {
     noiseActive = true;
@@ -3492,6 +3495,7 @@
       deriveUiMode: deriveUiMode,
       broadcastState: broadcastState,
       getBroadcastState: getBroadcastState,
+      getMixMode: getMixMode,
       setMixMode: function (m) { currentMixMode = m; },
       setPlatformNames: function (a) { window.FRPlatforms.setCurrentPlatformNames(a); }
     };
@@ -3516,6 +3520,13 @@
       getMainAnalyser: getMainAnalyser,
       getAzL: getAzL,
       getAzR: getAzR
+    };
+    // Test-only studio/interaction facade handle: exposes the two read-only
+    // getters so studio state pins can assert getX() === the live var. Additive
+    // only; inert when __APP_TEST__ is unset.
+    window.__appStudio = {
+      getStudioPlayer: getStudioPlayer,
+      getUserInteracted: getUserInteracted
     };
   }
 
