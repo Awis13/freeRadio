@@ -265,6 +265,17 @@ describe('app.js drift-gate (C3 FRUtils delegation of the 4 diverged helpers)', 
     expect(drift.getBroadcastState()).toBe(drift.broadcastState);
   });
 
+  it('getMixMode seam returns smart on boot (matches currentMixMode initial value)', () => {
+    expect(typeof drift.getMixMode).toBe('function');
+    expect(drift.getMixMode()).toBe('smart');
+  });
+
+  it('getMixMode seam reflects the live var — after setMixMode cut, getMixMode returns cut', () => {
+    drift.setMixMode('cut');
+    expect(drift.getMixMode()).toBe('cut');
+    drift.setMixMode('smart'); // restore for sibling tests
+  });
+
   describe('computeMixDur (delegates with currentMixMode)', () => {
     it("mixMode 'cut' → 0", () => {
       drift.setMixMode('cut');
