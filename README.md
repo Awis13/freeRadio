@@ -1,6 +1,5 @@
 # STUDIO 23
 
-[![CI](https://github.com/Awis13/freeradio/actions/workflows/ci.yml/badge.svg)](https://github.com/Awis13/freeradio/actions/workflows/ci.yml)
 ![Node 20](https://img.shields.io/badge/Node.js-20-339933?logo=node.js&logoColor=white)
 ![Icecast](https://img.shields.io/badge/Icecast-2-blue)
 ![Liquidsoap](https://img.shields.io/badge/Liquidsoap-2.3.0-orange)
