@@ -1,8 +1,59 @@
 # STUDIO 23
 
+![Node 20](https://img.shields.io/badge/Node.js-20-339933?logo=node.js&logoColor=white)
+![Icecast](https://img.shields.io/badge/Icecast-2-blue)
+![Liquidsoap](https://img.shields.io/badge/Liquidsoap-2.3.0-orange)
+![FFmpeg](https://img.shields.io/badge/FFmpeg-transcoding-007808?logo=ffmpeg&logoColor=white)
+![Docker](https://img.shields.io/badge/Docker-Compose-2496ED?logo=docker&logoColor=white)
+![License: MIT](https://img.shields.io/badge/License-MIT-green)
+
 Automated 24/7 streaming platform with BPM-aware music mixing, synchronized video visuals, and a real-time web dashboard. Designed to run as a self-contained Docker stack on a single machine.
 
 ![Studio Dashboard](docs/studio-dashboard.png)
+
+## What This Demonstrates
+
+| Capability | Where it shows up |
+|------------|-------------------|
+| Multi-container streaming pipeline orchestration | Docker Compose stack of 7 services wired end-to-end (analyzer → AutoDJ → Icecast → FFmpeg → RTMP/HLS) |
+| WebSocket real-time dashboard | Live control panel pushing track changes, stream stats, and waveform data over `ws://host/ws` |
+| HLS + RTMP fan-out | Simultaneous HLS output (built-in player) and unlimited RTMP destinations (YouTube, Twitch, Kick) |
+| BPM-aware Liquidsoap AutoDJ | Beat-aligned crossfades driven by per-track BPM analysis |
+| FFmpeg transcoding | Hardware-accelerated (Intel QSV) video compositing over live audio |
+| 73-test suite + CI | Vitest unit tests run standalone on every push via GitHub Actions (Node 20) |
+
+## STUDIO 23
+
+This repository is the **per-tenant streaming engine** of STUDIO 23, a multi-tenant streaming SaaS. Each tenant runs an isolated copy of this stack; a control plane provisions and routes them. The sibling repositories:
+
+- **[controlplane](https://github.com/Awis13/controlplane)** — the Go control plane (provisioning, billing, routing, tenant lifecycle)
+- **[freeradio-web](https://github.com/Awis13/freeradio-web)** — the SvelteKit frontend
+- **freeradio** (this repo) — the streaming stack deployed per tenant
+
+```mermaid
+flowchart TD
+    U[User browser] --> W[freeradio-web · SvelteKit :5173/:3000]
+    W -->|/api/v1/* cookie+JWT| CP[controlplane · Go API :8085]
+    CP --> PG[(Postgres 17)]
+    CP -->|provision LXC| PX[Proxmox VE]
+    PX -->|deploy stack| FR[freeradio tenant]
+    CP -->|WireGuard mesh 10.10.0.0/24| FR
+    CP -->|poll :80/api/status| FR
+    CP -. dynamic routing .-> CADDY[Caddy]
+    CP -. tier billing .-> STRIPE[Stripe]
+    subgraph TENANT[freeradio tenant stack]
+      DASH[dashboard :9090 Node+WS+HLS]
+      ICE[Icecast :8000]
+      LIQ[Liquidsoap :7000 BPM AutoDJ]
+      FF[FFmpeg streamer]
+      RTMP[nginx-rtmp :1935 OBS]
+      LIQ --> ICE --> FF
+      RTMP --> FF
+    end
+    FR --- TENANT
+    FF -->|HLS| W
+    FF -->|RTMP| EXT[YouTube / Twitch / Kick]
+```
 
 ## Architecture
 

@@ -4,7 +4,7 @@ RUN apk add --no-cache ffmpeg su-exec
 
 WORKDIR /app
 
-# hls.js — скачиваем при сборке
+# hls.js — downloaded at build time
 RUN wget -q -O /app/hls.min.js \
     https://cdn.jsdelivr.net/npm/hls.js@latest/dist/hls.min.js
 
