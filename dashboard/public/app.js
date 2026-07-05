@@ -3498,7 +3498,7 @@
       broadcastState: broadcastState,
       getBroadcastState: getBroadcastState,
       getMixMode: getMixMode,
-      setMixMode: function (m) { setMixMode(m); },
+      setMixMode: setMixMode,
       setPlatformNames: function (a) { window.FRPlatforms.setCurrentPlatformNames(a); }
     };
     // Test-only WS reconnect handle: exposes the sole connection factory plus
