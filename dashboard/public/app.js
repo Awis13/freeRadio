@@ -77,6 +77,7 @@
   var mixPills = mixModeContainer ? mixModeContainer.querySelectorAll('.mix-pill') : [];
   var currentMixMode = 'smart';
   function getMixMode() { return currentMixMode; }
+  function setMixMode(mode) { currentMixMode = mode; }
 
   // --- State ---
   var bpmMap = {};
@@ -181,7 +182,7 @@
   }
 
   // timeupdate = video is receiving frames → stream alive → hide overlay (if not locked)
-  studioPlayer.addEventListener('timeupdate', function() {
+  getStudioPlayer().addEventListener('timeupdate', function() {
     if (noiseActive) return;
     if (broadcastState && broadcastState.arming) return;
     if (aliveTimer) { clearTimeout(aliveTimer); aliveTimer = null; }
@@ -195,7 +196,7 @@
     }, 4000);
   });
 
-  studioPlayer.addEventListener('canplay', function() {
+  getStudioPlayer().addEventListener('canplay', function() {
     hideLoading('canplay');
   });
 
@@ -206,7 +207,7 @@
   // iOS/Safari: recover from stalls — video element fires 'stalled' when buffering stops
   var stallCount = 0;
   var stallResetTimer = null;
-  studioPlayer.addEventListener('stalled', function() {
+  getStudioPlayer().addEventListener('stalled', function() {
     if (noiseActive) return;
     if (broadcastState && (broadcastState.streamMode === 'armed' || broadcastState.arming)) return;
     stallCount++;
@@ -224,9 +225,9 @@
   });
 
   // Native HLS (old iOS): recover from errors
-  studioPlayer.addEventListener('error', function() {
+  getStudioPlayer().addEventListener('error', function() {
     if (!useNativeHls) return;
-    var err = studioPlayer.error;
+    var err = getStudioPlayer().error;
     log('PLR native error: ' + (err ? err.code + ' ' + err.message : 'unknown'));
     if (broadcastState && (broadcastState.streamMode === 'armed' || broadcastState.arming)) return;
     showLoading('Reconnecting...', 'native-error');
@@ -235,9 +236,9 @@
 
   // Mute/unmute (integrated with CRT Analyzer GainNode)
   playerMuteBtn.onclick = function() {
-    userInteracted = true;
+    setUserInteracted(true);
     if (!azInited) azInit();
-    var muted = !studioPlayer.muted;
+    var muted = !getStudioPlayer().muted;
     setPlayerMuted(muted);
     playerMuteBtn.innerHTML = muted ? '&#128263;' : '&#128266;';
     playerMuteBtn.title = muted ? 'Unmute' : 'Mute';
@@ -251,6 +252,7 @@
   var playTransitionLock = false; // prevents loadBroadcastState from interfering during PLAY
   var userInteracted = false; // blocks unmuting until user clicks ARM/PLAY/mute
   function getUserInteracted() { return userInteracted; }
+  function setUserInteracted(v) { userInteracted = v; }
 
   function startStaticNoise() {
     noiseActive = true;
@@ -285,7 +287,7 @@
   var useNativeHls = false;
 
   function initPlayer() {
-    studioPlayer.muted = true; // force muted — Safari may persist unmuted state across reloads
+    getStudioPlayer().muted = true; // force muted — Safari may persist unmuted state across reloads
     log('PLR init src=' + hlsSrc);
 
     if (isSafari || typeof Hls === 'undefined' || !Hls.isSupported()) {
@@ -294,7 +296,7 @@
       // Also fallback for very old browsers without MSE.
       log('PLR mode=native-hls' + (isSafari ? ' (Safari)' : ' (no MSE)'));
       useNativeHls = true;
-      studioPlayer.src = hlsSrc;
+      getStudioPlayer().src = hlsSrc;
       tryPlay('native-init');
       return;
     }
@@ -309,7 +311,7 @@
     var attempt = 0;
     var maxAttempts = isIOS ? 8 : 3;
     function go() {
-      studioPlayer.play().then(function() {
+      getStudioPlayer().play().then(function() {
         log('PLR play() ok src=' + source + ' attempt=' + attempt);
       }).catch(function(e) {
         attempt++;
@@ -334,8 +336,8 @@
 
     // Reset stale video element buffers after HLS destroy
     // Without this, readyState/videoWidth/currentTime retain old values
-    studioPlayer.removeAttribute("src");
-    studioPlayer.load();
+    getStudioPlayer().removeAttribute("src");
+    getStudioPlayer().load();
 
     var hlsConfig = {
       lowLatencyMode: false,
@@ -410,7 +412,7 @@
     });
 
     hlsInstance.loadSource(hlsSrc);
-    hlsInstance.attachMedia(studioPlayer);
+    hlsInstance.attachMedia(getStudioPlayer());
   }
 
   // restartPlayer: clean restart — clears ALL timers, shows overlay during reconnect
@@ -427,7 +429,7 @@
       azStartStreamDecode();
     }
     if (useNativeHls) {
-      studioPlayer.src = hlsSrc;
+      getStudioPlayer().src = hlsSrc;
       tryPlay('native-restart');
     } else {
       startHls('restart-' + (source || '?'), hlsConfigOverride);
@@ -652,7 +654,7 @@
         break;
       case 'mixing-config':
         if (msg.data && msg.data.mode) {
-          currentMixMode = msg.data.mode;
+          setMixMode(msg.data.mode);
           updateMixModeUI();
           var wsB = studioBpm.textContent ? parseInt(studioBpm.textContent) : 0;
           trackMixDur = computeMixDur(wsB);
@@ -680,7 +682,7 @@
   // Compute crossfade duration matching Liquidsoap logic.
   // Delegates to FRUtils (single source of truth), passing the current mix mode.
   function computeMixDur(bpm) {
-    return FRU.computeMixDur(bpm, currentMixMode);
+    return FRU.computeMixDur(bpm, getMixMode());
   }
 
   function positionCueMarker() {
@@ -1480,7 +1482,7 @@
   // ========== ARM ==========
   // Pre-warm pipeline + player. ARM is only "ready" when player has frames.
   btnArm.onclick = function() {
-    userInteracted = true;
+    setUserInteracted(true);
     if (broadcastState.arming || broadcastState.streamMode === 'armed') return;
     // Init analyzer on user gesture (AudioContext needs it)
     if (!azInited) azInit();
@@ -1536,7 +1538,7 @@
 
         function isVideoBlack() {
           try {
-            armCtx.drawImage(studioPlayer, 0, 0, 16, 16);
+            armCtx.drawImage(getStudioPlayer(), 0, 0, 16, 16);
             var data = armCtx.getImageData(0, 0, 16, 16).data;
             var sum = 0;
             for (var i = 0; i < data.length; i += 4) {
@@ -1553,7 +1555,7 @@
             updateBroadcastUI();
             return;
           }
-          if (studioPlayer.readyState >= 3 && studioPlayer.videoWidth > 0 && !isVideoBlack()) {
+          if (getStudioPlayer().readyState >= 3 && getStudioPlayer().videoWidth > 0 && !isVideoBlack()) {
             broadcastState.arming = false;
             hideLoading('arm-ready');
             updateBroadcastUI();
@@ -1584,7 +1586,7 @@
 
   // ========== PLAY ==========
   btnPlay.onclick = function() {
-    userInteracted = true;
+    setUserInteracted(true);
     // Init analyzer on user gesture (AudioContext needs it)
     if (!azInited) azInit();
 
@@ -1702,9 +1704,9 @@
             if (unmuteDone) return;
             unmuteDone = true;
             flashTransition();
-            if (studioPlayer.seekable.length > 0) {
-              var edge = studioPlayer.seekable.end(studioPlayer.seekable.length - 1) - 0.1;
-              if (edge > 0) studioPlayer.currentTime = edge;
+            if (getStudioPlayer().seekable.length > 0) {
+              var edge = getStudioPlayer().seekable.end(getStudioPlayer().seekable.length - 1) - 0.1;
+              if (edge > 0) getStudioPlayer().currentTime = edge;
             }
             setPlayerMuted(false);
             playerMuteBtn.innerHTML = '&#128266;';
@@ -1714,8 +1716,8 @@
             btnPlay.disabled = false;
             log('PLAY: live');
           };
-          studioPlayer.addEventListener('canplay', function onReady() {
-            studioPlayer.removeEventListener('canplay', onReady);
+          getStudioPlayer().addEventListener('canplay', function onReady() {
+            getStudioPlayer().removeEventListener('canplay', onReady);
             doUnmute();
           });
           // Safety: unmute after 4s regardless
@@ -1763,7 +1765,7 @@
     startStaticNoise();
     flashTransition();
     setPlayerMuted(true);
-    studioPlayer.pause();
+    getStudioPlayer().pause();
     playerMuteBtn.innerHTML = '&#128263;';
     playerMuteBtn.title = 'Unmute';
     playerMuteBtn.classList.remove('unmuted');
@@ -1956,7 +1958,7 @@
       .then(function(r) { return r.json(); })
       .then(function(data) {
         if (data.mode) {
-          currentMixMode = data.mode;
+          setMixMode(data.mode);
           updateMixModeUI();
           log('mixing: mode = ' + data.mode);
         }
@@ -1973,7 +1975,7 @@
       .then(function(r) { return r.json(); })
       .then(function(data) {
         if (data.ok || data.mode) {
-          currentMixMode = mode;
+          setMixMode(mode);
           updateMixModeUI();
           // Recalculate cue marker for new mode
           var filename = (studioAudioTrack.textContent || '').split('/').pop();
@@ -1988,7 +1990,7 @@
 
   function updateMixModeUI() {
     mixPills.forEach(function(pill) {
-      if (pill.dataset.mixmode === currentMixMode) {
+      if (pill.dataset.mixmode === getMixMode()) {
         pill.classList.add('active');
       } else {
         pill.classList.remove('active');
@@ -1999,7 +2001,7 @@
   mixPills.forEach(function(pill) {
     pill.addEventListener('click', function() {
       var mode = pill.dataset.mixmode;
-      if (mode && mode !== currentMixMode) {
+      if (mode && mode !== getMixMode()) {
         setMixingMode(mode);
       }
     });
@@ -2176,7 +2178,7 @@
     if (micStream) { micStream.getTracks().forEach(function(t) { t.stop(); }); micStream = null; }
 
     // Release duck if active
-    if (duckActive && getGainNode() && getAudioCtx() && !studioPlayer.muted) {
+    if (duckActive && getGainNode() && getAudioCtx() && !getStudioPlayer().muted) {
       getGainNode().gain.setTargetAtTime(monitorMusicGain * mmMasterGain, getAudioCtx().currentTime, 0.05);
       duckActive = false;
     }
@@ -2281,7 +2283,7 @@
       }
 
       // MUSIC meter — read from azMain (main stream analyzer)
-      if (getMainAnalyser() && musicData && !studioPlayer.muted) {
+      if (getMainAnalyser() && musicData && !getStudioPlayer().muted) {
         musicLevel = computeLevels(getMainAnalyser(), musicData);
         var scaledRms = musicLevel.rms * monitorMusicGain;
         var scaledPeak = musicLevel.peak * monitorMusicGain;
@@ -2300,7 +2302,7 @@
       drawMeter(mmMasterMeterCtx, mmMasterMeterCanvas, masterRms, masterPeak);
 
       // AUTO-DUCK — envelope follower via setTargetAtTime
-      if (duckEnabled && micActive && getGainNode() && getAudioCtx() && !studioPlayer.muted) {
+      if (duckEnabled && micActive && getGainNode() && getAudioCtx() && !getStudioPlayer().muted) {
         var speeds = duckSpeeds[duckSpeed] || duckSpeeds.medium;
         if (micLevel.rms > duckThreshold) {
           // Voice detected — duck music
@@ -2373,7 +2375,7 @@
     mmDuckBtn.addEventListener('click', function() {
       duckEnabled = !duckEnabled;
       // Release duck if disabling
-      if (!duckEnabled && duckActive && getGainNode() && getAudioCtx() && !studioPlayer.muted) {
+      if (!duckEnabled && duckActive && getGainNode() && getAudioCtx() && !getStudioPlayer().muted) {
         getGainNode().gain.setTargetAtTime(monitorMusicGain * mmMasterGain, getAudioCtx().currentTime, 0.05);
         duckActive = false;
       }
@@ -2396,7 +2398,7 @@
     mmMusicFader.addEventListener('input', function() {
       monitorMusicGain = parseInt(mmMusicFader.value) / 100;
       if (mmMusicVal) mmMusicVal.textContent = parseInt(mmMusicFader.value) + '%';
-      if (getGainNode() && getAudioCtx() && !studioPlayer.muted) {
+      if (getGainNode() && getAudioCtx() && !getStudioPlayer().muted) {
         getGainNode().gain.setValueAtTime(monitorMusicGain * mmMasterGain, getAudioCtx().currentTime);
       }
     });
@@ -2408,7 +2410,7 @@
       mmMasterGain = parseInt(mmMasterFader.value) / 100;
       if (mmMasterVal) mmMasterVal.textContent = parseInt(mmMasterFader.value) + '%';
       // Update music gain
-      if (getGainNode() && getAudioCtx() && !studioPlayer.muted) {
+      if (getGainNode() && getAudioCtx() && !getStudioPlayer().muted) {
         getGainNode().gain.setValueAtTime(monitorMusicGain * mmMasterGain, getAudioCtx().currentTime);
       }
       // Update mic monitor gain
@@ -2823,9 +2825,9 @@
     if (now - azLastDelayCheck < 2000) return;
     azLastDelayCheck = now;
     try {
-      if (studioPlayer.seekable.length > 0 && studioPlayer.currentTime > 0) {
-        var edge = studioPlayer.seekable.end(studioPlayer.seekable.length - 1);
-        var pos = studioPlayer.currentTime;
+      if (getStudioPlayer().seekable.length > 0 && getStudioPlayer().currentTime > 0) {
+        var edge = getStudioPlayer().seekable.end(getStudioPlayer().seekable.length - 1);
+        var pos = getStudioPlayer().currentTime;
         var bufDelay = edge - pos;
         if (bufDelay > 0 && bufDelay < 30) {
           var measured = bufDelay + 1.0;
@@ -2880,9 +2882,9 @@
   function azGetHlsDelay() {
     if (azFixedDelay !== null) return azFixedDelay + azSyncOffset;
     try {
-      if (studioPlayer.seekable.length > 0 && studioPlayer.currentTime > 0) {
-        var edge = studioPlayer.seekable.end(studioPlayer.seekable.length - 1);
-        var pos = studioPlayer.currentTime;
+      if (getStudioPlayer().seekable.length > 0 && getStudioPlayer().currentTime > 0) {
+        var edge = getStudioPlayer().seekable.end(getStudioPlayer().seekable.length - 1);
+        var pos = getStudioPlayer().currentTime;
         var bufDelay = edge - pos;
         if (bufDelay > 0 && bufDelay < 30) {
           azFixedDelay = bufDelay + 1.5;
@@ -2965,8 +2967,8 @@
                 logged = true;
                 var seekInfo = 'N/A';
                 try {
-                  if (studioPlayer.seekable.length > 0 && studioPlayer.currentTime > 0) {
-                    seekInfo = (studioPlayer.seekable.end(0) - studioPlayer.currentTime).toFixed(2) + 's';
+                  if (getStudioPlayer().seekable.length > 0 && getStudioPlayer().currentTime > 0) {
+                    seekInfo = (getStudioPlayer().seekable.end(0) - getStudioPlayer().currentTime).toFixed(2) + 's';
                   }
                 } catch(e) {}
                 log('ANALYZER: streaming, delay=' + (delayMs/1000).toFixed(1) + 's, seekable=' + seekInfo);
@@ -3002,9 +3004,9 @@
       azPeaks = new Array(64).fill(0);
 
       // Chrome/Firefox path: createMediaElementSource works with HLS
-      var source = azAudioCtx.createMediaElementSource(studioPlayer);
+      var source = azAudioCtx.createMediaElementSource(getStudioPlayer());
       azGainNode = azAudioCtx.createGain();
-      azGainNode.gain.value = studioPlayer.muted ? 0 : 1;
+      azGainNode.gain.value = getStudioPlayer().muted ? 0 : 1;
 
       var splitter = azAudioCtx.createChannelSplitter(2);
       source.connect(azMain);
@@ -3025,8 +3027,8 @@
   }
 
   function setPlayerMuted(muted) {
-    if (!muted && !userInteracted) return; // never unmute without user gesture
-    studioPlayer.muted = muted;
+    if (!muted && !getUserInteracted()) return; // never unmute without user gesture
+    getStudioPlayer().muted = muted;
     if (getGainNode() && getAudioCtx()) {
       // Use monitorMusicGain * mmMasterGain instead of hardcoded 1
       getGainNode().gain.setValueAtTime(muted ? 0 : monitorMusicGain * mmMasterGain, getAudioCtx().currentTime);
@@ -3496,7 +3498,7 @@
       broadcastState: broadcastState,
       getBroadcastState: getBroadcastState,
       getMixMode: getMixMode,
-      setMixMode: function (m) { currentMixMode = m; },
+      setMixMode: function (m) { setMixMode(m); },
       setPlatformNames: function (a) { window.FRPlatforms.setCurrentPlatformNames(a); }
     };
     // Test-only WS reconnect handle: exposes the sole connection factory plus
