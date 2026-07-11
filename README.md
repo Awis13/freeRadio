@@ -71,7 +71,7 @@ Icecast + Video  ──►  FFmpeg Streamer   ──►  HLS (always) + RTMP (op
 
 | Component | Technology |
 |-----------|------------|
-| Dashboard API | Node.js 20, Express 4.21, WebSocket (ws) |
+| Dashboard API | Node.js 24, Express 4.21, WebSocket (ws) |
 | Frontend | Vanilla JavaScript (~4300 LOC), no build step |
 | AutoDJ | Liquidsoap v2.3.0 |
 | Audio Analysis | Python 3 + Essentia |
