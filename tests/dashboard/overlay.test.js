@@ -20,7 +20,7 @@
  */
 
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
-import request from 'supertest';
+import { serverAgent } from './helpers/serverAgent.js';
 import fs from 'fs';
 
 import {
@@ -37,15 +37,19 @@ const { loadOverlays, generateFilterString } =
 let h;
 let files;
 let makeApp;
+let client;
+let closeServer;
 
-beforeEach(() => {
+beforeEach(async () => {
   vi.restoreAllMocks();
   h = installOverlayFsHarness();
   files = h.files;
   makeApp = h.makeApp;
+  ({ client, close: closeServer } = await serverAgent(makeApp()));
 });
 
-afterEach(() => {
+afterEach(async () => {
+  await closeServer();
   vi.restoreAllMocks();
 });
 
@@ -368,7 +372,7 @@ describe('createOverlayRouter construction', () => {
 // ---------------------------------------------------------------------------
 describe('GET /api/overlays', () => {
   it('returns the default config when no file exists', async () => {
-    const res = await request(makeApp()).get('/api/overlays');
+    const res = await client.get('/api/overlays');
     expect(res.status).toBe(200);
     expect(res.body).toEqual({ enabled: false, layers: [] });
   });
@@ -376,7 +380,7 @@ describe('GET /api/overlays', () => {
   it('returns the stored config when the file exists', async () => {
     const data = { enabled: true, layers: [{ type: 'clock', enabled: true }] };
     files[OVERLAY_CONFIG] = JSON.stringify(data);
-    const res = await request(makeApp()).get('/api/overlays');
+    const res = await client.get('/api/overlays');
     expect(res.status).toBe(200);
     expect(res.body).toEqual(data);
   });
@@ -389,7 +393,7 @@ describe('PUT /api/overlays', () => {
   it('saves config and regenerates filter string on the free tier when only watermark layers (no custom)', async () => {
     // free tier: customOverlays=false. A watermark-only config is allowed.
     const body = { enabled: true, layers: [{ type: 'watermark', enabled: true }] };
-    const res = await request(makeApp())
+    const res = await client
       .put('/api/overlays')
       .send(body);
     expect(res.status).toBe(200);
@@ -402,7 +406,7 @@ describe('PUT /api/overlays', () => {
   it('returns 403 on free tier when enabled config has a non-watermark (custom) layer', async () => {
     // free tier customOverlays=false; hasCustomLayers && enabled -> 403.
     const body = { enabled: true, layers: [{ type: 'clock', enabled: true }] };
-    const res = await request(makeApp())
+    const res = await client
       .put('/api/overlays')
       .send(body);
     expect(res.status).toBe(403);
@@ -415,7 +419,7 @@ describe('PUT /api/overlays', () => {
     // The guard requires hasCustomLayers && config.enabled. enabled=false slips
     // the custom layer through and saves it.
     const body = { enabled: false, layers: [{ type: 'clock', enabled: true }] };
-    const res = await request(makeApp())
+    const res = await client
       .put('/api/overlays')
       .send(body);
     expect(res.status).toBe(200);
@@ -425,7 +429,7 @@ describe('PUT /api/overlays', () => {
   it('saves custom layers when tier file grants pro (customOverlays=true)', async () => {
     files['/shared/tier.json'] = JSON.stringify({ tier: 'pro' });
     const body = { enabled: true, layers: [{ type: 'clock', enabled: true }] };
-    const res = await request(makeApp())
+    const res = await client
       .put('/api/overlays')
       .send(body);
     expect(res.status).toBe(200);
@@ -435,7 +439,7 @@ describe('PUT /api/overlays', () => {
   it('saves when layers is undefined (no custom-layer check trips)', async () => {
     // config.layers is falsy -> hasCustomLayers is falsy -> save proceeds.
     const body = { enabled: true };
-    const res = await request(makeApp())
+    const res = await client
       .put('/api/overlays')
       .send(body);
     expect(res.status).toBe(200);
@@ -448,14 +452,14 @@ describe('PUT /api/overlays', () => {
 // ---------------------------------------------------------------------------
 describe('POST /api/overlays/assets', () => {
   it('returns 400 { error: "no file" } when no file attached', async () => {
-    const res = await request(makeApp()).post('/api/overlays/assets');
+    const res = await client.post('/api/overlays/assets');
     expect(res.status).toBe(400);
     expect(res.body).toEqual({ error: 'no file' });
   });
 
   it('renames the upload to a sanitized name and returns name + dest path', async () => {
     // multer fileFilter allows png; '!' and space are non-[a-zA-Z0-9._-] -> '_'.
-    const res = await request(makeApp())
+    const res = await client
       .post('/api/overlays/assets')
       .attach('file', Buffer.from('PNGDATA'), 'my logo!.png');
     expect(res.status).toBe(200);
@@ -467,7 +471,7 @@ describe('POST /api/overlays/assets', () => {
   });
 
   it('keeps allowed chars [a-zA-Z0-9._-] and replaces the rest with "_"', async () => {
-    const res = await request(makeApp())
+    const res = await client
       .post('/api/overlays/assets')
       .attach('file', Buffer.from('x'), 'A1-b_c.D@#$.png');
     expect(res.status).toBe(200);
@@ -479,7 +483,7 @@ describe('POST /api/overlays/assets', () => {
   it('rejects a name that sanitizes to start with "." and unlinks the temp file', async () => {
     // multer fileFilter only inspects the EXTENSION, so '.image.png' passes the
     // filter; basename keeps the leading dot -> safeName starts with '.' -> 400.
-    const res = await request(makeApp())
+    const res = await client
       .post('/api/overlays/assets')
       .attach('file', Buffer.from('x'), '.image.png');
     expect(res.status).toBe(400);
@@ -494,7 +498,7 @@ describe('POST /api/overlays/assets', () => {
     // surfaces that as a request error; the router defines NO error-handling
     // middleware, so Express's default handler returns 500 (NOT the 400 "no file"
     // path). Pinned as-is — this is a rough edge, not the intended 400.
-    const res = await request(makeApp())
+    const res = await client
       .post('/api/overlays/assets')
       .attach('file', Buffer.from('x'), 'notes.txt');
     expect(res.status).toBe(500);
@@ -507,7 +511,7 @@ describe('POST /api/overlays/assets', () => {
 describe('GET /api/overlays/assets', () => {
   it('lists non-dotfile assets with their sizes', async () => {
     h.setAssets({ 'a.png': 123, 'b.jpg': 456 });
-    const res = await request(makeApp()).get('/api/overlays/assets');
+    const res = await client.get('/api/overlays/assets');
     expect(res.status).toBe(200);
     expect(res.body).toEqual([
       { name: 'a.png', size: 123 },
@@ -517,14 +521,14 @@ describe('GET /api/overlays/assets', () => {
 
   it('filters out dotfiles', async () => {
     h.setAssets({ '.hidden': 9, 'shown.png': 10 });
-    const res = await request(makeApp()).get('/api/overlays/assets');
+    const res = await client.get('/api/overlays/assets');
     expect(res.status).toBe(200);
     expect(res.body).toEqual([{ name: 'shown.png', size: 10 }]);
   });
 
   it('returns [] when readdir throws (swallowed catch)', async () => {
     vi.spyOn(fs, 'readdirSync').mockImplementation(() => { throw new Error('boom'); });
-    const res = await request(makeApp()).get('/api/overlays/assets');
+    const res = await client.get('/api/overlays/assets');
     expect(res.status).toBe(200);
     expect(res.body).toEqual([]);
   });
@@ -536,14 +540,14 @@ describe('GET /api/overlays/assets', () => {
 describe('DELETE /api/overlays/assets/:name', () => {
   it('unlinks an existing asset and returns { ok: true }', async () => {
     h.setAssets({ 'gone.png': 1 });
-    const res = await request(makeApp()).delete('/api/overlays/assets/gone.png');
+    const res = await client.delete('/api/overlays/assets/gone.png');
     expect(res.status).toBe(200);
     expect(res.body).toEqual({ ok: true });
     expect(h.unlinked).toContain(ASSETS_DIR + '/gone.png');
   });
 
   it('returns { ok: true } even when the file does not exist (no unlink)', async () => {
-    const res = await request(makeApp()).delete('/api/overlays/assets/missing.png');
+    const res = await client.delete('/api/overlays/assets/missing.png');
     expect(res.status).toBe(200);
     expect(res.body).toEqual({ ok: true });
     expect(h.unlinked).toEqual([]);
@@ -552,7 +556,7 @@ describe('DELETE /api/overlays/assets/:name', () => {
   it('returns 400 invalid path when name resolves outside ASSETS_DIR via traversal', async () => {
     // path.join(ASSETS_DIR, '../../etc/passwd') escapes ASSETS_DIR, so
     // indexOf(ASSETS_DIR) !== 0 -> 400. Express decodes %2e%2e to '..'.
-    const res = await request(makeApp()).delete('/api/overlays/assets/%2e%2e%2f%2e%2e%2fetc%2fpasswd');
+    const res = await client.delete('/api/overlays/assets/%2e%2e%2f%2e%2e%2fetc%2fpasswd');
     expect(res.status).toBe(400);
     expect(res.body).toEqual({ error: 'invalid path' });
   });

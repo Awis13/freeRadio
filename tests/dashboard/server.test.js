@@ -46,7 +46,7 @@
 
 import { describe, it, expect, beforeAll, afterAll, vi } from 'vitest';
 import { createRequire } from 'module';
-import request from 'supertest';
+import { serverAgent } from './helpers/serverAgent.js';
 
 const nodeRequire = createRequire(import.meta.url);
 
@@ -181,19 +181,26 @@ describe('test-mode guard', () => {
 
 describe('auth gate (DASHBOARD_TOKEN set)', () => {
   let app;
+  let client;
+  let closeServer;
 
-  beforeAll(() => {
+  beforeAll(async () => {
     ({ app } = loadServer(TOKEN));
+    ({ client, close: closeServer } = await serverAgent(app));
+  });
+
+  afterAll(async () => {
+    await closeServer();
   });
 
   it('rejects a protected /api route without a token: 401 {error:"Unauthorized"}', async () => {
-    const res = await request(app).get('/api/protected-probe');
+    const res = await client.get('/api/protected-probe');
     expect(res.status).toBe(401);
     expect(res.body).toEqual({ error: 'Unauthorized' });
   });
 
   it('rejects a protected /api route with a wrong Bearer token: 401', async () => {
-    const res = await request(app)
+    const res = await client
       .get('/api/protected-probe')
       .set('Authorization', 'Bearer wrong-token');
     expect(res.status).toBe(401);
@@ -201,14 +208,14 @@ describe('auth gate (DASHBOARD_TOKEN set)', () => {
   });
 
   it('rejects a malformed Authorization header (token without Bearer prefix): 401', async () => {
-    const res = await request(app)
+    const res = await client
       .get('/api/protected-probe')
       .set('Authorization', TOKEN);
     expect(res.status).toBe(401);
   });
 
   it('lets a correct Bearer token through the gate (404 from routers, not 401)', async () => {
-    const res = await request(app)
+    const res = await client
       .get('/api/protected-probe')
       .set('Authorization', 'Bearer ' + TOKEN);
     expect(res.status).toBe(404);
@@ -232,20 +239,20 @@ describe('auth gate (DASHBOARD_TOKEN set)', () => {
   it.each(publicPathProbes)(
     'public path passes the gate without a token: %s %s -> %i',
     async (method, path, expectedStatus) => {
-      const res = await request(app)[method.toLowerCase()](path);
+      const res = await client[method.toLowerCase()](path);
       expect(res.status).not.toBe(401);
       expect(res.status).toBe(expectedStatus);
     }
   );
 
   it('prefix semantics: /api/status/anything is public (startsWith match)', async () => {
-    const res = await request(app).get('/api/status/anything');
+    const res = await client.get('/api/status/anything');
     expect(res.status).not.toBe(401);
     expect(res.status).toBe(404); // no such route, but gate passed
   });
 
   it('prefix semantics: /api/statusx is NOT public (no slash boundary match)', async () => {
-    const res = await request(app).get('/api/statusx');
+    const res = await client.get('/api/statusx');
     expect(res.status).toBe(401);
     expect(res.body).toEqual({ error: 'Unauthorized' });
   });
@@ -258,9 +265,14 @@ describe('auth gate (DASHBOARD_TOKEN empty)', () => {
     // This pins the current, intentional behavior: when DASHBOARD_TOKEN is not
     // configured the gate is a full bypass (`if (!DASHBOARD_TOKEN) return next()`).
     const { app } = loadServer('');
-    const res = await request(app).get('/api/protected-probe');
-    expect(res.status).not.toBe(401);
-    expect(res.status).toBe(404); // fell through all routers, gate never fired
+    const { client, close } = await serverAgent(app);
+    try {
+      const res = await client.get('/api/protected-probe');
+      expect(res.status).not.toBe(401);
+      expect(res.status).toBe(404); // fell through all routers, gate never fired
+    } finally {
+      await close();
+    }
   });
 });
 
@@ -268,19 +280,26 @@ describe('auth gate (DASHBOARD_TOKEN empty)', () => {
 
 describe('mount order (token set, no Authorization header)', () => {
   let app;
+  let client;
+  let closeServer;
 
-  beforeAll(() => {
+  beforeAll(async () => {
     ({ app } = loadServer(TOKEN));
+    ({ client, close: closeServer } = await serverAgent(app));
+  });
+
+  afterAll(async () => {
+    await closeServer();
   });
 
   it('/auth/sso is mounted before the gate: reachable, responds 400 for missing token param', async () => {
-    const res = await request(app).get('/auth/sso');
+    const res = await client.get('/auth/sso');
     expect(res.status).toBe(400);
     expect(res.text).toContain('Missing token parameter');
   });
 
   it('/api/health responds 200 without a token', async () => {
-    const res = await request(app).get('/api/health');
+    const res = await client.get('/api/health');
     expect(res.status).toBe(200);
   });
 
@@ -288,7 +307,7 @@ describe('mount order (token set, no Authorization header)', () => {
     // Tier is pinned to 'free' by the seeded tierLimits.getTier stub (hermetic:
     // the real /shared/tier.json on the host cannot influence this); the limits
     // body still comes from the real getLimits matrix.
-    const res = await request(app).get('/api/tier');
+    const res = await client.get('/api/tier');
     expect(res.status).toBe(200);
     expect(res.body.tier).toBe('free');
     expect(res.body.limits).toEqual({
@@ -302,13 +321,20 @@ describe('mount order (token set, no Authorization header)', () => {
 describe('/api/health contract', () => {
   let app;
   let state;
+  let client;
+  let closeServer;
 
-  beforeAll(() => {
+  beforeAll(async () => {
     ({ app, state } = loadServer(TOKEN));
+    ({ client, close: closeServer } = await serverAgent(app));
+  });
+
+  afterAll(async () => {
+    await closeServer();
   });
 
   it('returns the exact shape {status, listeners, uptime, stream_active}', async () => {
-    const res = await request(app).get('/api/health');
+    const res = await client.get('/api/health');
     expect(res.status).toBe(200);
     expect(Object.keys(res.body).sort()).toEqual(['listeners', 'status', 'stream_active', 'uptime']);
     expect(res.body.status).toBe('ok');
@@ -320,31 +346,31 @@ describe('/api/health contract', () => {
 
   it('stream_active is false when ffmpeg speed is "0x"', async () => {
     state.ffmpeg = { speed: '0x' };
-    const res = await request(app).get('/api/health');
+    const res = await client.get('/api/health');
     expect(res.body.stream_active).toBe(false);
   });
 
   it('stream_active is false when ffmpeg state is an empty object', async () => {
     state.ffmpeg = {};
-    const res = await request(app).get('/api/health');
+    const res = await client.get('/api/health');
     expect(res.body.stream_active).toBe(false);
   });
 
   it('stream_active is true when ffmpeg speed is "1.01x"', async () => {
     state.ffmpeg = { speed: '1.01x' };
-    const res = await request(app).get('/api/health');
+    const res = await client.get('/api/health');
     expect(res.body.stream_active).toBe(true);
   });
 
   it('listeners falls back to 0 when icecast state is missing', async () => {
     state.icecast = null;
-    const res = await request(app).get('/api/health');
+    const res = await client.get('/api/health');
     expect(res.body.listeners).toBe(0);
   });
 
   it('listeners reflects icecast state when present', async () => {
     state.icecast = { listeners: 42, bitrate: 128, serverStart: '' };
-    const res = await request(app).get('/api/health');
+    const res = await client.get('/api/health');
     expect(res.body.listeners).toBe(42);
   });
 });
@@ -391,13 +417,20 @@ describe('getInitState()', () => {
 
 describe('security headers', () => {
   let app;
+  let client;
+  let closeServer;
 
-  beforeAll(() => {
+  beforeAll(async () => {
     ({ app } = loadServer(TOKEN));
+    ({ client, close: closeServer } = await serverAgent(app));
+  });
+
+  afterAll(async () => {
+    await closeServer();
   });
 
   it('sets the exact CSP and hardening headers on a plain GET', async () => {
-    const res = await request(app).get('/');
+    const res = await client.get('/');
     expect(res.headers['content-security-policy']).toBe(
       "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; " +
       "img-src 'self' data: blob:; media-src 'self' blob:; connect-src 'self' ws: wss:; " +
@@ -409,7 +442,7 @@ describe('security headers', () => {
   });
 
   it('sets the same headers on API responses (middleware runs before routers)', async () => {
-    const res = await request(app).get('/api/health');
+    const res = await client.get('/api/health');
     expect(res.headers['content-security-policy']).toContain("default-src 'self'");
     expect(res.headers['x-frame-options']).toBe('DENY');
   });

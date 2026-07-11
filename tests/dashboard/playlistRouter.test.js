@@ -28,22 +28,26 @@
  */
 
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
-import request from 'supertest';
+import { serverAgent } from './helpers/serverAgent.js';
 
 import { installPlaylistFsHarness } from './playlistHarness.js';
 
 let h;
 let makeApp;
+let client;
+let closeServer;
 let seed;
 let savedPlaylists;
 
-beforeEach(() => {
+beforeEach(async () => {
   vi.restoreAllMocks();
   h = installPlaylistFsHarness();
   ({ makeApp, seed, savedPlaylists } = h);
+  ({ client, close: closeServer } = await serverAgent(makeApp()));
 });
 
-afterEach(() => {
+afterEach(async () => {
+  await closeServer();
   vi.restoreAllMocks();
 });
 
@@ -52,7 +56,7 @@ afterEach(() => {
 // ---------------------------------------------------------------------------
 describe('GET / — list', () => {
   it('returns [] when there are no playlists', async () => {
-    const res = await request(makeApp()).get('/api/playlists');
+    const res = await client.get('/api/playlists');
     expect(res.status).toBe(200);
     expect(res.body).toEqual([]);
   });
@@ -63,7 +67,7 @@ describe('GET / — list', () => {
       pl_1: { id: 'pl_1', name: 'Manual', type: 'manual', tracks: ['a.mp3', 'b.mp3', 'c.mp3'] }
     });
 
-    const res = await request(makeApp()).get('/api/playlists');
+    const res = await client.get('/api/playlists');
     expect(res.status).toBe(200);
     expect(res.body).toHaveLength(1);
     // AS-IS: b.mp3 has no file → excluded from the count (2, not 3).
@@ -78,7 +82,7 @@ describe('GET / — list', () => {
       pl_smart: { id: 'pl_smart', name: 'Smart', type: 'smart', rules: {} }
     });
 
-    const res = await request(makeApp()).get('/api/playlists');
+    const res = await client.get('/api/playlists');
     expect(res.body[0].trackCount).toBe(2);
   });
 
@@ -88,7 +92,7 @@ describe('GET / — list', () => {
       pl_smart: { id: 'pl_smart', name: 'Rock', type: 'smart', rules: { namePattern: '^rock_' } }
     });
 
-    const res = await request(makeApp()).get('/api/playlists');
+    const res = await client.get('/api/playlists');
     expect(res.body[0].trackCount).toBe(2);
   });
 
@@ -99,7 +103,7 @@ describe('GET / — list', () => {
       pl_2: { id: 'pl_2', name: 'S', type: 'smart', rules: {} }
     });
 
-    const res = await request(makeApp()).get('/api/playlists');
+    const res = await client.get('/api/playlists');
     const byId = Object.fromEntries(res.body.map(p => [p.id, p]));
     expect(byId.pl_1.trackCount).toBe(1);
     expect(byId.pl_2.trackCount).toBe(2);
@@ -111,13 +115,13 @@ describe('GET / — list', () => {
 // ---------------------------------------------------------------------------
 describe('POST / — create', () => {
   it('returns 400 { error: "name required" } when name is absent', async () => {
-    const res = await request(makeApp()).post('/api/playlists').send({ type: 'manual' });
+    const res = await client.post('/api/playlists').send({ type: 'manual' });
     expect(res.status).toBe(400);
     expect(res.body).toEqual({ error: 'name required' });
   });
 
   it('defaults type to "manual" and basenames + drops falsy tracks', async () => {
-    const res = await request(makeApp())
+    const res = await client
       .post('/api/playlists')
       .send({ name: 'New', tracks: ['/music/a.mp3', 'sub/dir/b.flac', ''] });
 
@@ -131,21 +135,21 @@ describe('POST / — create', () => {
   });
 
   it('non-array tracks on a manual playlist become [] (AS-IS)', async () => {
-    const res = await request(makeApp())
+    const res = await client
       .post('/api/playlists')
       .send({ name: 'NoTracks', tracks: 'not-an-array' });
     expect(res.body.tracks).toEqual([]);
   });
 
   it('manual playlist with tracks omitted gets tracks: []', async () => {
-    const res = await request(makeApp())
+    const res = await client
       .post('/api/playlists')
       .send({ name: 'Empty' });
     expect(res.body.tracks).toEqual([]);
   });
 
   it('smart playlist stores rules and has NO tracks key', async () => {
-    const res = await request(makeApp())
+    const res = await client
       .post('/api/playlists')
       .send({ name: 'Smart', type: 'smart', rules: { bpmMin: 120 } });
 
@@ -155,14 +159,14 @@ describe('POST / — create', () => {
   });
 
   it('smart playlist with rules omitted defaults rules to {}', async () => {
-    const res = await request(makeApp())
+    const res = await client
       .post('/api/playlists')
       .send({ name: 'Smart', type: 'smart' });
     expect(res.body.rules).toEqual({});
   });
 
   it('persists the created playlist via savePlaylists', async () => {
-    const res = await request(makeApp())
+    const res = await client
       .post('/api/playlists')
       .send({ name: 'Persisted', tracks: ['a.mp3'] });
 
@@ -178,7 +182,7 @@ describe('POST / — create', () => {
 // ---------------------------------------------------------------------------
 describe('GET /:id — details', () => {
   it('returns 404 { error: "not found" } for an unknown id', async () => {
-    const res = await request(makeApp()).get('/api/playlists/nope');
+    const res = await client.get('/api/playlists/nope');
     expect(res.status).toBe(404);
     expect(res.body).toEqual({ error: 'not found' });
   });
@@ -189,7 +193,7 @@ describe('GET /:id — details', () => {
       pl_1: { id: 'pl_1', name: 'M', type: 'manual', tracks: ['a.mp3', 'b.mp3', 'c.mp3'] }
     });
 
-    const res = await request(makeApp()).get('/api/playlists/pl_1');
+    const res = await client.get('/api/playlists/pl_1');
     expect(res.status).toBe(200);
     expect(res.body.name).toBe('M');
     // resolvePlaylist drops the missing b.mp3.
@@ -203,7 +207,7 @@ describe('GET /:id — details', () => {
       pl_s: { id: 'pl_s', name: 'S', type: 'smart', rules: {} }
     });
 
-    const res = await request(makeApp()).get('/api/playlists/pl_s');
+    const res = await client.get('/api/playlists/pl_s');
     expect(res.body.resolvedTracks).toEqual(['k1.mp3', 'k2.mp3']);
     expect(res.body.trackCount).toBe(2);
   });
@@ -214,7 +218,7 @@ describe('GET /:id — details', () => {
 // ---------------------------------------------------------------------------
 describe('PUT /:id — update', () => {
   it('returns 404 for an unknown id', async () => {
-    const res = await request(makeApp()).put('/api/playlists/nope').send({ name: 'X' });
+    const res = await client.put('/api/playlists/nope').send({ name: 'X' });
     expect(res.status).toBe(404);
     expect(res.body).toEqual({ error: 'not found' });
   });
@@ -224,7 +228,7 @@ describe('PUT /:id — update', () => {
       pl_1: { id: 'pl_1', name: 'Old', type: 'manual', tracks: ['a.mp3'], updatedAt: 1 }
     });
 
-    const res = await request(makeApp()).put('/api/playlists/pl_1').send({ name: 'New' });
+    const res = await client.put('/api/playlists/pl_1').send({ name: 'New' });
     expect(res.status).toBe(200);
     expect(res.body.name).toBe('New');
     expect(res.body.tracks).toEqual(['a.mp3']); // untouched
@@ -236,7 +240,7 @@ describe('PUT /:id — update', () => {
       pl_1: { id: 'pl_1', name: 'M', type: 'manual', tracks: ['a.mp3'], updatedAt: 1 }
     });
 
-    const res = await request(makeApp())
+    const res = await client
       .put('/api/playlists/pl_1')
       .send({ tracks: ['/x/new1.mp3', '', 'new2.flac'] });
 
@@ -248,7 +252,7 @@ describe('PUT /:id — update', () => {
       pl_s: { id: 'pl_s', name: 'S', type: 'smart', rules: { bpmMin: 100 }, updatedAt: 1 }
     });
 
-    const res = await request(makeApp())
+    const res = await client
       .put('/api/playlists/pl_s')
       .send({ tracks: ['injected.mp3'] });
 
@@ -263,7 +267,7 @@ describe('PUT /:id — update', () => {
       pl_s: { id: 'pl_s', name: 'S', type: 'smart', rules: { bpmMin: 100 }, updatedAt: 1 }
     });
 
-    const res = await request(makeApp())
+    const res = await client
       .put('/api/playlists/pl_s')
       .send({ rules: { bpmMax: 90 } });
 
@@ -275,7 +279,7 @@ describe('PUT /:id — update', () => {
       pl_1: { id: 'pl_1', name: 'M', type: 'manual', tracks: ['a.mp3'], updatedAt: 1 }
     });
 
-    const res = await request(makeApp())
+    const res = await client
       .put('/api/playlists/pl_1')
       .send({ rules: { bpmMin: 50 } });
 
@@ -290,7 +294,7 @@ describe('PUT /:id — update', () => {
       pl_1: { id: 'pl_1', name: 'Old', type: 'manual', tracks: [], updatedAt: 1 }
     });
 
-    await request(makeApp()).put('/api/playlists/pl_1').send({ name: 'Saved' });
+    await client.put('/api/playlists/pl_1').send({ name: 'Saved' });
     expect(savedPlaylists().pl_1.name).toBe('Saved');
   });
 });
@@ -300,7 +304,7 @@ describe('PUT /:id — update', () => {
 // ---------------------------------------------------------------------------
 describe('DELETE /:id', () => {
   it('returns 404 for an unknown id', async () => {
-    const res = await request(makeApp()).delete('/api/playlists/nope');
+    const res = await client.delete('/api/playlists/nope');
     expect(res.status).toBe(404);
     expect(res.body).toEqual({ error: 'not found' });
   });
@@ -311,7 +315,7 @@ describe('DELETE /:id', () => {
       pl_2: { id: 'pl_2', name: 'N', type: 'manual', tracks: [] }
     });
 
-    const res = await request(makeApp()).delete('/api/playlists/pl_1');
+    const res = await client.delete('/api/playlists/pl_1');
     expect(res.status).toBe(200);
     expect(res.body).toEqual({ ok: true });
 
@@ -326,7 +330,7 @@ describe('DELETE /:id', () => {
 // ---------------------------------------------------------------------------
 describe('POST /:id/reorder', () => {
   it('returns 404 for an unknown id', async () => {
-    const res = await request(makeApp())
+    const res = await client
       .post('/api/playlists/nope/reorder')
       .send({ from: 0, to: 1 });
     expect(res.status).toBe(404);
@@ -336,7 +340,7 @@ describe('POST /:id/reorder', () => {
   it('returns 400 { error: "only manual playlists" } for a smart playlist', async () => {
     seed({ pl_s: { id: 'pl_s', name: 'S', type: 'smart', rules: {} } });
 
-    const res = await request(makeApp())
+    const res = await client
       .post('/api/playlists/pl_s/reorder')
       .send({ from: 0, to: 1 });
     expect(res.status).toBe(400);
@@ -346,7 +350,7 @@ describe('POST /:id/reorder', () => {
   it('returns 400 when from/to are not numbers', async () => {
     seed({ pl_1: { id: 'pl_1', name: 'M', type: 'manual', tracks: ['a', 'b'] } });
 
-    const res = await request(makeApp())
+    const res = await client
       .post('/api/playlists/pl_1/reorder')
       .send({ from: 'a', to: 1 });
     expect(res.status).toBe(400);
@@ -356,7 +360,7 @@ describe('POST /:id/reorder', () => {
   it('AS-IS: a NUMERIC STRING ("1") is rejected by the typeof check', async () => {
     seed({ pl_1: { id: 'pl_1', name: 'M', type: 'manual', tracks: ['a', 'b', 'c'] } });
 
-    const res = await request(makeApp())
+    const res = await client
       .post('/api/playlists/pl_1/reorder')
       .send({ from: '0', to: '1' });
     expect(res.status).toBe(400);
@@ -366,7 +370,7 @@ describe('POST /:id/reorder', () => {
   it('returns 400 { error: "index out of range" } when from is out of range', async () => {
     seed({ pl_1: { id: 'pl_1', name: 'M', type: 'manual', tracks: ['a', 'b'] } });
 
-    const res = await request(makeApp())
+    const res = await client
       .post('/api/playlists/pl_1/reorder')
       .send({ from: 5, to: 0 });
     expect(res.status).toBe(400);
@@ -376,7 +380,7 @@ describe('POST /:id/reorder', () => {
   it('returns 400 index out of range when to is negative', async () => {
     seed({ pl_1: { id: 'pl_1', name: 'M', type: 'manual', tracks: ['a', 'b'] } });
 
-    const res = await request(makeApp())
+    const res = await client
       .post('/api/playlists/pl_1/reorder')
       .send({ from: 0, to: -1 });
     expect(res.status).toBe(400);
@@ -388,7 +392,7 @@ describe('POST /:id/reorder', () => {
       pl_1: { id: 'pl_1', name: 'M', type: 'manual', tracks: ['a', 'b', 'c', 'd'], updatedAt: 1 }
     });
 
-    const res = await request(makeApp())
+    const res = await client
       .post('/api/playlists/pl_1/reorder')
       .send({ from: 0, to: 2 });
 

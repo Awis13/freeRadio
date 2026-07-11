@@ -8,7 +8,7 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import fs from 'fs';
 import express from 'express';
-import request from 'supertest';
+import { serverAgent } from './helpers/serverAgent.js';
 
 const HISTORY_FILE = '/shared/play_history.jsonl';
 let files = {};
@@ -23,7 +23,10 @@ function makeApp() {
   return app;
 }
 
-beforeEach(() => {
+let client;
+let closeServer;
+
+beforeEach(async () => {
   files = {};
   vi.restoreAllMocks();
 
@@ -42,9 +45,11 @@ beforeEach(() => {
       throw new Error('ENOENT');
     }
   });
+  ({ client, close: closeServer } = await serverAgent(makeApp()));
 });
 
-afterEach(() => {
+afterEach(async () => {
+  await closeServer();
   vi.restoreAllMocks();
 });
 
@@ -242,7 +247,7 @@ describe('createHistoryRouter', () => {
       }
       files[HISTORY_FILE] = content;
 
-      const res = await request(makeApp()).get('/api/history');
+      const res = await client.get('/api/history');
       expect(res.status).toBe(200);
       expect(res.body.length).toBe(50);
       // slice(-50) -> last 50, so first returned is t10.mp3.
@@ -256,7 +261,7 @@ describe('createHistoryRouter', () => {
         JSON.stringify({ track: 'b.mp3', ts: 2 }) + '\n' +
         JSON.stringify({ track: 'c.mp3', ts: 3 }) + '\n';
 
-      const res = await request(makeApp()).get('/api/history?limit=2');
+      const res = await client.get('/api/history?limit=2');
       expect(res.status).toBe(200);
       expect(res.body.map(e => e.track)).toEqual(['b.mp3', 'c.mp3']);
     });
@@ -270,15 +275,15 @@ describe('createHistoryRouter', () => {
       }
       files[HISTORY_FILE] = content;
 
-      const zero = await request(makeApp()).get('/api/history?limit=0');
+      const zero = await client.get('/api/history?limit=0');
       expect(zero.body.length).toBe(50);
 
-      const junk = await request(makeApp()).get('/api/history?limit=abc');
+      const junk = await client.get('/api/history?limit=abc');
       expect(junk.body.length).toBe(50);
     });
 
     it('returns [] when no history file exists', async () => {
-      const res = await request(makeApp()).get('/api/history');
+      const res = await client.get('/api/history');
       expect(res.status).toBe(200);
       expect(res.body).toEqual([]);
     });
@@ -291,7 +296,7 @@ describe('createHistoryRouter', () => {
         JSON.stringify({ track: 'a.mp3', ts: 20 }) + '\n' +
         JSON.stringify({ track: 'b.mp3', ts: 30 }) + '\n';
 
-      const res = await request(makeApp()).get('/api/history/stats');
+      const res = await client.get('/api/history/stats');
       expect(res.status).toBe(200);
       const stats = res.body;
       expect(stats.totalPlayed).toBe(3);
@@ -309,7 +314,7 @@ describe('createHistoryRouter', () => {
         JSON.stringify({ track: 'a.mp3', ts: 1 }) + '\n' +
         JSON.stringify({ track: 'b.mp3', ts: 2 }) + '\n';
 
-      const res = await request(makeApp()).get('/api/history/analytics');
+      const res = await client.get('/api/history/analytics');
       expect(res.status).toBe(200);
       const payload = res.body;
       // startedAt is captured at module import (real time) and tests run within
@@ -328,7 +333,7 @@ describe('createHistoryRouter', () => {
       const real = Date.now();
       const spy = vi.spyOn(Date, 'now').mockReturnValue(real + (2 * 3600000) + (5 * 60000));
       try {
-        const res = await request(makeApp()).get('/api/history/analytics');
+        const res = await client.get('/api/history/analytics');
         const payload = res.body;
         // hours>0 -> "<h>h <m>m"; exact h/m depends on real startedAt, so pin
         // the FORMAT and that hours is at least 2.
@@ -341,7 +346,7 @@ describe('createHistoryRouter', () => {
     });
 
     it('reports zeros when there is no history', async () => {
-      const res = await request(makeApp()).get('/api/history/analytics');
+      const res = await client.get('/api/history/analytics');
       const payload = res.body;
       expect(payload.totalTracks).toBe(0);
       expect(payload.uniqueTracks).toBe(0);
