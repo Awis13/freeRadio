@@ -24,7 +24,7 @@
  */
 
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
-import request from 'supertest';
+import { serverAgent } from './helpers/serverAgent.js';
 
 import { installPlaylistFsHarness } from './playlistHarness.js';
 
@@ -32,15 +32,19 @@ const { parseM3U } = (await import('../../dashboard/lib/playlist.js'))._test;
 
 let h;
 let makeApp;
+let client;
+let closeServer;
 let savedPlaylists;
 
-beforeEach(() => {
+beforeEach(async () => {
   vi.restoreAllMocks();
   h = installPlaylistFsHarness();
   ({ makeApp, savedPlaylists } = h);
+  ({ client, close: closeServer } = await serverAgent(makeApp()));
 });
 
-afterEach(() => {
+afterEach(async () => {
+  await closeServer();
   vi.restoreAllMocks();
 });
 
@@ -90,7 +94,7 @@ describe('parseM3U', () => {
 // ---------------------------------------------------------------------------
 describe('POST /import — no file', () => {
   it('returns 400 { error: "no file" } when no file attached', async () => {
-    const res = await request(makeApp()).post('/api/playlists/import');
+    const res = await client.post('/api/playlists/import');
     expect(res.status).toBe(400);
     expect(res.body).toEqual({ error: 'no file' });
   });
@@ -105,7 +109,7 @@ describe('POST /import — m3u', () => {
     h.setMusicFiles(['a.mp3', 'c.mp3']);
     const content = 'a.mp3\nb.mp3\nc.mp3\n';
 
-    const res = await request(makeApp())
+    const res = await client
       .post('/api/playlists/import')
       .field('name', 'My Import')
       .attach('file', Buffer.from(content), 'set.m3u');
@@ -125,7 +129,7 @@ describe('POST /import — m3u', () => {
 
   it('persists the new playlist via savePlaylists (writeFileSync payload)', async () => {
     h.setMusicFiles(['x.mp3']);
-    const res = await request(makeApp())
+    const res = await client
       .post('/api/playlists/import')
       .field('name', 'Persisted')
       .attach('file', Buffer.from('x.mp3\n'), 'p.m3u');
@@ -139,7 +143,7 @@ describe('POST /import — m3u', () => {
 
   it('drops ALL tracks when none exist; importedCount 0, totalParsed kept', async () => {
     h.setMusicFiles([]);
-    const res = await request(makeApp())
+    const res = await client
       .post('/api/playlists/import')
       .attach('file', Buffer.from('a.mp3\nb.mp3\n'), 'none.m3u');
 
@@ -155,7 +159,7 @@ describe('POST /import — m3u', () => {
 describe('POST /import — name resolution', () => {
   it('explicit body.name overrides the originalname-derived name', async () => {
     h.setMusicFiles(['a.mp3']);
-    const res = await request(makeApp())
+    const res = await client
       .post('/api/playlists/import')
       .field('name', 'Explicit')
       .attach('file', Buffer.from('a.mp3\n'), 'ignored-name.m3u');
@@ -164,7 +168,7 @@ describe('POST /import — name resolution', () => {
 
   it('derives name from originalname minus extension when no name field', async () => {
     h.setMusicFiles(['a.mp3']);
-    const res = await request(makeApp())
+    const res = await client
       .post('/api/playlists/import')
       .attach('file', Buffer.from('a.mp3\n'), 'My Set.m3u');
     expect(res.body.name).toBe('My Set');
@@ -172,7 +176,7 @@ describe('POST /import — name resolution', () => {
 
   it('AS-IS edge: originalname ".m3u" strips to "" then falls back to "Imported"', async () => {
     h.setMusicFiles(['a.mp3']);
-    const res = await request(makeApp())
+    const res = await client
       .post('/api/playlists/import')
       .attach('file', Buffer.from('a.mp3\n'), '.m3u');
     expect(res.body.name).toBe('Imported');
@@ -195,7 +199,7 @@ describe('POST /import — pls', () => {
       'Version=2',
     ].join('\n');
 
-    const res = await request(makeApp())
+    const res = await client
       .post('/api/playlists/import')
       .attach('file', Buffer.from(content), 'list.pls');
 
@@ -217,7 +221,7 @@ describe('POST /import — pls', () => {
       'Length1=-1',
     ].join('\n');
 
-    const res = await request(makeApp())
+    const res = await client
       .post('/api/playlists/import')
       .attach('file', Buffer.from(content), 'numbered.pls');
 
@@ -228,7 +232,7 @@ describe('POST /import — pls', () => {
   it('pls existence filter drops non-existing tracks but keeps totalParsed', async () => {
     h.setMusicFiles(['a.mp3']); // b.mp3 missing
     const content = 'File1=a.mp3\nFile2=b.mp3\n';
-    const res = await request(makeApp())
+    const res = await client
       .post('/api/playlists/import')
       .attach('file', Buffer.from(content), 'gap.pls');
     expect(res.body.tracks).toEqual(['a.mp3']);

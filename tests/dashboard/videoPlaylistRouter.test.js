@@ -25,7 +25,7 @@
  */
 
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
-import request from 'supertest';
+import { serverAgent } from './helpers/serverAgent.js';
 
 import {
   installVideoPlaylistFsHarness,
@@ -35,16 +35,20 @@ import {
 
 let h;
 let makeApp;
+let client;
+let closeServer;
 let seed;
 let savedPlaylists;
 
-beforeEach(() => {
+beforeEach(async () => {
   vi.restoreAllMocks();
   h = installVideoPlaylistFsHarness();
   ({ makeApp, seed, savedPlaylists } = h);
+  ({ client, close: closeServer } = await serverAgent(makeApp()));
 });
 
-afterEach(() => {
+afterEach(async () => {
+  await closeServer();
   vi.restoreAllMocks();
 });
 
@@ -54,7 +58,7 @@ afterEach(() => {
 describe('GET / — list', () => {
   it('returns [] when there are no playlists', async () => {
     seed({});
-    const res = await request(makeApp()).get('/api/video-playlists');
+    const res = await client.get('/api/video-playlists');
     expect(res.status).toBe(200);
     expect(res.body).toEqual([]);
   });
@@ -65,7 +69,7 @@ describe('GET / — list', () => {
       vpl_1: { id: 'vpl_1', name: 'Manual', type: 'manual', tracks: ['a.mp4', 'b.mp4', 'c.mp4'] }
     });
 
-    const res = await request(makeApp()).get('/api/video-playlists');
+    const res = await client.get('/api/video-playlists');
     expect(res.status).toBe(200);
     expect(res.body).toHaveLength(1);
     // AS-IS: the missing b.mp4 is excluded from the count (2, not 3).
@@ -77,7 +81,7 @@ describe('GET / — list', () => {
     h.setProcessedFiles(['a.mp4']);
     seed({ vpl_1: { id: 'vpl_1', name: 'M', type: 'manual', tracks: ['a.mp4'] } });
 
-    const res = await request(makeApp()).get('/api/video-playlists');
+    const res = await client.get('/api/video-playlists');
     expect('trackCount' in res.body[0]).toBe(true);
     expect('videoCount' in res.body[0]).toBe(false);
   });
@@ -86,7 +90,7 @@ describe('GET / — list', () => {
     h.setProcessedFiles(['x.mp4', 'y.mov']);
     seed({ vpl_s: { id: 'vpl_s', name: 'Smart', type: 'smart', rules: {} } });
 
-    const res = await request(makeApp()).get('/api/video-playlists');
+    const res = await client.get('/api/video-playlists');
     expect(res.body[0].trackCount).toBe(2);
   });
 
@@ -94,7 +98,7 @@ describe('GET / — list', () => {
     h.setProcessedFiles(['cyber_1.mp4', 'cyber_2.mp4', 'nature.mp4']);
     seed({ vpl_s: { id: 'vpl_s', name: 'Cyber', type: 'smart', rules: { namePattern: '^cyber_' } } });
 
-    const res = await request(makeApp()).get('/api/video-playlists');
+    const res = await client.get('/api/video-playlists');
     expect(res.body[0].trackCount).toBe(2);
   });
 
@@ -109,11 +113,11 @@ describe('GET / — list', () => {
       vpl_d: { id: 'vpl_d', name: 'Div', type: 'manual', tracks: ['x.mp4', 'sub/x.mp4'] }
     });
 
-    const list = await request(makeApp()).get('/api/video-playlists');
+    const list = await client.get('/api/video-playlists');
     // GET / counts BOTH: bare 'x.mp4' and 'sub/x.mp4' (latter via unguarded basename).
     expect(list.body[0].trackCount).toBe(2);
 
-    const detail = await request(makeApp()).get('/api/video-playlists/vpl_d');
+    const detail = await client.get('/api/video-playlists/vpl_d');
     // GET /:id resolve DROPS 'sub/x.mp4' (basename !== t) — only bare 'x.mp4' survives.
     expect(detail.body.resolvedTracks).toEqual(['x.mp4']);
     expect(detail.body.trackCount).toBe(1);
@@ -126,7 +130,7 @@ describe('GET / — list', () => {
       vpl_2: { id: 'vpl_2', name: 'S', type: 'smart', rules: {} }
     });
 
-    const res = await request(makeApp()).get('/api/video-playlists');
+    const res = await client.get('/api/video-playlists');
     const byId = Object.fromEntries(res.body.map(p => [p.id, p]));
     expect(byId.vpl_1.trackCount).toBe(1);
     expect(byId.vpl_2.trackCount).toBe(2);
@@ -140,13 +144,13 @@ describe('POST / — create', () => {
   beforeEach(() => seed({}));
 
   it('returns 400 { error: "name required" } when name is absent', async () => {
-    const res = await request(makeApp()).post('/api/video-playlists').send({ type: 'manual' });
+    const res = await client.post('/api/video-playlists').send({ type: 'manual' });
     expect(res.status).toBe(400);
     expect(res.body).toEqual({ error: 'name required' });
   });
 
   it('defaults type to "manual", basenames tracks + drops falsy entries', async () => {
-    const res = await request(makeApp())
+    const res = await client
       .post('/api/video-playlists')
       .send({ name: 'New', tracks: ['/visuals/a.mp4', 'sub/dir/b.mov', ''] });
 
@@ -160,21 +164,21 @@ describe('POST / — create', () => {
   });
 
   it('non-array tracks on a manual playlist become [] (AS-IS)', async () => {
-    const res = await request(makeApp())
+    const res = await client
       .post('/api/video-playlists')
       .send({ name: 'NoTracks', tracks: 'not-an-array' });
     expect(res.body.tracks).toEqual([]);
   });
 
   it('manual playlist with tracks omitted gets tracks: []', async () => {
-    const res = await request(makeApp())
+    const res = await client
       .post('/api/video-playlists')
       .send({ name: 'Empty' });
     expect(res.body.tracks).toEqual([]);
   });
 
   it('smart playlist stores rules and has NO tracks key', async () => {
-    const res = await request(makeApp())
+    const res = await client
       .post('/api/video-playlists')
       .send({ name: 'Smart', type: 'smart', rules: { namePattern: 'cyber' } });
 
@@ -184,14 +188,14 @@ describe('POST / — create', () => {
   });
 
   it('smart playlist with rules omitted defaults rules to {}', async () => {
-    const res = await request(makeApp())
+    const res = await client
       .post('/api/video-playlists')
       .send({ name: 'Smart', type: 'smart' });
     expect(res.body.rules).toEqual({});
   });
 
   it('AS-IS: an unknown type stores neither tracks nor rules', async () => {
-    const res = await request(makeApp())
+    const res = await client
       .post('/api/video-playlists')
       .send({ name: 'Weird', type: 'bogus' });
     expect(res.body.type).toBe('bogus');
@@ -200,7 +204,7 @@ describe('POST / — create', () => {
   });
 
   it('persists the created playlist via saveVideoPlaylists', async () => {
-    const res = await request(makeApp())
+    const res = await client
       .post('/api/video-playlists')
       .send({ name: 'Persisted', tracks: ['a.mp4'] });
 
@@ -217,7 +221,7 @@ describe('POST / — create', () => {
 describe('GET /:id — details', () => {
   it('returns 404 { error: "not found" } for an unknown id', async () => {
     seed({});
-    const res = await request(makeApp()).get('/api/video-playlists/nope');
+    const res = await client.get('/api/video-playlists/nope');
     expect(res.status).toBe(404);
     expect(res.body).toEqual({ error: 'not found' });
   });
@@ -228,7 +232,7 @@ describe('GET /:id — details', () => {
       vpl_1: { id: 'vpl_1', name: 'M', type: 'manual', tracks: ['a.mp4', 'b.mp4', 'c.mp4'] }
     });
 
-    const res = await request(makeApp()).get('/api/video-playlists/vpl_1');
+    const res = await client.get('/api/video-playlists/vpl_1');
     expect(res.status).toBe(200);
     expect(res.body.name).toBe('M');
     // resolveVideoPlaylist drops the missing b.mp4.
@@ -242,7 +246,7 @@ describe('GET /:id — details', () => {
       vpl_p: { id: 'vpl_p', name: 'P', type: 'manual', tracks: ['sub/x.mp4', 'x.mp4'] }
     });
 
-    const res = await request(makeApp()).get('/api/video-playlists/vpl_p');
+    const res = await client.get('/api/video-playlists/vpl_p');
     // 'sub/x.mp4' has basename 'x.mp4' !== 'sub/x.mp4' → dropped; bare 'x.mp4' kept.
     expect(res.body.resolvedTracks).toEqual(['x.mp4']);
   });
@@ -251,7 +255,7 @@ describe('GET /:id — details', () => {
     h.setProcessedFiles(['k1.mp4', 'k2.mov']);
     seed({ vpl_s: { id: 'vpl_s', name: 'S', type: 'smart', rules: {} } });
 
-    const res = await request(makeApp()).get('/api/video-playlists/vpl_s');
+    const res = await client.get('/api/video-playlists/vpl_s');
     expect(res.body.resolvedTracks).toEqual(['k1.mp4', 'k2.mov']);
     expect(res.body.trackCount).toBe(2);
   });
@@ -263,7 +267,7 @@ describe('GET /:id — details', () => {
 describe('PUT /:id — update', () => {
   it('returns 404 for an unknown id', async () => {
     seed({});
-    const res = await request(makeApp()).put('/api/video-playlists/nope').send({ name: 'X' });
+    const res = await client.put('/api/video-playlists/nope').send({ name: 'X' });
     expect(res.status).toBe(404);
     expect(res.body).toEqual({ error: 'not found' });
   });
@@ -273,7 +277,7 @@ describe('PUT /:id — update', () => {
       vpl_1: { id: 'vpl_1', name: 'Old', type: 'manual', tracks: ['a.mp4'], updatedAt: 1 }
     });
 
-    const res = await request(makeApp()).put('/api/video-playlists/vpl_1').send({ name: 'New' });
+    const res = await client.put('/api/video-playlists/vpl_1').send({ name: 'New' });
     expect(res.status).toBe(200);
     expect(res.body.name).toBe('New');
     expect(res.body.tracks).toEqual(['a.mp4']); // untouched
@@ -285,7 +289,7 @@ describe('PUT /:id — update', () => {
       vpl_1: { id: 'vpl_1', name: 'M', type: 'manual', tracks: ['a.mp4'], updatedAt: 1 }
     });
 
-    const res = await request(makeApp())
+    const res = await client
       .put('/api/video-playlists/vpl_1')
       .send({ tracks: ['/x/new1.mp4', '', 'new2.mov'] });
 
@@ -297,7 +301,7 @@ describe('PUT /:id — update', () => {
       vpl_s: { id: 'vpl_s', name: 'S', type: 'smart', rules: { namePattern: 'x' }, updatedAt: 1 }
     });
 
-    const res = await request(makeApp())
+    const res = await client
       .put('/api/video-playlists/vpl_s')
       .send({ tracks: ['injected.mp4'] });
 
@@ -312,7 +316,7 @@ describe('PUT /:id — update', () => {
       vpl_s: { id: 'vpl_s', name: 'S', type: 'smart', rules: { namePattern: 'a' }, updatedAt: 1 }
     });
 
-    const res = await request(makeApp())
+    const res = await client
       .put('/api/video-playlists/vpl_s')
       .send({ rules: { namePattern: 'b' } });
 
@@ -324,7 +328,7 @@ describe('PUT /:id — update', () => {
       vpl_1: { id: 'vpl_1', name: 'M', type: 'manual', tracks: ['a.mp4'], updatedAt: 1 }
     });
 
-    const res = await request(makeApp())
+    const res = await client
       .put('/api/video-playlists/vpl_1')
       .send({ rules: { namePattern: 'z' } });
 
@@ -339,7 +343,7 @@ describe('PUT /:id — update', () => {
       vpl_1: { id: 'vpl_1', name: 'Old', type: 'manual', tracks: [], updatedAt: 1 }
     });
 
-    await request(makeApp()).put('/api/video-playlists/vpl_1').send({ name: 'Saved' });
+    await client.put('/api/video-playlists/vpl_1').send({ name: 'Saved' });
     expect(savedPlaylists().vpl_1.name).toBe('Saved');
   });
 });
@@ -350,7 +354,7 @@ describe('PUT /:id — update', () => {
 describe('DELETE /:id', () => {
   it('returns 404 for an unknown id', async () => {
     seed({});
-    const res = await request(makeApp()).delete('/api/video-playlists/nope');
+    const res = await client.delete('/api/video-playlists/nope');
     expect(res.status).toBe(404);
     expect(res.body).toEqual({ error: 'not found' });
   });
@@ -361,7 +365,7 @@ describe('DELETE /:id', () => {
       vpl_2: { id: 'vpl_2', name: 'N', type: 'manual', tracks: [] }
     });
 
-    const res = await request(makeApp()).delete('/api/video-playlists/vpl_1');
+    const res = await client.delete('/api/video-playlists/vpl_1');
     expect(res.status).toBe(200);
     expect(res.body).toEqual({ ok: true });
 
@@ -374,7 +378,7 @@ describe('DELETE /:id', () => {
     seed({ vpl_1: { id: 'vpl_1', name: 'M', type: 'manual', tracks: [] } });
     h.files[ACTIVE_FILE] = JSON.stringify({ id: 'vpl_1', name: 'M', videos: [] });
 
-    const res = await request(makeApp()).delete('/api/video-playlists/vpl_1');
+    const res = await client.delete('/api/video-playlists/vpl_1');
     expect(res.status).toBe(200);
     expect(ACTIVE_FILE in h.files).toBe(false);
   });
@@ -386,7 +390,7 @@ describe('DELETE /:id', () => {
     });
     h.files[ACTIVE_FILE] = JSON.stringify({ id: 'vpl_2', name: 'N', videos: [] });
 
-    await request(makeApp()).delete('/api/video-playlists/vpl_1');
+    await client.delete('/api/video-playlists/vpl_1');
     expect(ACTIVE_FILE in h.files).toBe(true);
   });
 
@@ -394,7 +398,7 @@ describe('DELETE /:id', () => {
     seed({ vpl_1: { id: 'vpl_1', name: 'M', type: 'manual', tracks: [] } });
     h.files[ACTIVE_FILE] = 'not json{{{';
 
-    const res = await request(makeApp()).delete('/api/video-playlists/vpl_1');
+    const res = await client.delete('/api/video-playlists/vpl_1');
     expect(res.status).toBe(200);
     expect(res.body).toEqual({ ok: true });
     // Corrupt file is NOT touched (parse threw before the id check / unlink).
@@ -409,7 +413,7 @@ describe('DELETE /:id', () => {
 describe('POST /:id/reorder', () => {
   it('returns 404 for an unknown id', async () => {
     seed({});
-    const res = await request(makeApp())
+    const res = await client
       .post('/api/video-playlists/nope/reorder')
       .send({ from: 0, to: 1 });
     expect(res.status).toBe(404);
@@ -419,7 +423,7 @@ describe('POST /:id/reorder', () => {
   it('returns 400 { error: "only manual playlists" } for a smart playlist', async () => {
     seed({ vpl_s: { id: 'vpl_s', name: 'S', type: 'smart', rules: {} } });
 
-    const res = await request(makeApp())
+    const res = await client
       .post('/api/video-playlists/vpl_s/reorder')
       .send({ from: 0, to: 1 });
     expect(res.status).toBe(400);
@@ -429,7 +433,7 @@ describe('POST /:id/reorder', () => {
   it('returns 400 when from/to are not numbers', async () => {
     seed({ vpl_1: { id: 'vpl_1', name: 'M', type: 'manual', tracks: ['a', 'b'] } });
 
-    const res = await request(makeApp())
+    const res = await client
       .post('/api/video-playlists/vpl_1/reorder')
       .send({ from: 'a', to: 1 });
     expect(res.status).toBe(400);
@@ -439,7 +443,7 @@ describe('POST /:id/reorder', () => {
   it('AS-IS: a NUMERIC STRING ("0") is rejected by the typeof check', async () => {
     seed({ vpl_1: { id: 'vpl_1', name: 'M', type: 'manual', tracks: ['a', 'b', 'c'] } });
 
-    const res = await request(makeApp())
+    const res = await client
       .post('/api/video-playlists/vpl_1/reorder')
       .send({ from: '0', to: '1' });
     expect(res.status).toBe(400);
@@ -449,7 +453,7 @@ describe('POST /:id/reorder', () => {
   it('returns 400 { error: "index out of range" } when from is out of range', async () => {
     seed({ vpl_1: { id: 'vpl_1', name: 'M', type: 'manual', tracks: ['a', 'b'] } });
 
-    const res = await request(makeApp())
+    const res = await client
       .post('/api/video-playlists/vpl_1/reorder')
       .send({ from: 5, to: 0 });
     expect(res.status).toBe(400);
@@ -459,7 +463,7 @@ describe('POST /:id/reorder', () => {
   it('returns 400 index out of range when to is negative', async () => {
     seed({ vpl_1: { id: 'vpl_1', name: 'M', type: 'manual', tracks: ['a', 'b'] } });
 
-    const res = await request(makeApp())
+    const res = await client
       .post('/api/video-playlists/vpl_1/reorder')
       .send({ from: 0, to: -1 });
     expect(res.status).toBe(400);
@@ -471,7 +475,7 @@ describe('POST /:id/reorder', () => {
       vpl_1: { id: 'vpl_1', name: 'M', type: 'manual', tracks: ['a', 'b', 'c', 'd'], updatedAt: 1 }
     });
 
-    const res = await request(makeApp())
+    const res = await client
       .post('/api/video-playlists/vpl_1/reorder')
       .send({ from: 0, to: 2 });
 
@@ -489,7 +493,7 @@ describe('POST /:id/reorder', () => {
 describe('POST /:id/load-queue', () => {
   it('returns 404 for an unknown id', async () => {
     seed({});
-    const res = await request(makeApp()).post('/api/video-playlists/nope/load-queue');
+    const res = await client.post('/api/video-playlists/nope/load-queue');
     expect(res.status).toBe(404);
     expect(res.body).toEqual({ error: 'not found' });
   });
@@ -498,7 +502,7 @@ describe('POST /:id/load-queue', () => {
     h.setProcessedFiles([]); // no files on disk → manual tracks all filtered out
     seed({ vpl_e: { id: 'vpl_e', name: 'E', type: 'manual', tracks: ['a.mp4'] } });
 
-    const res = await request(makeApp()).post('/api/video-playlists/vpl_e/load-queue');
+    const res = await client.post('/api/video-playlists/vpl_e/load-queue');
     expect(res.status).toBe(400);
     expect(res.body).toEqual({ error: 'playlist resolves to 0 videos' });
     // No queue written and visualMode not switched on the failure path.
@@ -510,7 +514,7 @@ describe('POST /:id/load-queue', () => {
     h.setProcessedFiles(['v1.mp4', 'v2.mp4']);
     seed({ vpl_1: { id: 'vpl_1', name: 'M', type: 'manual', tracks: ['v1.mp4', 'v2.mp4'] } });
 
-    const res = await request(makeApp()).post('/api/video-playlists/vpl_1/load-queue');
+    const res = await client.post('/api/video-playlists/vpl_1/load-queue');
     expect(res.status).toBe(200);
     expect(res.body).toEqual({ ok: true, loaded: 2, videos: ['v1.mp4', 'v2.mp4'] });
 
@@ -525,7 +529,7 @@ describe('POST /:id/load-queue', () => {
     h.setProcessedFiles(['v1.mp4']);
     seed({ vpl_1: { id: 'vpl_1', name: 'M', type: 'manual', tracks: ['v1.mp4'] } });
 
-    await request(makeApp()).post('/api/video-playlists/vpl_1/load-queue');
+    await client.post('/api/video-playlists/vpl_1/load-queue');
     expect(h.files[QUEUE_FILE]).toBe('v1.mp4\n');
     expect((QUEUE_FILE + '.tmp') in h.files).toBe(false);
   });
@@ -541,7 +545,7 @@ describe('POST /:id/load-queue', () => {
       vpl_s: { id: 'vpl_s', name: 'S', type: 'smart', rules: { namePattern: '^clip_' } }
     });
 
-    const res = await request(makeApp()).post('/api/video-playlists/vpl_s/load-queue');
+    const res = await client.post('/api/video-playlists/vpl_s/load-queue');
     const fileNames = h.files[QUEUE_FILE].trimEnd().split('\n');
     expect(res.body.videos).toEqual(['clip_a.mov', 'clip_b.mkv']);
     expect(fileNames).toEqual(['clip_a.mov', 'clip_b.mkv']);
@@ -555,7 +559,7 @@ describe('POST /:id/load-queue', () => {
 describe('POST /:id/activate-profile', () => {
   it('returns 404 for an unknown id', async () => {
     seed({});
-    const res = await request(makeApp()).post('/api/video-playlists/nope/activate-profile');
+    const res = await client.post('/api/video-playlists/nope/activate-profile');
     expect(res.status).toBe(404);
     expect(res.body).toEqual({ error: 'not found' });
   });
@@ -564,7 +568,7 @@ describe('POST /:id/activate-profile', () => {
     h.setProcessedFiles([]);
     seed({ vpl_e: { id: 'vpl_e', name: 'E', type: 'manual', tracks: ['a.mp4'] } });
 
-    const res = await request(makeApp()).post('/api/video-playlists/vpl_e/activate-profile');
+    const res = await client.post('/api/video-playlists/vpl_e/activate-profile');
     expect(res.status).toBe(400);
     expect(res.body).toEqual({ error: 'playlist resolves to 0 videos' });
     expect(ACTIVE_FILE in h.files).toBe(false);
@@ -576,7 +580,7 @@ describe('POST /:id/activate-profile', () => {
     h.setProcessedFiles(['v1.mp4', 'v2.mp4', 'v3.mp4']);
     seed({ vpl_1: { id: 'vpl_1', name: 'Cyber', type: 'manual', tracks: ['v1.mp4', 'v2.mp4', 'v3.mp4'] } });
 
-    const res = await request(makeApp()).post('/api/video-playlists/vpl_1/activate-profile');
+    const res = await client.post('/api/video-playlists/vpl_1/activate-profile');
     expect(res.status).toBe(200);
     expect(res.body).toEqual({ activated: true, videoCount: 3, mode: 'visual-radio' });
 
@@ -597,7 +601,7 @@ describe('POST /:id/activate-profile', () => {
     h.setProcessedFiles(['cyber_1.mp4', 'cyber_2.mp4', 'nature.mp4']);
     seed({ vpl_s: { id: 'vpl_s', name: 'Cyber', type: 'smart', rules: { namePattern: '^cyber_' } } });
 
-    const res = await request(makeApp()).post('/api/video-playlists/vpl_s/activate-profile');
+    const res = await client.post('/api/video-playlists/vpl_s/activate-profile');
     expect(res.status).toBe(200);
     expect(res.body.videoCount).toBe(2);
     expect(JSON.parse(h.files[ACTIVE_FILE]).videos).toEqual(['cyber_1.mp4', 'cyber_2.mp4']);

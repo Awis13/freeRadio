@@ -20,7 +20,7 @@ import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import fs from 'fs';
 import path from 'path';
 import express from 'express';
-import request from 'supertest';
+import { serverAgent } from './helpers/serverAgent.js';
 
 const META_FILE = '/shared/track_metadata.json';
 const MUSIC_DIR = '/music';
@@ -257,6 +257,8 @@ describe('setTrackMeta — quirks', () => {
 // ---------------------------------------------------------------------------
 describe('createTrackRouter', () => {
   let bpmMap;
+  let client;
+  let closeServer;
   function makeApp() {
     bpmMap = bpmMap || {};
     const app = express();
@@ -264,14 +266,19 @@ describe('createTrackRouter', () => {
     return app;
   }
 
-  beforeEach(() => {
+  beforeEach(async () => {
     bpmMap = {};
+    ({ client, close: closeServer } = await serverAgent(makeApp()));
+  });
+
+  afterEach(async () => {
+    await closeServer();
   });
 
   // ----- GET / -----
   describe('GET /', () => {
     it('returns [] when the music dir is empty', async () => {
-      const res = await request(makeApp()).get('/api/tracks');
+      const res = await client.get('/api/tracks');
       expect(res.status).toBe(200);
       expect(res.body).toEqual([]);
     });
@@ -281,7 +288,7 @@ describe('createTrackRouter', () => {
         'b.mp3': {}, 'a.wav': {}, 'c.txt': {}, '.hidden.mp3': {}, 'd.flac': {},
         'e.ogg': {}, 'f.aac': {}, 'g.m4a': {}, 'h.MP3': {}
       };
-      const res = await request(makeApp()).get('/api/tracks');
+      const res = await client.get('/api/tracks');
       const names = res.body.map(t => t.name);
       // .txt dropped, dotfile dropped, uppercase ext kept (regex is /i), sorted.
       expect(names).toEqual(['a.wav', 'b.mp3', 'd.flac', 'e.ogg', 'f.aac', 'g.m4a', 'h.MP3']);
@@ -289,7 +296,7 @@ describe('createTrackRouter', () => {
 
     it('maps size, modified, bpm and metadata defaults for an un-tagged track', async () => {
       musicFiles = { 'song.mp3': { size: 4242, mtime: new Date('2020-01-02T03:04:05.000Z') } };
-      const res = await request(makeApp()).get('/api/tracks');
+      const res = await client.get('/api/tracks');
       expect(res.body).toEqual([{
         name: 'song.mp3',
         size: 4242,
@@ -307,13 +314,13 @@ describe('createTrackRouter', () => {
       files[META_FILE] = JSON.stringify({
         tracks: { 'song.mp3': { tags: ['dnb'], genre: 'jungle', custom: { key: 'Am' } } }
       });
-      const res = await request(makeApp()).get('/api/tracks');
+      const res = await client.get('/api/tracks');
       expect(res.body[0]).toMatchObject({ bpm: 174, tags: ['dnb'], genre: 'jungle', custom: { key: 'Am' } });
     });
 
     it('returns 500 with the error message when readdir throws', async () => {
       vi.spyOn(fs, 'readdirSync').mockImplementation(() => { throw new Error('boom'); });
-      const res = await request(makeApp()).get('/api/tracks');
+      const res = await client.get('/api/tracks');
       expect(res.status).toBe(500);
       expect(res.body).toEqual({ error: 'boom' });
     });
@@ -328,13 +335,13 @@ describe('createTrackRouter', () => {
           'b.mp3': { tags: ['a', 'm'] }
         }
       });
-      const res = await request(makeApp()).get('/api/tracks/tags');
+      const res = await client.get('/api/tracks/tags');
       expect(res.status).toBe(200);
       expect(res.body).toEqual(['a', 'm', 'z']);
     });
 
     it('returns [] when there is no metadata', async () => {
-      const res = await request(makeApp()).get('/api/tracks/tags');
+      const res = await client.get('/api/tracks/tags');
       expect(res.body).toEqual([]);
     });
   });
@@ -342,7 +349,7 @@ describe('createTrackRouter', () => {
   // ----- PUT /:filename/meta -----
   describe('PUT /:filename/meta', () => {
     it('returns 404 when the track file does not exist in the music dir', async () => {
-      const res = await request(makeApp())
+      const res = await client
         .put('/api/tracks/ghost.mp3/meta')
         .send({ tags: ['x'] });
       expect(res.status).toBe(404);
@@ -354,7 +361,7 @@ describe('createTrackRouter', () => {
       files[META_FILE] = JSON.stringify({
         tracks: { 'real.mp3': { tags: ['old'], genre: 'techno', custom: { a: 1 } } }
       });
-      const res = await request(makeApp())
+      const res = await client
         .put('/api/tracks/real.mp3/meta')
         .send({ tags: ['new'], custom: { b: 2 } });
       expect(res.status).toBe(200);
@@ -367,7 +374,7 @@ describe('createTrackRouter', () => {
   // ----- POST /bulk-tag (drives internal bulkTag) -----
   describe('POST /bulk-tag', () => {
     it('returns 400 when filenames is not an array', async () => {
-      const res = await request(makeApp())
+      const res = await client
         .post('/api/tracks/bulk-tag')
         .send({ filenames: 'a.mp3', tags: ['x'] });
       expect(res.status).toBe(400);
@@ -375,7 +382,7 @@ describe('createTrackRouter', () => {
     });
 
     it('returns 400 when tags is not an array', async () => {
-      const res = await request(makeApp())
+      const res = await client
         .post('/api/tracks/bulk-tag')
         .send({ filenames: ['a.mp3'], tags: 'x' });
       expect(res.status).toBe(400);
@@ -386,7 +393,7 @@ describe('createTrackRouter', () => {
       files[META_FILE] = JSON.stringify({
         tracks: { 'a.mp3': { tags: ['existing'], genre: '', custom: {} } }
       });
-      const res = await request(makeApp())
+      const res = await client
         .post('/api/tracks/bulk-tag')
         .send({ filenames: ['a.mp3', 'b.mp3'], tags: ['existing', 'fresh'] });
       expect(res.status).toBe(200);
@@ -402,7 +409,7 @@ describe('createTrackRouter', () => {
       files[META_FILE] = JSON.stringify({
         tracks: { 'a.mp3': { tags: ['keep', 'drop'], genre: '', custom: {} } }
       });
-      const res = await request(makeApp())
+      const res = await client
         .post('/api/tracks/bulk-tag')
         .send({ filenames: ['a.mp3'], tags: ['drop'], action: 'remove' });
       expect(res.status).toBe(200);
@@ -411,7 +418,7 @@ describe('createTrackRouter', () => {
     });
 
     it('remove on a previously-unknown track creates it then filters (net empty tags)', async () => {
-      const res = await request(makeApp())
+      const res = await client
         .post('/api/tracks/bulk-tag')
         .send({ filenames: ['new.mp3'], tags: ['x'], action: 'remove' });
       expect(res.status).toBe(200);
@@ -422,7 +429,7 @@ describe('createTrackRouter', () => {
     });
 
     it('treats any non-"remove" action as add (e.g. an explicit "add")', async () => {
-      const res = await request(makeApp())
+      const res = await client
         .post('/api/tracks/bulk-tag')
         .send({ filenames: ['a.mp3'], tags: ['t'], action: 'add' });
       expect(res.body).toEqual({ updated: 1 });
@@ -430,7 +437,7 @@ describe('createTrackRouter', () => {
     });
 
     it('reports updated count equal to filenames.length even with duplicate names', async () => {
-      const res = await request(makeApp())
+      const res = await client
         .post('/api/tracks/bulk-tag')
         .send({ filenames: ['a.mp3', 'a.mp3'], tags: ['t'] });
       // Quirk: count is the raw array length, not distinct tracks touched.
