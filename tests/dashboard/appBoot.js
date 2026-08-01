@@ -14,7 +14,9 @@
  * This helper boots ONE jsdom window from the REAL dashboard/public/index.html,
  * installs the minimal browser-global stubs app.js touches on boot, then
  * evaluates the REAL sibling modules and app.js (the same files the browser
- * ships) in index.html load order, with __APP_TEST__ = true.
+ * ships) in index.html load order, with __APP_TEST__ = true. The module list is
+ * parsed out of index.html's own <script src=...> tags (see
+ * parseModuleManifest), so it cannot drift from the page.
  *
  * By default `win.fetch` is a never-resolving pending promise (matching the
  * load-smoke), so no async handler runs during the synchronous boot. Tests that
@@ -30,34 +32,66 @@ import { JSDOM, VirtualConsole } from 'jsdom';
 const here = path.dirname(fileURLToPath(import.meta.url));
 const publicDir = path.resolve(here, '../../dashboard/public');
 const indexHtml = readFileSync(path.join(publicDir, 'index.html'), 'utf8');
-const utilsSrc = readFileSync(path.join(publicDir, 'utils.js'), 'utf8');
-const authSrc = readFileSync(path.join(publicDir, 'auth.js'), 'utf8');
-const playlistsSrc = readFileSync(path.join(publicDir, 'playlists.js'), 'utf8');
-const analyticsSrc = readFileSync(path.join(publicDir, 'analytics.js'), 'utf8');
-const fileMgmtSrc = readFileSync(path.join(publicDir, 'filemgmt.js'), 'utf8');
-const visualProfilesSrc = readFileSync(path.join(publicDir, 'visualprofiles.js'), 'utf8');
-const scheduleSrc = readFileSync(path.join(publicDir, 'schedule.js'), 'utf8');
-const videoPlaylistsSrc = readFileSync(path.join(publicDir, 'videoplaylists.js'), 'utf8');
-const platformsSrc = readFileSync(path.join(publicDir, 'platforms.js'), 'utf8');
-const overlaysSrc = readFileSync(path.join(publicDir, 'overlays.js'), 'utf8');
-const qualitySrc = readFileSync(path.join(publicDir, 'quality.js'), 'utf8');
-const enhanceSettingsSrc = readFileSync(path.join(publicDir, 'enhanceSettings.js'), 'utf8');
-const restreamSettingsSrc = readFileSync(path.join(publicDir, 'restreamSettings.js'), 'utf8');
-const channelStripSrc = readFileSync(path.join(publicDir, 'channelstrip.js'), 'utf8');
-const pttSrc = readFileSync(path.join(publicDir, 'ptt.js'), 'utf8');
-const restreamStatusSrc = readFileSync(path.join(publicDir, 'restreamStatus.js'), 'utf8');
-const trackHistorySrc = readFileSync(path.join(publicDir, 'trackhistory.js'), 'utf8');
-const navigationSrc = readFileSync(path.join(publicDir, 'navigation.js'), 'utf8');
-const genericModalSrc = readFileSync(path.join(publicDir, 'genericModal.js'), 'utf8');
-const notifySrc = readFileSync(path.join(publicDir, 'notify.js'), 'utf8');
-const playerSrc = readFileSync(path.join(publicDir, 'player.js'), 'utf8');
-const mixerSrc = readFileSync(path.join(publicDir, 'mixer.js'), 'utf8');
-const analyzerSrc = readFileSync(path.join(publicDir, 'analyzer.js'), 'utf8');
-const queueSrc = readFileSync(path.join(publicDir, 'queue.js'), 'utf8');
-const nowplayingSrc = readFileSync(path.join(publicDir, 'nowplaying.js'), 'utf8');
-const wsHubSrc = readFileSync(path.join(publicDir, 'wsHub.js'), 'utf8');
-const broadcastSrc = readFileSync(path.join(publicDir, 'broadcast.js'), 'utf8');
-const appSrc = readFileSync(path.join(publicDir, 'app.js'), 'utf8');
+
+/** The page entry point — evaluated last, after every sibling module. */
+const APP_ENTRY = 'app.js';
+
+/**
+ * Vendored third-party bundles the harness never evaluates; installStubs
+ * provides their globals instead (window.Hls).
+ */
+const VENDOR_SRC = new Set(['/js/hls.min.js']);
+
+/**
+ * Derive the browser module manifest from the REAL index.html <script src=...>
+ * tags, so the harness can never drift from what the page actually ships:
+ * adding a module to index.html registers it here automatically.
+ *
+ * Returns file names relative to dashboard/public in index.html order, with the
+ * query string (app.js?v=NNN) stripped and vendored bundles excluded. APP_ENTRY
+ * is not part of the returned list — it is loaded separately, last.
+ *
+ * Fails loudly rather than returning an empty/entry-less manifest: booting no
+ * modules would make every characterization pin pass vacuously.
+ */
+function parseModuleManifest(html) {
+  const files = [];
+  const scriptTag = /<script\b[^>]*\bsrc\s*=\s*["']([^"']*)["']/gi;
+  let match;
+  while ((match = scriptTag.exec(html)) !== null) {
+    const src = match[1].split('?')[0].split('#')[0];
+    if (VENDOR_SRC.has(src)) continue;
+    files.push(src.replace(/^\//, ''));
+  }
+
+  const entryAt = files.indexOf(APP_ENTRY);
+  if (entryAt === -1) {
+    throw new Error(
+      `appBoot: no <script src="/${APP_ENTRY}"> tag found in index.html — ` +
+      'the entry point was renamed or the manifest parse is broken',
+    );
+  }
+  if (entryAt !== files.length - 1) {
+    throw new Error(
+      `appBoot: ${APP_ENTRY} is not the last <script> tag in index.html ` +
+      `(${files.length - 1 - entryAt} tag(s) follow it) — the harness evaluates ` +
+      'it last, so boot order would diverge from the browser',
+    );
+  }
+
+  const modules = files.slice(0, entryAt);
+  if (modules.length === 0) {
+    throw new Error(
+      'appBoot: index.html yielded zero sibling modules — booting app.js alone ' +
+      'would make the characterization pins pass vacuously',
+    );
+  }
+  return modules;
+}
+
+const moduleFiles = parseModuleManifest(indexHtml);
+const moduleSources = moduleFiles.map((file) => readFileSync(path.join(publicDir, file), 'utf8'));
+const appSrc = readFileSync(path.join(publicDir, APP_ENTRY), 'utf8');
 
 /**
  * Install the browser-global stubs app.js touches during its synchronous init,
@@ -144,38 +178,21 @@ export function bootWindow() {
   const win = dom.window;
   installStubs(win);
 
-  // Load order mirrors index.html: utils.js (window.FRUtils), playlists.js
-  // (window.FRPlaylists), analytics.js (window.FRAnalytics), filemgmt.js
-  // (window.FRFileMgmt), visualprofiles.js (window.FRVisualProfiles), then app.js
-  // (which calls FRPlaylists.init / FRAnalytics.init / FRFileMgmt.init /
-  // FRVisualProfiles.init on boot).
-  dom.window.eval(utilsSrc);
-  dom.window.eval(authSrc);
-  dom.window.eval(playlistsSrc);
-  dom.window.eval(analyticsSrc);
-  dom.window.eval(fileMgmtSrc);
-  dom.window.eval(visualProfilesSrc);
-  dom.window.eval(scheduleSrc);
-  dom.window.eval(videoPlaylistsSrc);
-  dom.window.eval(platformsSrc);
-  dom.window.eval(overlaysSrc);
-  dom.window.eval(qualitySrc);
-  dom.window.eval(enhanceSettingsSrc);
-  dom.window.eval(restreamSettingsSrc);
-  dom.window.eval(channelStripSrc);
-  dom.window.eval(pttSrc);
-  dom.window.eval(restreamStatusSrc);
-  dom.window.eval(trackHistorySrc);
-  dom.window.eval(navigationSrc);
-  dom.window.eval(genericModalSrc);
-  dom.window.eval(notifySrc);
-  dom.window.eval(playerSrc);
-  dom.window.eval(mixerSrc);
-  dom.window.eval(analyzerSrc);
-  dom.window.eval(queueSrc);
-  dom.window.eval(nowplayingSrc);
-  dom.window.eval(wsHubSrc);
-  dom.window.eval(broadcastSrc);
+  // Load order mirrors index.html tag order: every sibling FR* module first
+  // (utils.js -> window.FRUtils, playlists.js -> window.FRPlaylists, ...), then
+  // app.js, which calls FRPlaylists.init / FRAnalytics.init / FRFileMgmt.init /
+  // FRVisualProfiles.init on boot.
+  let evaluated = 0;
+  for (const src of moduleSources) {
+    dom.window.eval(src);
+    evaluated++;
+  }
+  if (evaluated !== moduleFiles.length) {
+    throw new Error(
+      `appBoot: evaluated ${evaluated} modules but the index.html manifest lists ` +
+      `${moduleFiles.length} — the boot is not loading what the page ships`,
+    );
+  }
   let loadError = null;
   try {
     dom.window.eval(appSrc);
