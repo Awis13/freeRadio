@@ -81,14 +81,21 @@ function payloadFor(phase, visualMode) {
   };
 }
 
-/** Boot a window and return it plus a driver for the WS 'init' consumer. */
+/**
+ * Boot a window and return it plus a driver for the WS 'init' consumer.
+ *
+ * A load error is rethrown rather than handed back: every pin in this file
+ * assumes app.js evaluated, so a boot failure should fail loudly here instead of
+ * turning into a pile of confusing DOM assertion mismatches.
+ */
 function bootWithInit() {
   const { win, doc, loadError } = bootWindow();
+  if (loadError) throw loadError;
   const ws = win.__appWs.getWs();
   function sendInit(data) {
     ws.onmessage({ data: JSON.stringify({ type: 'init', data }) });
   }
-  return { win, doc, loadError, sendInit };
+  return { win, doc, sendInit };
 }
 
 /**
@@ -133,16 +140,28 @@ function queueChrome(doc) {
   };
 }
 
-/** The mode classes updateModeUI derives from uiMode / uiSubMode. */
+/**
+ * Everything updateModeUI (app.js:1387-1433) writes, in one object: the layout
+ * mode/sub-mode classes, the card highlight, the sub-pill highlight, the
+ * on-air card lock (app.js:1418-1421) and the Live Mode Bar (app.js:1425).
+ *
+ * liveModeBarDisplay is null whenever #live-mode-bar is absent from the DOM.
+ * Phase 1 ships that element inside a Phase 3 HTML comment, so liveModeSettings
+ * (app.js:1190) resolves to null and the `if (liveModeSettings)` guard makes the
+ * write inert — pinning null is what locks the guard in place.
+ */
 function modeClasses(doc) {
   const layout = doc.querySelector('.studio-layout');
   const radioCard = doc.querySelector('.mode-card[data-mode="radio"]');
+  const liveModeBar = doc.getElementById('live-mode-bar');
   return {
     layout: Array.from(layout.classList).sort(),
     radioCardActive: radioCard.classList.contains('active'),
+    radioCardLocked: radioCard.classList.contains('mode-locked'),
     activePills: Array.from(doc.querySelectorAll('.mode-sub-pill'))
       .filter((pill) => pill.classList.contains('active'))
       .map((pill) => pill.dataset.submode),
+    liveModeBarDisplay: liveModeBar ? liveModeBar.style.display : null,
   };
 }
 
@@ -172,9 +191,12 @@ async function loginAndPoll(win, doc, statusPayload) {
 
 describe('broadcast repaint via the WS init consumer (app.js:592-619 -> 1249-1314)', () => {
   it('idle: ARM is the only enabled control and stays visible', () => {
-    const { doc, sendInit, loadError } = bootWithInit();
-    expect(loadError).toBe(null);
+    const { doc, sendInit } = bootWithInit();
     sendInit(payloadFor('idle', 'visual-radio'));
+    // playDisabled: true here deliberately contradicts both the button-state
+    // table at app.js:1260-1265 (which documents the idle row as PLAY:on) and
+    // the idle hint text, which invites the user to press PLAY. Known doc/UX
+    // divergence, pinned as-is and tracked in the Bug Register.
     expect(transportSnapshot(doc)).toEqual({
       tagText: 'OFF',
       tagClass: 'mode-tag off',
@@ -473,7 +495,9 @@ describe('deriveUiMode mapping surfaced through the repaint (utils.js:153-158)',
     expect(modeClasses(doc)).toEqual({
       layout: ['mode-radio', 'studio-layout', 'submode-visual-radio'],
       radioCardActive: true,
+      radioCardLocked: false,
       activePills: ['visual-radio'],
+      liveModeBarDisplay: null,
     });
     const state = win.__appDrift.getBroadcastState();
     expect([state.uiMode, state.uiSubMode]).toEqual(['radio', 'visual-radio']);
@@ -485,7 +509,9 @@ describe('deriveUiMode mapping surfaced through the repaint (utils.js:153-158)',
     expect(modeClasses(doc)).toEqual({
       layout: ['mode-radio', 'studio-layout', 'submode-video-playlist'],
       radioCardActive: true,
+      radioCardLocked: false,
       activePills: ['video-playlist'],
+      liveModeBarDisplay: null,
     });
     const state = win.__appDrift.getBroadcastState();
     expect([state.uiMode, state.uiSubMode]).toEqual(['radio', 'video-playlist']);
@@ -502,7 +528,9 @@ describe('deriveUiMode mapping surfaced through the repaint (utils.js:153-158)',
     expect(modeClasses(doc)).toEqual({
       layout: ['mode-takeover', 'studio-layout', 'submode-obs'],
       radioCardActive: false,
+      radioCardLocked: false,
       activePills: ['visual-radio'],
+      liveModeBarDisplay: null,
     });
     const state = win.__appDrift.getBroadcastState();
     expect([state.uiMode, state.uiSubMode]).toEqual(['takeover', 'obs']);
@@ -522,10 +550,53 @@ describe('deriveUiMode mapping surfaced through the repaint (utils.js:153-158)',
     expect(modeClasses(doc)).toEqual({
       layout: ['mode-radio', 'studio-layout', 'submode-browser-mic'],
       radioCardActive: true,
+      radioCardLocked: false,
       activePills: [],
+      liveModeBarDisplay: null,
     });
     const state = win.__appDrift.getBroadcastState();
     expect([state.uiMode, state.uiSubMode]).toEqual(['radio', 'browser-mic']);
+  });
+
+  it('going on air locks every mode card except the active one (app.js:1418-1421)', () => {
+    const { doc, sendInit } = bootWithInit();
+    // Radio card active and on air: the active card is exempt from the lock.
+    sendInit(payloadFor('live', 'visual-radio'));
+    expect(modeClasses(doc).radioCardActive).toBe(true);
+    expect(modeClasses(doc).radioCardLocked).toBe(false);
+
+    // Takeover on air: the radio card is no longer active, so it gets locked.
+    sendInit(payloadFor('live', 'live'));
+    expect(modeClasses(doc).radioCardActive).toBe(false);
+    expect(modeClasses(doc).radioCardLocked).toBe(true);
+  });
+
+  it('returning to standby clears the card lock even while still in takeover', () => {
+    const { doc, sendInit } = bootWithInit();
+    sendInit(payloadFor('live', 'live'));
+    expect(modeClasses(doc).radioCardLocked).toBe(true);
+
+    // Only streamMode drives the lock — the ui mode is still takeover here.
+    sendInit(payloadFor('idle', 'live'));
+    expect(modeClasses(doc)).toEqual({
+      layout: ['mode-takeover', 'studio-layout', 'submode-obs'],
+      radioCardActive: false,
+      radioCardLocked: false,
+      activePills: ['visual-radio'],
+      liveModeBarDisplay: null,
+    });
+  });
+
+  it('the Live Mode Bar write stays inert while its element is absent (app.js:1425)', () => {
+    // Takeover is the mode that would reveal the bar, but Phase 1 comments the
+    // element out of index.html, so updateModeUI's null guard swallows the write
+    // and nothing throws. Pinned as-is; a Phase 3 markup change should fail here.
+    const { doc, sendInit } = bootWithInit();
+    expect(doc.getElementById('live-mode-bar')).toBe(null);
+    sendInit(payloadFor('live', 'live'));
+    expect(modeClasses(doc).liveModeBarDisplay).toBe(null);
+    sendInit(payloadFor('live', 'visual-radio'));
+    expect(modeClasses(doc).liveModeBarDisplay).toBe(null);
   });
 
   it('leaving takeover for radio clears the takeover classes rather than stacking them', () => {
@@ -563,7 +634,10 @@ describe('broadcast repaint via the /api/status poll consumer (app.js:1919-1948)
     expect(modeClasses(doc)).toEqual({
       layout: ['mode-takeover', 'studio-layout', 'submode-obs'],
       radioCardActive: false,
+      // streamMode is 'live' here, so the deselected radio card is also locked.
+      radioCardLocked: true,
       activePills: ['visual-radio'],
+      liveModeBarDisplay: null,
     });
     expect(doc.getElementById('transport-mode-hint').textContent)
       .toBe('Live: OBS streaming. AFK fallback on disconnect.');
