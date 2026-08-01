@@ -38,19 +38,24 @@
  *
  * WEBAUDIO: appBoot's AudioContext stub is deliberately minimal, so azInit's try
  * block throws and the analyzer never latches. Tests that need the SUCCESS branch
- * install a fuller AudioContext locally (installWorkingAudioContext below);
- * tests that need the FAILURE branch use the appBoot stub as shipped. appBoot.js
- * is not modified.
+ * install a fuller AudioContext locally (installWorkingAudioContext below). The
+ * FAILURE-branch test extends the stub too, but with close() ONLY — just enough
+ * for azInit's catch to complete, so the failure is the one under test rather
+ * than a secondary throw out of the error handler. appBoot.js is not modified.
  *
  * PHASE-1 REACHABILITY — three regions of this slice have no live consumer in the
  * shipped markup, which is itself pinned so the extraction cannot quietly drop
  * the guards that make them harmless:
  *
  *   - The ENTIRE monitor mixer UI (#monitor-mixer and every mm-* control) sits
- *     inside a PHASE 2 HTML comment. mmMicBtn is null, so the click listener at
- *     app.js:2374-2378 never binds, and startMic() — its only caller — never
- *     runs. That makes startMic's `if (!azInited) azInit()` hop, the monitor
- *     meters, and the whole auto-duck envelope follower unreachable.
+ *     inside a PHASE 2 HTML comment, so every element it is wired to is null.
+ *     startMic has exactly two call sites and both are behind that markup: the
+ *     mm-mic-btn click listener (app.js:2370, bound only under `if (mmMicBtn)`)
+ *     and `setTimeout(startMic, 100)` in the mic-input-select change listener
+ *     (app.js:2450, bound only under `if (micInputSelect)` at 2446). Neither
+ *     listener ever binds, so startMic never runs — which makes its
+ *     `if (!azInited) azInit()` hop, the monitor meters, and the whole auto-duck
+ *     envelope follower unreachable in Phase 1.
  *   - pendingModeSwitch can never become true: the only writer (app.js:1362) is
  *     gated on streamMode === 'live', but both applyUiMode callers bail out
  *     unless streamMode === 'standby'. Its hard-block branch in hideLoading is
@@ -262,9 +267,11 @@ describe('page lifecycle recovery', () => {
     doc.getElementById('studio-player').dispatchEvent(new win.Event('canplay'));
     const delays = captureTimers(win);
 
-    goHiddenThenVisible(win, doc);
+    // The 5s absence matters: it is past the 3s staleness threshold, so the
+    // standby guard at app.js:462 is the ONLY thing preventing a restart. Without
+    // an advanced clock this pin would pass with that guard deleted.
+    goHiddenThenVisible(win, doc, 5000);
 
-    // app.js:462 bails out for standby/arming before any restart or tryPlay.
     expect(overlayState(doc).visible).toBe(false);
     expect(delays).toEqual([]);
   });
@@ -424,10 +431,12 @@ describe('analyzer init latch (window.__appAudio.getAzInited)', () => {
 
   it('a failing audio graph leaves the latch clear and tears the context down', () => {
     const { win, doc } = boot();
-    // appBoot's stub as shipped: azInit throws on createChannelSplitter and
-    // falls into its catch, which nulls azAudioCtx back out. The one member the
-    // catch itself needs is close(), which the stub lacks — so the secondary
-    // throw escapes and the click handler aborts early (see the ARM pins).
+    // appBoot's stub plus close() and nothing else: azInit still throws on
+    // createChannelSplitter and falls into its catch, which nulls azAudioCtx back
+    // out. close() is exactly what that catch needs — the bare appBoot stub lacks
+    // it, so the catch itself would throw and abort the whole click handler
+    // (that secondary throw is what the ARM pins in broadcastUI.test.js work
+    // around). Adding only close() keeps the failure under test the real one.
     const Base = win.AudioContext;
     win.AudioContext = class extends Base { close() { return Promise.resolve(); } };
     win.webkitAudioContext = win.AudioContext;
