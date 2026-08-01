@@ -38,15 +38,24 @@ describe('app.js jsdom load-smoke (C2 FRUtils cutover)', () => {
     ({ win, loadError } = bootWindow());
   });
 
-  it('every module index.html ships registers its window.FR* global', () => {
-    // bootWindow enforces this structurally (it throws on a missing global);
-    // pinned explicitly so the load contract is stated where it is read, and so
-    // a regression names the module instead of failing every other suite.
-    expect(moduleManifest.files.length).toBeGreaterThan(0);
-    expect(moduleManifest.globals.length).toBe(moduleManifest.files.length);
-    for (const name of moduleManifest.globals) {
-      expect(win[name], `${name} missing from window`).toBeTruthy();
-    }
+  it('the index.html manifest is 27 modules, each registering a distinct FR* global', () => {
+    // Two independent facts the harness itself cannot catch.
+    //
+    // No duplicates: bootWindow only checks that each expected global is
+    // PRESENT, so if two modules registered the same FR* name, the second would
+    // overwrite the first and the missing-check would still be satisfied — one
+    // module would silently not be loaded.
+    const seen = moduleManifest.globals.filter(
+      (name, i) => moduleManifest.globals.indexOf(name) !== i,
+    );
+    expect(seen, `duplicate FR* globals: ${seen.join(', ')}`).toEqual([]);
+
+    // Exact count: the deliberate tripwire against the parser silently dropping
+    // live <script> tags (the HTML-comment strip, or any future parse change).
+    // Every other assertion in the suite is derived FROM the manifest, so only a
+    // literal pins its size. Bump it consciously when a module is added or
+    // removed from index.html.
+    expect(moduleManifest.files.length).toBe(27);
   });
 
   it('utils.js exposes window.FRUtils with the 7 cut-over helpers', () => {

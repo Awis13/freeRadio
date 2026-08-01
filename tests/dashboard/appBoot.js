@@ -105,10 +105,14 @@ export function parseModuleManifest(html) {
  * only honest rule. Reads (window.FRUtils.pad) do not match; only assignments do.
  */
 function registeredGlobal(file, src) {
+  // Drop comments first: several modules quote a sibling's UMD line in their
+  // header docblock, and a quoted assignment must not count as a second one.
+  const code = src.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/.*$/gm, '');
+
   const assignment = /window\.(FR[A-Za-z0-9_]*)\s*=[^=]/g;
   const names = new Set();
   let match;
-  while ((match = assignment.exec(src)) !== null) names.add(match[1]);
+  while ((match = assignment.exec(code)) !== null) names.add(match[1]);
 
   if (names.size === 0) {
     throw new Error(
