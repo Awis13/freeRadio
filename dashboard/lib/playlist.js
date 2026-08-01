@@ -1,5 +1,3 @@
-const fs = require('fs');
-const path = require('path');
 const multer = require('multer');
 const paths = require('./paths');
 const { createPlaylistStore } = require('./playlistStore');
@@ -44,7 +42,7 @@ function createPlaylistRouter(musicDir, getBpmMap) {
 
   return store.createRouter(musicDir, {
     getBpmMap,
-    extraRoutes(router) {
+    extraRoutes(router, { isPresentTrack }) {
       // POST /api/playlists/import — import m3u/pls
       router.post('/import', upload.single('file'), (req, res) => {
         if (!req.file) return res.status(400).json({ error: 'no file' });
@@ -64,11 +62,9 @@ function createPlaylistRouter(musicDir, getBpmMap) {
           tracks = parseM3U(content);
         }
 
-        // Filter to only tracks that exist
-        const existingTracks = tracks.filter(t => {
-          const safe = path.basename(t);
-          return safe && safe === t && fs.existsSync(path.join(musicDir, safe));
-        });
+        // Filter to only tracks that exist, using the same predicate as the
+        // list count and the resolve path rather than a third copy of it.
+        const existingTracks = tracks.filter(t => isPresentTrack(t, musicDir));
 
         const id = 'pl_' + Date.now();
         const now = Date.now();

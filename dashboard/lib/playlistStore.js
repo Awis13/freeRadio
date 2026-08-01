@@ -152,7 +152,9 @@ function createPlaylistStore({
    * @param {Object} [opts]
    * @param {Function} [opts.getBpmMap] () => bpmMap, audio only
    * @param {Function} [opts.beforeDelete] (id, data) => void, before a delete lands
-   * @param {Function} [opts.extraRoutes] (router, ctx) => void, domain-only routes
+   * @param {Function} [opts.extraRoutes] (router, ctx) => void, domain-only routes.
+   *   ctx carries the store functions plus isPresentTrack, so a domain route
+   *   that filters tracks uses the same predicate as list and resolve.
    */
   function createRouter(baseDir, { getBpmMap = () => ({}), beforeDelete, extraRoutes } = {}) {
     const router = express.Router();
@@ -269,7 +271,7 @@ function createPlaylistStore({
     });
 
     if (extraRoutes) {
-      extraRoutes(router, { load, save, get, resolve, resolveSmart, baseDir, trackDir });
+      extraRoutes(router, { load, save, get, resolve, resolveSmart, isPresentTrack, baseDir, trackDir });
     }
 
     return router;
