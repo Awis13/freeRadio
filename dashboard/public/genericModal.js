@@ -88,6 +88,8 @@
   return {
     init: init,
     openGenericModal: openGenericModal,
+
+    // Surface used by the characterization tests to drive the module.
     closeGenericModal: closeGenericModal,
     getGenericModalCallback: function () { return genericModalCallback; },
     setGenericModalCallback: function (v) { genericModalCallback = v; },

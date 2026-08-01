@@ -170,10 +170,12 @@
     init: init,
     authFetch: authFetch,
     showLoginOverlay: showLoginOverlay,
-    hideLoginOverlay: hideLoginOverlay,
-    doLogin: doLogin,
     checkAuth: checkAuth,
     getAuthToken: function () { return authToken; },
+
+    // Surface used by the characterization tests to drive the module.
+    hideLoginOverlay: hideLoginOverlay,
+    doLogin: doLogin,
     setAuthToken: function (v) { authToken = v; },
   };
 });

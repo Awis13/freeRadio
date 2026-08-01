@@ -121,6 +121,8 @@
   return {
     init: init,
     loadTrackHistory: loadTrackHistory,
+
+    // Surface used by the characterization tests to drive the module.
     renderTrackHistory: renderTrackHistory,
   };
 });

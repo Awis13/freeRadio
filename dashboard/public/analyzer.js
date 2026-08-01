@@ -1095,8 +1095,6 @@
     getAzL: getAzL,
     getAzR: getAzR,
     getAzInited: getAzInited,
-    // Init latch
-    azInit: azInit,
     ensureInited: ensureInited,
     // Mute control (drives the analyzer gain node)
     setPlayerMuted: setPlayerMuted,
@@ -1105,5 +1103,9 @@
     isServerFFT: function () { return azServerFFT; },
     // Safari stream decode — the player calls this from restartPlayer.
     resyncStreamDecode: resyncStreamDecode,
+
+    // Surface used by the characterization tests to drive the module.
+    // Init latch
+    azInit: azInit,
   };
 });

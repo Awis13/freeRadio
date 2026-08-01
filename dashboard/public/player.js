@@ -498,10 +498,11 @@
     stopStaticNoise: stopStaticNoise,
     isNoiseActive: function () { return noiseActive; },
     flashTransition: flashTransition,
+    restartPlayer: restartPlayer,
+
+    // Surface used by the characterization tests to drive the module.
     // Player core
     initPlayer: initPlayer,
     tryPlay: tryPlay,
-    startHls: startHls,
-    restartPlayer: restartPlayer,
   };
 });

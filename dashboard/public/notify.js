@@ -102,7 +102,8 @@
     init: init,
     log: log,
     showError: showError,
-    bindDebugControls: bindDebugControls,
+
+    // Surface used by the characterization tests to drive the module.
     getLogs: function () { return logs; },
     setLogs: function (a) { logs = a; },
     getLogsPaused: function () { return logsPaused; },

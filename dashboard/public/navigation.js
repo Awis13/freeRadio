@@ -97,6 +97,8 @@
 
   return {
     init: init,
+
+    // Surface used by the characterization tests to drive the module.
     getActiveTab: function () { return activeTab; },
     setActiveTab: function (v) { activeTab = v; }
   };

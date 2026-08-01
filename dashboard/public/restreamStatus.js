@@ -158,6 +158,8 @@
     init: init,
     updateRestreamStatus: updateRestreamStatus,
     loadRestreamStatusFallback: loadRestreamStatusFallback,
+
+    // Surface used by the characterization tests to drive the module.
     getLastRtmpHealth: function () { return lastRtmpHealth; },
     setLastRtmpHealth: function (v) { lastRtmpHealth = v; },
   };

@@ -101,6 +101,5 @@
   return {
     init: init,
     loadQuality: loadQuality,
-    bindQualityChange: bindQualityChange,
   };
 });

@@ -458,6 +458,8 @@
 
   return {
     init: init,
+
+    // Surface used by the characterization tests to drive the module.
     pttSetStatus: pttSetStatus,
     pttReset: pttReset,
     pttClearWaveform: pttClearWaveform,

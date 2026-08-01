@@ -290,13 +290,13 @@
   return {
     init: init,
     loadQueue: loadQueue,
-    renderQueue: renderQueue,
-    addToQueue: addToQueue,
-    loadVideoQueue: loadVideoQueue,
-    addToVideoQueue: addToVideoQueue,
     skipVideo: skipVideo,
     clearVideoQueue: clearVideoQueue,
     loadActiveQueue: loadActiveQueue,
     renderTrackSelector: renderTrackSelector,
+
+    // Surface used by the characterization tests to drive the module.
+    renderQueue: renderQueue,
+    addToQueue: addToQueue,
   };
 });
