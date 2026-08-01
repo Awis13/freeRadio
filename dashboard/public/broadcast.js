@@ -35,9 +35,12 @@
  * __appStudio hook. Moving it would make the player and the analyzer depend on
  * the broadcast machine, inverting the layering.
  *
- * THE SKIP/CLEAR SPLIT-BRAIN moves with updateBroadcastUI: the repaint copies
- * live here now, the boot copies live in queue.js. Still byte-equivalent, still
- * separately pinned, still deliberately not collapsed.
+ * SKIP/CLEAR ARE NOT OURS. queue.js binds those two buttons once at boot and
+ * picks the music or video endpoints at click time from the same broadcast
+ * state this file repaints from. updateBroadcastUI used to re-assign both
+ * handlers on every repaint with a byte-identical copy of queue.js's bodies —
+ * that duplication is gone. What stays here is the chrome around them: the
+ * panel and selector labels, the search placeholder, and skipBtn.disabled.
  *
  * WS DISPATCH - buildWsHandlers() returns the handler table FRWsHub calls. The
  * bodies are the former app.js case bodies verbatim.
