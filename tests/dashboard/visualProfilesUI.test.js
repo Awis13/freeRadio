@@ -289,32 +289,69 @@ describe('visual-profiles UI characterization (window.FRVisualProfiles)', () => 
       expect(vp.getSelectedVisualProfileId()).toBe('p1');
     });
 
-    it('a failed video-grid load shows the error and LEAVES THE GRID INTACT', async () => {
-      // CHANGED IN T14-C1. The chain had no .catch and cleared the grid before
-      // fetching, so a transient failure produced an unhandled rejection AND an
-      // empty grid — and saveVisualProfileVideos PUTs whatever tiles are in the
-      // grid, so the next toggle-and-save would have written an empty profile.
+    it('a failed video-grid load shows the error and an explicit failure state', async () => {
+      // CHANGED IN T14-C1 (reworked). Originally the chain had no .catch and a
+      // failed load left an unexplained blank grid plus an unhandled rejection.
+      // Preserving the old tiles instead was WORSE: each tile's onclick closes
+      // over the profile id it was rendered for, so a surviving tile PUTs into
+      // the previous profile while the panel shows the new one. The grid is
+      // therefore cleared and replaced with a non-clickable failure state.
       const { win, doc, vp } = boot();
-      withFetch(win, [
-        routeExact('GET', '/api/visual-profiles/p1', { id: 'p1', name: 'Sunset', videos: ['a.mp4'] }),
-      ]);
-      // Seed the grid as a previous successful render would have left it.
       const grid = doc.getElementById('vp-video-grid');
       grid.innerHTML = '<div class="video-tile selected"><div class="video-tile-name">a.mp4</div></div>';
 
-      win.fetch = (url) => (String(url).indexOf('/api/visuals') !== -1
-        ? Promise.reject(new Error('offline'))
-        : Promise.resolve({ ok: true, status: 200, json: () => Promise.resolve({ id: 'p1', name: 'Sunset', videos: [] }) }));
-
+      win.fetch = () => Promise.reject(new Error('offline'));
       vp.renderVisualProfileDetail({ id: 'p1', name: 'Sunset', videos: ['a.mp4'] });
       await flush(10);
 
       const banner = doc.getElementById('error-banner');
       expect(banner.classList.contains('visible')).toBe(true);
       expect(banner.textContent).toContain('Failed to load videos');
-      // The tiles the user could still save from are untouched.
+
+      // No stale tiles, and not a silent blank either.
+      expect(grid.querySelectorAll('.video-tile').length).toBe(0);
+      expect(grid.querySelector('.grid-load-failed')).toBeTruthy();
+      expect(grid.textContent).toContain('Could not load videos');
+    });
+
+    it('a body that is not the expected array is treated as a failure too', async () => {
+      // authFetch resolves on a 500, so the render would otherwise walk an
+      // error object as if it were the video list.
+      const { win, doc, vp } = boot();
+      win.fetch = () => Promise.resolve({
+        ok: false, status: 500, json: () => Promise.resolve({ error: 'boom' }),
+      });
+      vp.renderVisualProfileDetail({ id: 'p1', name: 'Sunset', videos: [] });
+      await flush(10);
+
+      const grid = doc.getElementById('vp-video-grid');
+      expect(grid.querySelectorAll('.video-tile').length).toBe(0);
+      expect(grid.querySelector('.grid-load-failed')).toBeTruthy();
+    });
+
+    it('a failed render cannot leave a tile that saves into the PREVIOUS profile', async () => {
+      // The regression this contract exists to prevent: render A, then have
+      // render B fail, then click whatever is left. Nothing clickable may
+      // remain, so no PUT can fire at all — least of all one carrying p1.
+      const { win, doc, vp } = boot();
+      const stub = withFetch(win, [
+        routeExact('GET', '/api/visuals', [{ name: 'a.mp4', size: 10 }]),
+      ]);
+      vp.renderVisualProfileDetail({ id: 'p1', name: 'First', videos: ['a.mp4'] });
+      await flush(10);
+      const grid = doc.getElementById('vp-video-grid');
       expect(grid.querySelectorAll('.video-tile').length).toBe(1);
-      expect(grid.querySelector('.video-tile-name').textContent).toBe('a.mp4');
+
+      win.fetch = () => Promise.reject(new Error('offline'));
+      vp.renderVisualProfileDetail({ id: 'p2', name: 'Second', videos: [] });
+      await flush(10);
+
+      const tiles = grid.querySelectorAll('.video-tile');
+      expect(tiles.length).toBe(0);
+      const before = stub.calls.length;
+      grid.querySelectorAll('div').forEach((el) => el.onclick && el.onclick());
+      await flush(10);
+      expect(stub.calls.slice(before).filter((c) => c.method === 'PUT')).toEqual([]);
     });
 
     it('select error path -> showError writes #error-banner', async () => {
