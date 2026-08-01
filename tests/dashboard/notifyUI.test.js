@@ -29,8 +29,12 @@
  *     'ERROR: <msg>' line, and removes .visible after exactly 5000ms (text stays).
  */
 
-import { describe, it, expect, vi, afterEach } from 'vitest';
-import { bootWindow } from './appBoot.js';
+import { describe, it, expect, vi, afterEach, afterAll } from 'vitest';
+import { bootWindow, closeAllWindows } from './appBoot.js';
+
+// Tear down every jsdom window this file booted: each one keeps ~13 real
+// timers alive for the rest of the process otherwise.
+afterAll(closeAllWindows);
 
 /**
  * Boot a fresh window and grab the notify hook. No init/deps to inject — the

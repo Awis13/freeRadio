@@ -27,8 +27,12 @@
  * from index.html, and moduleManifest exposes it for the load-contract pins.
  */
 
-import { describe, it, expect, beforeAll } from 'vitest';
-import { bootWindow, moduleManifest } from './appBoot.js';
+import { describe, it, expect, beforeAll, afterAll } from 'vitest';
+import { bootWindow, moduleManifest, closeAllWindows } from './appBoot.js';
+
+// Tear down every jsdom window this file booted: each one keeps ~13 real
+// timers alive for the rest of the process otherwise.
+afterAll(closeAllWindows);
 
 describe('app.js jsdom load-smoke (C2 FRUtils cutover)', () => {
   let win;

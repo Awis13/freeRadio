@@ -27,8 +27,12 @@
  * false on boot", consistent with azInit not running.)
  */
 
-import { describe, it, expect } from 'vitest';
-import { bootWindow } from './appBoot.js';
+import { describe, it, expect, afterAll } from 'vitest';
+import { bootWindow, closeAllWindows } from './appBoot.js';
+
+// Tear down every jsdom window this file booted: each one keeps ~13 real
+// timers alive for the rest of the process otherwise.
+afterAll(closeAllWindows);
 
 describe('analyzer WebAudio facade characterization (window.__appAudio)', () => {
   it('exposes the five read-only graph getters as functions', () => {
