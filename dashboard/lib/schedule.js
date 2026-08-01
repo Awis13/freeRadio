@@ -397,6 +397,67 @@ function onTrackChange(filename) {
   });
 }
 
+// ---------------------------------------------------------------------------
+// Write-edge validation.
+//
+// Every reader of a weekly slot — slotsOverlap's toMinutes, getNextSlot, and
+// the client's renderScheduleGrid — indexes straight into
+// `startTime.split(':')` with no guard. A malformed slot therefore breaks its
+// READERS, not the write that created it: one bad record aborts the whole grid
+// render, so the schedule page goes blank instead of skipping the record. The
+// store is the wrong place to fix that (the client pins lock the throw as-is);
+// the API is, by refusing to persist a slot the readers cannot parse.
+//
+// day is 0=Mon..6=Sun — getNowInTimezone normalises with (getDay() + 6) % 7 and
+// the client's DAYS array starts at Mon. It is NOT the JS Date convention.
+const SLOT_TIME_RE = /^([01]\d|2[0-3]):[0-5]\d$/;
+
+// Accepts 0-6 as a number or as a numeric string (the client sends a parsed
+// number; the handlers historically ran the value through parseInt, so string
+// callers worked too). Returns null when the value is neither.
+function normalizeDay(value) {
+  if (typeof value === 'number') {
+    return Number.isInteger(value) && value >= 0 && value <= 6 ? value : null;
+  }
+  if (typeof value === 'string' && /^[0-6]$/.test(value.trim())) {
+    return parseInt(value, 10);
+  }
+  return null;
+}
+
+// Returns an error message for the first invalid field, or null when the slot
+// is parseable by every reader.
+function slotFieldError(slot) {
+  if (normalizeDay(slot.day) === null) return 'day must be an integer 0-6 (0=Mon, 6=Sun)';
+  if (!SLOT_TIME_RE.test(slot.startTime)) return 'startTime must be HH:MM (24-hour)';
+  if (!SLOT_TIME_RE.test(slot.endTime)) return 'endTime must be HH:MM (24-hour)';
+  return null;
+}
+
+const SETTINGS_TYPES = {
+  timezone: (v) => typeof v === 'string',
+  defaultPlaylistId: (v) => v === null || typeof v === 'string',
+  defaultVideoPlaylistId: (v) => v === null || typeof v === 'string',
+  enabled: (v) => typeof v === 'boolean',
+};
+
+// Type-only guard: a wrong-typed setting survives the whitelist and then fails
+// silently far from here (a non-boolean `enabled` never equals false, so the
+// disable switch stops working; a non-string timezone falls through to the
+// Intl catch and quietly reverts to server time). Whether the timezone NAMES a
+// real zone is a separate question this does not answer.
+function settingsFieldError(settings) {
+  if (typeof settings !== 'object' || settings === null || Array.isArray(settings)) {
+    return 'settings must be an object';
+  }
+  for (const key of Object.keys(SETTINGS_TYPES)) {
+    if (settings[key] !== undefined && !SETTINGS_TYPES[key](settings[key])) {
+      return 'settings.' + key + ' has the wrong type';
+    }
+  }
+  return null;
+}
+
 function createScheduleRouter() {
   const router = express.Router();
 
@@ -407,11 +468,16 @@ function createScheduleRouter() {
 
   // PUT /api/schedule — update settings (whitelist)
   router.put('/', express.json(), (req, res) => {
+    const body = req.body || {};
+    if (body.settings !== undefined) {
+      const err = settingsFieldError(body.settings);
+      if (err) return res.status(400).json({ error: err });
+    }
     const data = loadSchedule();
-    if (req.body.settings) {
+    if (body.settings) {
       const ALLOWED_SETTINGS = ['timezone', 'defaultPlaylistId', 'defaultVideoPlaylistId', 'enabled'];
       for (const key of ALLOWED_SETTINGS) {
-        if (req.body.settings[key] !== undefined) data.settings[key] = req.body.settings[key];
+        if (body.settings[key] !== undefined) data.settings[key] = body.settings[key];
       }
     }
     saveSchedule(data);
@@ -442,12 +508,15 @@ function createScheduleRouter() {
 
   // POST /api/schedule/weekly — add weekly slot
   router.post('/weekly', express.json(), (req, res) => {
-    const { day, startTime, endTime, playlistId, videoPlaylistId, label } = req.body;
+    const { day, startTime, endTime, playlistId, videoPlaylistId, label } = req.body || {};
     if (day === undefined || !startTime || !endTime) {
       return res.status(400).json({ error: 'day, startTime, endTime required' });
     }
+    const fieldError = slotFieldError({ day, startTime, endTime });
+    if (fieldError) return res.status(400).json({ error: fieldError });
+
     const data = loadSchedule();
-    const newSlot = { day: parseInt(day), startTime, endTime };
+    const newSlot = { day: normalizeDay(day), startTime, endTime };
 
     // Check overlap
     const overlapping = Object.values(data.weekly || {}).filter(ws => slotsOverlap(ws, newSlot));
@@ -471,10 +540,19 @@ function createScheduleRouter() {
     if (!ws) return res.status(404).json({ error: 'not found' });
 
     const ALLOWED_FIELDS = ["day", "startTime", "endTime", "playlistId", "videoPlaylistId", "label"];
+    const body = req.body || {};
+    const merged = { ...ws };
     for (const key of ALLOWED_FIELDS) {
-      if (req.body[key] !== undefined) ws[key] = req.body[key];
+      if (body[key] !== undefined) merged[key] = body[key];
     }
-    if (ws.day !== undefined) ws.day = parseInt(ws.day);
+    // A partial update is still a write, so the RESULT is what gets validated:
+    // no request may leave a slot the readers cannot parse. This also refuses a
+    // label-only edit of a slot that was already malformed on disk, rather than
+    // rewriting it and keeping the bad record alive.
+    const fieldError = slotFieldError(merged);
+    if (fieldError) return res.status(400).json({ error: fieldError });
+    merged.day = normalizeDay(merged.day);
+    Object.assign(ws, merged);
 
     // Check overlap (excluding self)
     const overlapping = Object.values(data.weekly)
