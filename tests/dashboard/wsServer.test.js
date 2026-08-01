@@ -45,10 +45,20 @@ const { WebSocket } = nodeRequire('ws');
 
 const ORIGINAL_TOKEN = process.env.DASHBOARD_TOKEN;
 
-/** Fresh require of wsServer.js with the given token baked in. */
-function freshWsServer(token) {
+const ORIGINAL_AUTH_DISABLED = process.env.AUTH_DISABLED;
+
+/**
+ * Fresh require of wsServer.js with the given token baked in.
+ *
+ * `authDisabled` is explicit on purpose: an unset DASHBOARD_TOKEN no longer
+ * means "let everyone in", so a test that wants an open socket has to say so,
+ * exactly as an operator would.
+ */
+function freshWsServer(token, { authDisabled = false } = {}) {
   if (token === undefined) delete process.env.DASHBOARD_TOKEN;
   else process.env.DASHBOARD_TOKEN = token;
+  if (authDisabled) process.env.AUTH_DISABLED = 'true';
+  else delete process.env.AUTH_DISABLED;
   delete nodeRequire.cache[nodeRequire.resolve(WS_SPEC)];
   return nodeRequire(WS_SPEC);
 }
@@ -56,8 +66,8 @@ function freshWsServer(token) {
 let harnesses = [];
 
 /** Start a loopback http server with setupWs attached. */
-async function startHarness(token, initState = { hello: 'init' }) {
-  const wsMod = freshWsServer(token);
+async function startHarness(token, initState = { hello: 'init' }, opts = {}) {
+  const wsMod = freshWsServer(token, opts);
   const server = http.createServer();
   const getInitState = vi.fn(() => initState);
   const wss = wsMod.setupWs(server, null, getInitState);
@@ -155,9 +165,9 @@ afterEach(async () => {
 // ---------------------------------------------------------------------------
 // No-token mode
 // ---------------------------------------------------------------------------
-describe('setupWs without DASHBOARD_TOKEN', () => {
+describe('setupWs with auth explicitly disabled (AUTH_DISABLED=true)', () => {
   it('auto-authenticates and sends init with the getInitState payload', async () => {
-    const h = await startHarness(undefined, { track: 'song.mp3', volume: 0.8 });
+    const h = await startHarness(undefined, { track: 'song.mp3', volume: 0.8 }, { authDisabled: true });
     const c = connect(h);
     await c.opened;
     const init = await messageAt(c, 0);
@@ -166,7 +176,7 @@ describe('setupWs without DASHBOARD_TOKEN', () => {
   });
 
   it('broadcast reaches a connected client as exact {type, data} JSON', async () => {
-    const h = await startHarness(undefined);
+    const h = await startHarness(undefined, { hello: 'init' }, { authDisabled: true });
     const c = connect(h);
     await c.opened;
     await messageAt(c, 0); // init
@@ -178,7 +188,7 @@ describe('setupWs without DASHBOARD_TOKEN', () => {
   });
 
   it('broadcast skips sockets with readyState !== 1 without crashing', async () => {
-    const h = await startHarness(undefined);
+    const h = await startHarness(undefined, { hello: 'init' }, { authDisabled: true });
     const a = connect(h);
     await a.opened;
     await messageAt(a, 0);
@@ -205,6 +215,20 @@ describe('setupWs without DASHBOARD_TOKEN', () => {
 // ---------------------------------------------------------------------------
 // Token mode — auth state machine
 // ---------------------------------------------------------------------------
+describe('setupWs with auth unconfigured (no token, no opt-out)', () => {
+  it('closes the socket instead of handing out the state feed', async () => {
+    // CHANGED IN T11-C2: an unset DASHBOARD_TOKEN used to auto-authenticate
+    // every socket, so a deployment that forgot its token broadcast its live
+    // state to anyone who connected.
+    const h = await startHarness(undefined);
+    const ws = connect(h);
+
+    const { code, reason } = await ws.closed;
+    expect(code).toBe(4401);
+    expect(reason).toContain('Auth is not configured');
+  });
+});
+
 describe('setupWs with DASHBOARD_TOKEN', () => {
   it('does not send init before auth; correct token gets init', async () => {
     const h = await startHarness('s3cret', { mode: 'radio' });
@@ -292,7 +316,7 @@ describe('setupWs with DASHBOARD_TOKEN', () => {
 // ---------------------------------------------------------------------------
 describe('setupTlsWs', () => {
   it('patches broadcast to fan out to clients of BOTH servers', async () => {
-    const h = await startHarness(undefined);
+    const h = await startHarness(undefined, { hello: 'init' }, { authDisabled: true });
     const second = await attachSecondServer(h);
 
     const a = connect(h); // primary server

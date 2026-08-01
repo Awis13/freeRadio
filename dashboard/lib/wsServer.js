@@ -1,6 +1,6 @@
 const { WebSocketServer } = require("ws");
+const authGate = require("./authGate");
 
-const DASHBOARD_TOKEN = process.env.DASHBOARD_TOKEN || "";
 const AUTH_TIMEOUT_MS = 5000;
 
 let _broadcastFn = null;
@@ -19,10 +19,14 @@ function setupWs(server, _verifyClient, getInitState) {
   wss.on("connection", (ws) => {
     ws._authenticated = false;
 
-    // If no token configured, auto-authenticate
-    if (!DASHBOARD_TOKEN) {
+    // Auth explicitly disabled — accept the socket as authenticated.
+    if (authGate.isOpen()) {
       ws._authenticated = true;
       ws.send(JSON.stringify({ type: "init", data: getInitState() }));
+    } else if (authGate.isClosed()) {
+      // No token and no opt-out: refuse rather than hand out the state feed.
+      ws.close(4401, "Auth is not configured");
+      return;
     } else {
       // 5-second auth timeout
       ws._authTimer = setTimeout(() => {
@@ -36,7 +40,7 @@ function setupWs(server, _verifyClient, getInitState) {
       try {
         const msg = JSON.parse(data);
         if (msg.type === "auth") {
-          if (!DASHBOARD_TOKEN || msg.token === DASHBOARD_TOKEN) {
+          if (authGate.accepts(msg.token)) {
             ws._authenticated = true;
             if (ws._authTimer) {
               clearTimeout(ws._authTimer);
@@ -74,9 +78,14 @@ function setupTlsWs(tlsServer, _verifyClient, getInitState, wss) {
   wssTls.on("connection", (ws) => {
     ws._authenticated = false;
 
-    if (!DASHBOARD_TOKEN) {
+    // Auth explicitly disabled — accept the socket as authenticated.
+    if (authGate.isOpen()) {
       ws._authenticated = true;
       ws.send(JSON.stringify({ type: "init", data: getInitState() }));
+    } else if (authGate.isClosed()) {
+      // No token and no opt-out: refuse rather than hand out the state feed.
+      ws.close(4401, "Auth is not configured");
+      return;
     } else {
       ws._authTimer = setTimeout(() => {
         if (!ws._authenticated) {
@@ -89,7 +98,7 @@ function setupTlsWs(tlsServer, _verifyClient, getInitState, wss) {
       try {
         const msg = JSON.parse(data);
         if (msg.type === "auth") {
-          if (!DASHBOARD_TOKEN || msg.token === DASHBOARD_TOKEN) {
+          if (authGate.accepts(msg.token)) {
             ws._authenticated = true;
             if (ws._authTimer) {
               clearTimeout(ws._authTimer);
