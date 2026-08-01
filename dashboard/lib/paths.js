@@ -28,13 +28,15 @@ const MUSIC_DIR = process.env.MUSIC_DIR || '/music';
 /**
  * Transcoder output directory.
  *
- * Derived from MUSIC_DIR rather than hardcoded, which is the fix for the
- * split this module exists to close: schedule.js and queue.js hardcode
- * '/music/processed' while the rest of the app honours MUSIC_DIR, so setting
- * MUSIC_DIR today moves the library but not the processed files. With no env
- * set the value is byte-identical to the old literal.
+ * Derived from MUSIC_DIR, not separately configurable. It had its own env
+ * override until the batch-4 audit showed only 2 of its 7 consumers would have
+ * honoured it — routes/dj.js and fileManager.js compose join(dirParam,
+ * 'processed') from a directory they are handed — so setting it split the
+ * library between two locations instead of moving it. Giving every consumer
+ * the same answer means changing factory signatures, which is a ticket, not a
+ * default. With env unset nothing changes either way.
  */
-const PROCESSED_DIR = process.env.PROCESSED_DIR || path.join(MUSIC_DIR, 'processed');
+const PROCESSED_DIR = path.join(MUSIC_DIR, 'processed');
 
 /** Video/visual assets root. */
 const VISUALS_DIR = process.env.VISUALS_DIR || '/visuals';
@@ -51,8 +53,13 @@ const HLS_DIR = process.env.HLS_DIR || '/hls';
  */
 const HLS_JS_PATH = process.env.HLS_JS_PATH || '/app/hls.min.js';
 
-/** Track analysis map written by the analyzer next to the music library. */
-const ANALYSIS_MAP = process.env.ANALYSIS_MAP || path.join(MUSIC_DIR, '.analysis_map');
+/**
+ * Track analysis map written by the analyzer next to the music library.
+ * Derived, for the same reason as PROCESSED_DIR: 1 of its 3 consumers read the
+ * override, so setting it pointed the dashboard at one map while the analyzer
+ * kept writing another.
+ */
+const ANALYSIS_MAP = path.join(MUSIC_DIR, '.analysis_map');
 
 // --- Liquidsoap service ----------------------------------------------------
 
