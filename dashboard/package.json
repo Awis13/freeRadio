@@ -6,10 +6,10 @@
     "start": "node server.js"
   },
   "dependencies": {
-    "@aws-sdk/client-s3": "^3.999.0",
-    "express": "^4.21.0",
-    "express-rate-limit": "^8.2.1",
-    "multer": "^2.0.2",
-    "ws": "^8.19.0"
+    "@aws-sdk/client-s3": "3.1066.0",
+    "express": "4.22.2",
+    "express-rate-limit": "8.5.2",
+    "multer": "2.0.2",
+    "ws": "8.21.0"
   }
 }

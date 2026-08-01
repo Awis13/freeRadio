@@ -145,6 +145,10 @@ describe('dashboard/lib/s3.js', () => {
 
   afterEach(() => {
     vi.restoreAllMocks();
+    // Drop the injected factory too: without this a test that forgets to call
+    // mockSend() reads the PREVIOUS test's spy and asserts against stale calls
+    // instead of failing.
+    clientFactory = null;
     delete nodeRequire.cache[nodeRequire.resolve(S3_SPEC)];
     restoreOriginalEnv();
     for (const dir of tmpDirs) fs.rmSync(dir, { recursive: true, force: true });
