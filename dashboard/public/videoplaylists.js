@@ -139,12 +139,16 @@
     }
 
     var grid = document.getElementById('vpl-video-grid');
-    grid.innerHTML = '';
 
     if (playlist.type === 'manual') {
+      // The grid is NOT cleared before the fetch: on failure the previous tiles
+      // stay put. Clearing first meant a transient error left an empty grid,
+      // and saving from an empty grid PUTs an empty track list — the tiles are
+      // the source of truth for the save.
       authFetch('/api/visuals-processed')
         .then(function(r) { return r.json(); })
         .then(function(allVideos) {
+          grid.innerHTML = '';
           var selectedSet = new Set(playlist.tracks || []);
           var ordered = [];
           (playlist.tracks || []).forEach(function(t) {
@@ -177,8 +181,12 @@
 
             grid.appendChild(div);
           });
+        })
+        .catch(function(e) {
+          showError('Failed to load videos: ' + e);
         });
     } else {
+      grid.innerHTML = '';
       var resolved = playlist.resolvedTracks || [];
       if (resolved.length === 0) {
         grid.innerHTML = '<div class="empty-state">No matching videos</div>';

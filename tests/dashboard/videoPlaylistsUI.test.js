@@ -164,6 +164,28 @@ describe('video-playlists UI characterization (window.FRVideoPlaylists)', () => 
   // selectVideoPlaylist -> renderVideoPlaylistDetail
   // -------------------------------------------------------------------------
   describe('selectVideoPlaylist + renderVideoPlaylistDetail (manual branch)', () => {
+    it('a failed video-grid load shows the error and LEAVES THE GRID INTACT', async () => {
+      // CHANGED IN T14-C1, same reason as the visual-profiles twin: no .catch
+      // and a pre-fetch clear meant a transient failure emptied the grid, and
+      // saveVideoPlaylistVideos saves exactly what the grid holds.
+      const { win, doc, vpl } = boot();
+      const grid = doc.getElementById('vpl-video-grid');
+      grid.innerHTML = '<div class="video-tile selected"><div class="video-tile-name">b.mp4</div></div>';
+
+      win.fetch = (url) => (String(url).indexOf('/api/visuals-processed') !== -1
+        ? Promise.reject(new Error('offline'))
+        : Promise.resolve({ ok: true, status: 200, json: () => Promise.resolve({}) }));
+
+      vpl.renderVideoPlaylistDetail({ id: 'p1', name: 'Sunset', type: 'manual', tracks: ['b.mp4'] });
+      await flush(10);
+
+      const banner = doc.getElementById('error-banner');
+      expect(banner.classList.contains('visible')).toBe(true);
+      expect(banner.textContent).toContain('Failed to load videos');
+      expect(grid.querySelectorAll('.video-tile').length).toBe(1);
+      expect(grid.querySelector('.video-tile-name').textContent).toBe('b.mp4');
+    });
+
     it('shows detail synchronously, sets selection, title, indicator + SELECTED-FIRST tiles from /api/visuals-processed', async () => {
       const { win, doc, vpl } = boot();
       const stub = withFetch(win, [
