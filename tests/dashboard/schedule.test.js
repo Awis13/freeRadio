@@ -20,6 +20,7 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import fs from 'fs';
 import { createRequire } from 'module';
+import { mockRes, getRouteHandler } from './helpers.js';
 
 const nodeRequire = createRequire(import.meta.url);
 const mod = nodeRequire('../../dashboard/lib/schedule');
@@ -998,5 +999,232 @@ describe('startExecutor (P1-7)', () => {
     startExec(() => ({}), '/visuals', vi.fn());
 
     expect(setIntervalSpy).toHaveBeenCalledWith(expect.any(Function), 30000);
+  });
+});
+
+// ─── Router write-edge validation ─────────────────────────────
+//
+// The store is only as sound as the writes that reach it. Every reader of a
+// weekly slot (slotsOverlap's toMinutes, getNextSlot, the client's
+// renderScheduleGrid) splits startTime/endTime with no guard, so a malformed
+// record breaks readers rather than its own write — one bad slot aborts the
+// whole grid render. These cover the API refusing to create such a record.
+//
+// Reachability, exactly: a slot with startTime MISSING was already refused by
+// the pre-existing required-fields check. What was not refused is a slot whose
+// times are present but not parseable strings — POST accepted any truthy value
+// (and only noticed via a TypeError inside the overlap check, which does not
+// run at all when the schedule is empty), and PUT validated nothing whatsoever.
+
+describe('createScheduleRouter — weekly slot write validation', () => {
+  const { createScheduleRouter } = mod;
+
+  function harness(initial) {
+    const writes = [];
+    vi.spyOn(fs, 'existsSync').mockReturnValue(true);
+    vi.spyOn(fs, 'readFileSync').mockReturnValue(JSON.stringify(initial));
+    vi.spyOn(fs, 'writeFileSync').mockImplementation((f, d) => { writes.push(JSON.parse(d)); });
+    vi.spyOn(fs, 'renameSync').mockImplementation(() => {});
+    vi.spyOn(fs, 'mkdirSync').mockImplementation(() => {});
+    return { router: createScheduleRouter(), writes };
+  }
+
+  const validSlot = { id: 'ws1', day: 4, startTime: '21:00', endTime: '23:30', playlistId: null, videoPlaylistId: null, label: 'Friday Night' };
+
+  function postWeekly(initial, body) {
+    const { router, writes } = harness(initial);
+    const res = mockRes();
+    getRouteHandler(router, 'post', '/weekly')({ body }, res);
+    return { res, writes };
+  }
+
+  function putWeekly(initial, id, body) {
+    const { router, writes } = harness(initial);
+    const res = mockRes();
+    getRouteHandler(router, 'put', '/weekly/:id')({ params: { id }, body }, res);
+    return { res, writes };
+  }
+
+  beforeEach(() => vi.restoreAllMocks());
+
+  it('accepts the payload the client actually sends, unchanged', () => {
+    // Exactly what bindAddWeeklySlotButton POSTs: day as a parsed int 0-6 and
+    // both times from <input type="time"> (always HH:MM).
+    const { res, writes } = postWeekly(emptySchedule(), {
+      day: 4, startTime: '21:00', endTime: '23:30',
+      playlistId: null, videoPlaylistId: null, label: 'Friday Night',
+    });
+
+    expect(res.statusCode).toBe(200);
+    expect(res.body).toMatchObject({ day: 4, startTime: '21:00', endTime: '23:30', label: 'Friday Night' });
+    expect(writes).toHaveLength(1);
+    expect(Object.values(writes[0].weekly)[0]).toMatchObject({ day: 4, startTime: '21:00' });
+  });
+
+  it('still accepts a numeric-string day, as parseInt did before', () => {
+    const { res, writes } = postWeekly(emptySchedule(), { day: '4', startTime: '21:00', endTime: '23:30' });
+
+    expect(res.statusCode).toBe(200);
+    expect(res.body.day).toBe(4);
+    expect(Object.values(writes[0].weekly)[0].day).toBe(4);
+  });
+
+  it('accepts both ends of the day range and midnight boundaries', () => {
+    for (const [day, startTime, endTime] of [[0, '00:00', '23:59'], [6, '23:59', '00:00']]) {
+      const { res } = postWeekly(emptySchedule(), { day, startTime, endTime });
+      expect(res.statusCode).toBe(200);
+    }
+  });
+
+  it('the register crash shape — a slot with no startTime — is refused', () => {
+    const { res, writes } = postWeekly(emptySchedule(), { day: 4, endTime: '23:30' });
+
+    expect(res.statusCode).toBe(400);
+    expect(res.body.error).toBe('day, startTime, endTime required');
+    expect(writes).toHaveLength(0);
+  });
+
+  it('POST refuses a non-string time on an empty schedule, where no overlap check would catch it', () => {
+    // The gap this closes: with no existing slots slotsOverlap never runs, so
+    // 123 used to sail into the store and detonate in the client instead.
+    const { res, writes } = postWeekly(emptySchedule(), { day: 4, startTime: 123, endTime: '23:30' });
+
+    expect(res.statusCode).toBe(400);
+    expect(res.body.error).toBe('startTime must be HH:MM (24-hour)');
+    expect(writes).toHaveLength(0);
+  });
+
+  it('POST refuses times that are strings but not clock times', () => {
+    for (const bad of ['not-a-time', '25:00', '12:60', '7:00', '12:5']) {
+      const { res, writes } = postWeekly(emptySchedule(), { day: 4, startTime: bad, endTime: '23:30' });
+      expect(res.statusCode).toBe(400);
+      expect(res.body.error).toBe('startTime must be HH:MM (24-hour)');
+      expect(writes).toHaveLength(0);
+    }
+  });
+
+  it('POST refuses an endTime that is not a clock time', () => {
+    const { res, writes } = postWeekly(emptySchedule(), { day: 4, startTime: '21:00', endTime: '99:99' });
+
+    expect(res.statusCode).toBe(400);
+    expect(res.body.error).toBe('endTime must be HH:MM (24-hour)');
+    expect(writes).toHaveLength(0);
+  });
+
+  it('POST refuses a day outside 0-6 or not an integer', () => {
+    for (const bad of [7, -1, 4.5, 'Friday', null, {}]) {
+      const { res, writes } = postWeekly(emptySchedule(), { day: bad, startTime: '21:00', endTime: '23:30' });
+      expect(res.statusCode).toBe(400);
+      expect(res.body.error).toBe('day must be an integer 0-6 (0=Mon, 6=Sun)');
+      expect(writes).toHaveLength(0);
+    }
+  });
+
+  it('PUT still applies a valid partial edit', () => {
+    const initial = emptySchedule();
+    initial.weekly = { ws1: { ...validSlot } };
+    const { res, writes } = putWeekly(initial, 'ws1', { label: 'Renamed' });
+
+    expect(res.statusCode).toBe(200);
+    expect(res.body).toMatchObject({ label: 'Renamed', startTime: '21:00', day: 4 });
+    expect(writes[0].weekly.ws1.label).toBe('Renamed');
+  });
+
+  it('PUT refuses a null startTime — the write that used to poison the grid', () => {
+    // `if (body[key] !== undefined)` treats null as a value, so this replaced a
+    // good time with null and every later render threw on null.split(':').
+    const initial = emptySchedule();
+    initial.weekly = { ws1: { ...validSlot } };
+    const { res, writes } = putWeekly(initial, 'ws1', { startTime: null });
+
+    expect(res.statusCode).toBe(400);
+    expect(res.body.error).toBe('startTime must be HH:MM (24-hour)');
+    expect(writes).toHaveLength(0);
+  });
+
+  it('PUT refuses an out-of-range day', () => {
+    const initial = emptySchedule();
+    initial.weekly = { ws1: { ...validSlot } };
+    const { res, writes } = putWeekly(initial, 'ws1', { day: 9 });
+
+    expect(res.statusCode).toBe(400);
+    expect(res.body.error).toBe('day must be an integer 0-6 (0=Mon, 6=Sun)');
+    expect(writes).toHaveLength(0);
+  });
+
+  it('PUT validates the merged result, so a malformed stored slot cannot be kept alive by a label edit', () => {
+    const initial = emptySchedule();
+    initial.weekly = { ws1: { id: 'ws1', day: 4, endTime: '23:30', label: 'legacy' } };
+    const { res, writes } = putWeekly(initial, 'ws1', { label: 'still broken' });
+
+    expect(res.statusCode).toBe(400);
+    expect(res.body.error).toBe('startTime must be HH:MM (24-hour)');
+    expect(writes).toHaveLength(0);
+  });
+
+  it('PUT on an unknown id still 404s before validation', () => {
+    const { res } = putWeekly(emptySchedule(), 'nope', { startTime: null });
+    expect(res.statusCode).toBe(404);
+  });
+});
+
+describe('createScheduleRouter — settings shape guard', () => {
+  const { createScheduleRouter } = mod;
+
+  function putSettings(body) {
+    const writes = [];
+    vi.spyOn(fs, 'existsSync').mockReturnValue(true);
+    vi.spyOn(fs, 'readFileSync').mockReturnValue(JSON.stringify(emptySchedule()));
+    vi.spyOn(fs, 'writeFileSync').mockImplementation((f, d) => { writes.push(JSON.parse(d)); });
+    vi.spyOn(fs, 'renameSync').mockImplementation(() => {});
+    vi.spyOn(fs, 'mkdirSync').mockImplementation(() => {});
+    const res = mockRes();
+    getRouteHandler(createScheduleRouter(), 'put', '/')({ body }, res);
+    return { res, writes };
+  }
+
+  beforeEach(() => vi.restoreAllMocks());
+
+  it('accepts the payload the settings form actually sends', () => {
+    const { res, writes } = putSettings({
+      settings: { timezone: 'Europe/Prague', defaultPlaylistId: 'pl1', enabled: false },
+    });
+
+    expect(res.statusCode).toBe(200);
+    expect(writes[0].settings).toMatchObject({ timezone: 'Europe/Prague', defaultPlaylistId: 'pl1', enabled: false });
+  });
+
+  it('refuses a non-boolean enabled', () => {
+    // 'false' is truthy and never equals false, so the whole disable switch
+    // would read as ON while the UI showed it OFF.
+    const { res, writes } = putSettings({ settings: { enabled: 'false' } });
+
+    expect(res.statusCode).toBe(400);
+    expect(res.body.error).toBe('settings.enabled has the wrong type');
+    expect(writes).toHaveLength(0);
+  });
+
+  it('refuses a non-string timezone', () => {
+    const { res, writes } = putSettings({ settings: { timezone: 42 } });
+
+    expect(res.statusCode).toBe(400);
+    expect(res.body.error).toBe('settings.timezone has the wrong type');
+    expect(writes).toHaveLength(0);
+  });
+
+  it('refuses settings that are not an object', () => {
+    for (const bad of [[], 'timezone=UTC', 7]) {
+      const { res, writes } = putSettings({ settings: bad });
+      expect(res.statusCode).toBe(400);
+      expect(res.body.error).toBe('settings must be an object');
+      expect(writes).toHaveLength(0);
+    }
+  });
+
+  it('a body with no settings key still saves and returns the schedule', () => {
+    const { res, writes } = putSettings({});
+    expect(res.statusCode).toBe(200);
+    expect(res.body).toHaveProperty('weekly');
+    expect(writes).toHaveLength(1);
   });
 });
