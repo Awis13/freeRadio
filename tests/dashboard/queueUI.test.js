@@ -233,8 +233,10 @@ describe('track selector rendering and the add-to-queue path', () => {
   it('a rejected VIDEO add reports too, matching its music twin', async () => {
     // CHANGED IN T15-C2. The video push swallowed { ok: false } — the add
     // simply appeared to do nothing — while its music twin has always surfaced
-    // it. Driven through the real selector button, the same way the music pins
-    // above do, since the video add is reached only from that click.
+    // it. Driven through the exported addToVideoQueue rather than the selector
+    // button the music pins above use: in video mode the selector's list is
+    // filled at broadcast boot, before this test can stub the routes, so the
+    // clickable button does not exist here.
     // Note the skip/clear pair stays silent on !ok in BOTH modes: that half was
     // already symmetric, so only the add path needed aligning.
     const h = boot();
