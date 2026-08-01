@@ -14,9 +14,14 @@
  * mixing-config and live-mode.
  *
  * CONSUMER-SHAPED. Every pin drives the real boot socket via ws.onmessage, or a
- * real control click. handleMessage is wrapped in a try/catch at the onmessage
- * boundary, so a pin that asserts fresh DOM values is also what proves the
- * handler did not throw its way out.
+ * real control click.
+ *
+ * PROVING A FRAME DID NOT THROW. handleMessage runs inside a try/catch in
+ * onmessage, and that catch is PER MESSAGE — a frame that throws does not stop
+ * the next one, so "a later frame still repaints" proves nothing. What the catch
+ * does do is `log('ws: parse error ' + e)`, and log() appends to #log. So the
+ * detector for a case that has no DOM effect is that #log does NOT gain
+ * 'ws: parse error' after the frame.
  *
  * TIMERS: the win.setTimeout capture spy (wsReconnectUI.test.js:22-30 recipe) is
  * used where a frame schedules work — app.js resolves setTimeout in the jsdom
@@ -73,6 +78,19 @@ function statRow(doc) {
   };
 }
 
+/** The debug log pane's text — log() appends every line to #log. */
+function logText(doc) {
+  return doc.getElementById('log').textContent;
+}
+
+/**
+ * Assert the frame just sent did not throw out of handleMessage. onmessage's
+ * catch logs 'ws: parse error', so its absence is the proof.
+ */
+function expectFrameSurvived(doc) {
+  expect(logText(doc)).not.toContain('ws: parse error');
+}
+
 /** Which mixing pill carries the active class. */
 function activeMixPill(doc) {
   return Array.from(doc.querySelectorAll('.mix-pill'))
@@ -83,10 +101,16 @@ function activeMixPill(doc) {
 describe('output mode tag (init frame)', () => {
   it('defaults to HLS when the server sends no output mode', () => {
     const { doc, send } = boot();
-    send({ type: 'init', data: initState('live', true) });
     const tag = doc.getElementById('mode-tag');
+    // #mode-tag ships 'HLS' in the markup, so drive it away from the default
+    // first — otherwise this would pass with updateMode's body deleted.
+    send({ type: 'init', data: initState('live', true, null, { outputMode: 'rtmp' }) });
+    expect(tag.textContent).toBe('RTMP');
+
+    send({ type: 'init', data: initState('live', true) });
+
+    // `(mode || 'hls').toUpperCase()` puts it back.
     expect(tag.textContent).toBe('HLS');
-    expect(tag.className).toBe('tag');
   });
 
   it('shows RTMP and adds the rtmp class', () => {
@@ -187,7 +211,13 @@ describe('now-playing writes of the audio frame', () => {
   it('falls back to a double dash when neither title nor filename is usable', () => {
     const { doc, send } = boot();
     send({ type: 'init', data: initState('live', true) });
+    // #studio-audio-track ships '--' in the markup, so put a real name in it
+    // first — otherwise this would pass with the fallback deleted.
+    send({ type: 'audio', data: { title: 'Something', duration: 10 } });
+    expect(doc.getElementById('studio-audio-track').textContent).toBe('Something');
+
     send({ type: 'audio', data: { duration: 10 } });
+
     expect(doc.getElementById('studio-audio-track').textContent).toBe('--');
   });
 
@@ -266,33 +296,43 @@ describe('video frame', () => {
   });
 });
 
-describe('frames with no local DOM effect', () => {
-  it('a voice-status frame is absorbed without throwing', () => {
+describe('frames whose only effect is a log line', () => {
+  it('an on-air voice-status frame logs it', () => {
     const { doc, send } = boot();
     send({ type: 'init', data: initState('live', true) });
+    expect(logText(doc)).not.toContain('PTT: voice message on air');
+
     send({ type: 'voice-status', data: { status: 'on-air' } });
+
+    // The case has no DOM effect at all — the log line is its only observable.
+    expect(logText(doc)).toContain('PTT: voice message on air');
+    expectFrameSurvived(doc);
+  });
+
+  it('any other voice-status body logs nothing', () => {
+    const { doc, send } = boot();
+    send({ type: 'init', data: initState('live', true) });
+
     send({ type: 'voice-status', data: { status: 'idle' } });
+    send({ type: 'voice-status', data: {} });
     send({ type: 'voice-status', data: null });
-    // A throw inside handleMessage is swallowed at the onmessage boundary, so
-    // the proof it ran is that a later frame still repaints.
-    send({ type: 'ffmpeg', data: { fps: '25' } });
-    expect(doc.getElementById('stat-fps').textContent).toBe('25');
+
+    expect(logText(doc)).not.toContain('PTT: voice message on air');
+    expectFrameSurvived(doc);
   });
 
   it('an rtmp-health frame is forwarded to the restream module without throwing', () => {
     const { doc, send } = boot();
     send({ type: 'init', data: initState('live', true) });
     send({ type: 'rtmp-health', data: { youtube: { healthy: true } } });
-    send({ type: 'ffmpeg', data: { fps: '25' } });
-    expect(doc.getElementById('stat-fps').textContent).toBe('25');
+    expectFrameSurvived(doc);
   });
 
   it('an unknown message type falls through the switch harmlessly', () => {
     const { doc, send } = boot();
     send({ type: 'init', data: initState('live', true) });
     send({ type: 'no-such-type', data: { anything: true } });
-    send({ type: 'ffmpeg', data: { fps: '25' } });
-    expect(doc.getElementById('stat-fps').textContent).toBe('25');
+    expectFrameSurvived(doc);
   });
 });
 
@@ -382,17 +422,22 @@ describe('live-mode frame and the Phase 1 Live Mode bar', () => {
     expect(doc.querySelectorAll('.live-source-pill')).toHaveLength(0);
   });
 
-  it('a live-mode frame still repaints the mode cards despite the bar being absent', () => {
+  it('logs the OBS status, which is the only effect the frame has in Phase 1', () => {
     const { doc, send } = boot();
     send({ type: 'init', data: initState('live', true, 'live') });
-    expect(doc.querySelector('.studio-layout').classList.contains('mode-takeover')).toBe(true);
+    expect(logText(doc)).not.toContain('live: connected');
 
     send({ type: 'live-mode', data: { source: 'obs', obsStatus: 'connected', afkFallback: 'visual-radio', ingestKey: '' } });
 
-    // updateLiveModeUI returns at its first line (no #live-afk-fallback), but
-    // updateModeUI still runs, so the layout classes survive the frame.
+    // updateLiveModeUI returns at its first line (no #live-afk-fallback) and
+    // every liveMode reader inside updateModeUI is behind Phase 2/3 markup, so
+    // the DOM is untouched. The log line is the case's only observable effect —
+    // asserting the mode-card classes here would pass with the whole case body
+    // deleted, since the preceding init frame is what sets them.
+    expect(logText(doc)).toContain('live: connected');
+    expectFrameSurvived(doc);
+    // The classes the init frame set are still there afterwards.
     expect(doc.querySelector('.studio-layout').classList.contains('mode-takeover')).toBe(true);
-    expect(doc.querySelector('.studio-layout').classList.contains('submode-obs')).toBe(true);
   });
 
   it('REPLACES liveMode wholesale, so a partial frame drops the other fields', () => {
