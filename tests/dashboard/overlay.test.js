@@ -22,6 +22,7 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { serverAgent } from './helpers/serverAgent.js';
 import fs from 'fs';
+import multer from 'multer';
 
 import {
   installOverlayFsHarness,
@@ -350,20 +351,43 @@ describe('generateFilterString', () => {
 // createOverlayRouter — construction
 // ---------------------------------------------------------------------------
 describe('createOverlayRouter construction', () => {
-  it('creates ASSETS_DIR recursively when missing', () => {
-    const local = installOverlayFsHarness({ assetsDirExists: false });
+  // Both the router's own guard and multer mkdir ASSETS_DIR while the router is
+  // being constructed, so these pins have to separate the two. They do NOT do
+  // that by the shape of the call: which fs API multer reaches for is multer's
+  // private business and it changes between releases (2.0.2 went through mkdirp
+  // with a positional mode, 2.2.0 calls fs.mkdirSync with { recursive: true }),
+  // and a pin that reads that shape breaks on an upgrade while the code under
+  // test is untouched.
+  //
+  // Instead: measure what multer alone does, constructing it exactly as the
+  // router does, and subtract. Multer behaves identically in both scenarios, so
+  // the DIFFERENCE is the router's own guarded call, whatever multer's internals
+  // look like.
+
+  /** mkdirs of ASSETS_DIR caused by constructing multer the way the router does. */
+  function multerOwnMkdirs(assetsDirExists) {
+    const local = installOverlayFsHarness({ assetsDirExists });
+    multer({ dest: ASSETS_DIR, limits: { fileSize: 10 * 1024 * 1024 } });
+    const count = local.mkdirCalls.filter(c => c.p === ASSETS_DIR).length;
+    vi.restoreAllMocks();
+    return count;
+  }
+
+  /** mkdirs of ASSETS_DIR caused by building the whole router. */
+  function routerMkdirs(assetsDirExists) {
+    const local = installOverlayFsHarness({ assetsDirExists });
     local.makeApp();
-    // The router's own guard does mkdirSync(ASSETS_DIR, { recursive: true }).
-    // (multer's internal mkdirp also calls mkdirSync with a positional mode; we
-    // assert specifically on the router's recursive call.)
-    expect(local.mkdirCalls.some(c => c.p === ASSETS_DIR && c.opts && c.opts.recursive === true)).toBe(true);
+    const count = local.mkdirCalls.filter(c => c.p === ASSETS_DIR).length;
+    vi.restoreAllMocks();
+    return count;
+  }
+
+  it('creates ASSETS_DIR when missing — one mkdir beyond multer own', () => {
+    expect(routerMkdirs(false)).toBe(multerOwnMkdirs(false) + 1);
   });
 
-  it('does NOT make the recursive ASSETS_DIR call when it already exists', () => {
-    const local = installOverlayFsHarness({ assetsDirExists: true });
-    local.makeApp();
-    // No router-level recursive mkdir; any mkdir present is multer's mkdirp.
-    expect(local.mkdirCalls.some(c => c.p === ASSETS_DIR && c.opts && c.opts.recursive === true)).toBe(false);
+  it('does NOT create ASSETS_DIR when it already exists', () => {
+    expect(routerMkdirs(true)).toBe(multerOwnMkdirs(true));
   });
 });
 
