@@ -227,6 +227,30 @@ describe('player overlay state machine', () => {
     expect(delays).toEqual([20000, 2000]);
   });
 
+  it('the native-error restart is cancellable, not a stray timer', async () => {
+    // CHANGED IN T15-C2. The 2s restart above used to be a bare setTimeout with
+    // no handle, so nothing could stop it: an error landing just before a
+    // restart or a teardown still fired restartPlayer two seconds into the new
+    // session. It is tracked now and cleared with the rest.
+    const { win, doc } = boot();
+    doc.getElementById('studio-player').dispatchEvent(new win.Event('canplay'));
+
+    const handles = [];
+    let next = 100;
+    win.setTimeout = () => { const id = next++; handles.push(id); return id; };
+    const cleared = [];
+    win.clearTimeout = (id) => cleared.push(id);
+
+    doc.getElementById('studio-player').dispatchEvent(new win.Event('error'));
+    // showLoading's 20s safety net, then the 2s restart.
+    expect(handles).toHaveLength(2);
+    const nativeErrorHandle = handles[1];
+
+    // Any path through clearAllTimers must take it with it.
+    win.FRPlayer.restartPlayer('probe');
+    expect(cleared).toContain(nativeErrorHandle);
+  });
+
   it('a native player error is ignored while armed', () => {
     const { win, doc } = boot();
     const send = wsSender(win);

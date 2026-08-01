@@ -167,6 +167,8 @@
         if (data.ok) {
           log('video queue: added ' + filename);
           loadVideoQueue();
+        } else {
+          showError('Video queue push failed: ' + (data.error || 'unknown'));
         }
       })
       .catch(function(e) { showError('Video queue push failed: ' + e); });
@@ -321,5 +323,10 @@
     // Surface used by the characterization tests to drive the module.
     renderQueue: renderQueue,
     addToQueue: addToQueue,
+    // Re-exported for the parity pins: the video add is reachable in production
+    // only from a selector tile's click, and the selector cannot be populated
+    // in a test without the broadcast-side loader that runs before any stub is
+    // installed. T12 pruned this when nothing referenced it; a test does now.
+    addToVideoQueue: addToVideoQueue,
   };
 });

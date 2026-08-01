@@ -2,16 +2,19 @@
   'use strict';
 
   // --- Shared utilities (from utils.js, loaded as window.FRUtils before this script) ---
-  // These 7 helpers are byte-identical to their inline predecessors and are now
-  // sourced from FRUtils so there is a single source of truth. The names are kept
-  // identical so every existing call site is untouched.
-  // REQUIRES utils.js to be loaded before this script (index.html loads /utils.js first); FRU is undefined otherwise.
-  var FRU = window.FRUtils;
-  var pad = FRU.pad, fmtSize = FRU.fmtSize, cleanTrackName = FRU.cleanTrackName,
-      escapeHtml = FRU.escapeHtml, timeAgo = FRU.timeAgo, formatTime = FRU.formatTime,
-      pttFormatTime = FRU.pttFormatTime;
+  // Resolved at CALL time, one wrapper per helper — the idiom every module uses.
+  // The names are unchanged, so every call site is untouched, but nothing is
+  // captured at factory load, so these no longer depend on utils.js having been
+  // evaluated before this file runs (only before the first call).
+  function pad(n) { return window.FRUtils.pad(n); }
+  function fmtSize(b) { return window.FRUtils.fmtSize(b); }
+  function cleanTrackName(f) { return window.FRUtils.cleanTrackName(f); }
+  function escapeHtml(s) { return window.FRUtils.escapeHtml(s); }
+  function timeAgo(t) { return window.FRUtils.timeAgo(t); }
+  function formatTime(s) { return window.FRUtils.formatTime(s); }
+  function pttFormatTime(s) { return window.FRUtils.pttFormatTime(s); }
 
-  // Test-only hook: lets the jsdom smoke assert the aliases resolved to FRUtils.
+  // Test-only hook: lets the jsdom smoke assert each wrapper delegates to FRUtils.
   // Guarded by window.__APP_TEST__ — completely inert in production (flag unset).
   if (typeof window !== 'undefined' && window.__APP_TEST__) {
     window.__appHelpers = {

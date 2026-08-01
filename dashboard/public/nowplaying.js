@@ -72,11 +72,11 @@
   function getMixMode() { return deps.getMixMode(); }
 
   // Shared FRUtils helpers resolved at call time (single source of truth).
-  var FRU = { computeMixDur: function (b, m) { return window.FRUtils.computeMixDur(b, m); },
-              cleanTrackName: function (f) { return window.FRUtils.cleanTrackName(f); },
-              formatTime: function (s) { return window.FRUtils.formatTime(s); } };
-  function cleanTrackName(f) { return FRU.cleanTrackName(f); }
-  function formatTime(s) { return FRU.formatTime(s); }
+  // Named apart from this module's own computeMixDur(bpm), which supplies the
+  // current mix mode before delegating here.
+  function utilsComputeMixDur(b, m) { return window.FRUtils.computeMixDur(b, m); }
+  function cleanTrackName(f) { return window.FRUtils.cleanTrackName(f); }
+  function formatTime(s) { return window.FRUtils.formatTime(s); }
 
   // -------------------------------------------------------------------------
   // Module-owned state (moved from the app.js closure).
@@ -146,7 +146,7 @@
   // Compute crossfade duration matching Liquidsoap logic.
   // Delegates to FRUtils (single source of truth), passing the current mix mode.
   function computeMixDur(bpm) {
-    return FRU.computeMixDur(bpm, getMixMode());
+    return utilsComputeMixDur(bpm, getMixMode());
   }
 
   function positionCueMarker() {
