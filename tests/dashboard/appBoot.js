@@ -5,11 +5,12 @@
  *
  * app.js is a browser IIFE (~580 LOC of boot substrate after the extraction
  * track, with the sibling FR* modules index.html lists alongside it) that runs
- * heavy init on load (WebSocket connect, fetch, setInterval, canvas, HLS). What is left in the
- * IIFE is trapped in its closure, so app.js exposes test-only guarded hooks
- * (window.__appHelpers, __appDrift, __appPlaylists, __appWs, __appAudio,
- * __appStudio) under the window.__APP_TEST__ flag so tests can reach in and
- * drive them. The extracted modules need no hooks — their APIs are public.
+ * heavy init on load (WebSocket connect, fetch, setInterval, canvas, HLS).
+ * What is left in the IIFE is trapped in its closure, so app.js exposes
+ * test-only guarded hooks (window.__appHelpers, __appDrift, __appPlaylists,
+ * __appWs, __appAudio, __appStudio) under the window.__APP_TEST__ flag so
+ * tests can reach in and drive them. The extracted modules need no hooks —
+ * their APIs are public.
  *
  * This helper boots ONE jsdom window from the REAL dashboard/public/index.html,
  * installs the minimal browser-global stubs app.js touches on boot, then
@@ -22,6 +23,11 @@
  * load-smoke), so no async handler runs during the synchronous boot. Tests that
  * need to characterize CRUD/render behavior install their own controllable
  * `win.fetch` AFTER boot (see makeFetchStub).
+ *
+ * TEARDOWN CONTRACT: every booted window must be closed when the suite ends —
+ * `afterAll(closeAllWindows)` in the file, or handle.close() for one window. A
+ * healthy boot leaves ~13 live realm timers running until then; the full
+ * rationale and the measured numbers are on bootWindow below.
  */
 
 import { readFileSync } from 'node:fs';
@@ -161,7 +167,10 @@ export const moduleManifest = Object.freeze({
 /**
  * Install the browser-global stubs app.js touches during its synchronous init,
  * so it can evaluate top-to-bottom without a real browser. Each stub is the
- * minimal shape app.js calls on boot. Mirrors appLoad.test.js's installStubs.
+ * minimal shape app.js calls on boot. Every suite gets exactly these through
+ * bootWindow; a file needing more widens them on its own window afterwards
+ * (broadcastUI adds AudioContext.close() for the ARM path) rather than editing
+ * this list, so one suite's needs cannot shift another suite's baseline.
  */
 function installStubs(win) {
   // Mark this as a test load so app.js exposes its guarded test hooks.
