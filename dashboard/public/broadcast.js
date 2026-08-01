@@ -9,8 +9,11 @@
  *
  * LAYERING NOTE - this is the first module that sits ABOVE its siblings rather
  * than beside them. It drives FRPlayer, FRQueue, FRNowPlaying, FRAnalyzer,
- * FRFileMgmt and FRRestreamStatus, and those calls are kept as direct window.FRx
- * references exactly as app.js made them, resolved at call time. Injecting
+ * FRFileMgmt and FRRestreamStatus, and those calls are kept as BARE GLOBAL
+ * identifiers exactly as app.js wrote them (FRPlayer.showLoading(...), not
+ * window.FRPlayer...). Under strict mode that means a missing module is a
+ * ReferenceError at the call, not a silent undefined - the same failure profile
+ * app.js had. Injecting
  * thirty-odd individual callbacks would have transformed most of the moved
  * region for no behavioural gain; only genuine app.js-closure services
  * (authFetch, log, showError, getStudioPlayer, setUserInteracted) are injected.
@@ -64,6 +67,10 @@
 })(function () {
   'use strict';
 
+  // Injected host services (set by init). The defaults are placeholders for a
+  // correctly-initialised host, not a safe pre-init mode: a pre-init repaint
+  // would still touch DOM refs that resolveDom has not filled in yet. init()
+  // runs during boot, before any consumer can reach these.
   var deps = {
     authFetch: function () { return Promise.reject(new Error('FRBroadcast not initialised')); },
     log: function () {},
@@ -1032,10 +1039,6 @@
       }
     };
 
-    // Wire the WebSocket hub and open the first connection, where connectWs()
-    // used to be called. Passing FRNowPlaying/FRAnalyzer methods as bare
-    // references is safe: the UMD factories run at script load, so every module
-    // object and its closures exist before app.js evaluates.
     return wsHandlers;
   }
 

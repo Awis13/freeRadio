@@ -91,9 +91,8 @@
   // The player, the loading/standby overlays and the page-lifecycle recovery now
   // live in player.js (window.FRPlayer); FRPlayer.init() below injects the host
   // services and runs the boot side-effects that used to be statements here.
-  // playerMuteBtn stays because the ARM/PLAY/STOP handlers and the /api/status
-  // poll still read and write it; isIOS/isSafari stay because the analyzer reads
-  // isSafari (azInit), and both are injected into the player module.
+  // isIOS/isSafari stay here because the analyzer reads isSafari (azInit), and
+  // both are injected into the player module.
   var isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
   var isSafari = /^((?!chrome|android).)*safari/i.test(navigator.userAgent) || isIOS;
 
@@ -103,11 +102,10 @@
     if (_aw) _aw.style.display = 'none';
   }
 
-  // Player-adjacent state that did NOT move with the player: playTransitionLock
-  // is read/written only by the broadcast machine (ARM/PLAY/STOP and the
-  // /api/status poll) and by no player code at all, and userInteracted is
-  // studio-facade state read by setPlayerMuted and the studio test hook. The
-  // player module receives setUserInteracted as a dep.
+  // userInteracted is the one flag genuinely shared three ways, so it stays
+  // here as substrate: written by the broadcast machine (ARM/PLAY) and by
+  // FRPlayer's mute button, read by FRAnalyzer's setPlayerMuted, and exported by
+  // the __appStudio hook. Both modules receive it through the wiring below.
   var userInteracted = false; // blocks unmuting until user clicks ARM/PLAY/mute
   function getUserInteracted() { return userInteracted; }
   function setUserInteracted(v) { userInteracted = v; }
@@ -117,8 +115,7 @@
   // order they ran as inline statements. Everything the player needs from
   // another slice is injected as a narrow callback rather than reached for: the
   // analyzer and mute concerns resolve to FRAnalyzer methods (setPlayerMuted,
-  // ensureInited, resyncStreamDecode), and only the WebSocket helpers are still
-  // app.js-resident.
+  // ensureInited, resyncStreamDecode), and the WebSocket helpers to FRWsHub.
   FRPlayer.init({
     log: log,
     getStudioPlayer: getStudioPlayer,
@@ -180,8 +177,8 @@
   // start time and the listener history that updateIcecast feeds. Its init()
   // resolves the transport DOM and starts the 1s progress ticker.
   //
-  // bpmMap stays here: its writers are the WS init and bpm frames below, and it
-  // already has three injected readers (FRQueue, FRFileMgmt, FRPlaylists).
+  // bpmMap lives in broadcast.js with the WS frame handlers that write it; this
+  // module is one of its four injected readers.
   FRNowPlaying.init({
     log: log,
     getBroadcastState: FRBroadcast.getBroadcastState,
@@ -207,8 +204,8 @@
   // deleteFile, the drop-zone upload system) plus the musicFiles/visualFiles
   // state it owns were extracted into filemgmt.js (window.FRFileMgmt). app.js
   // calls FRFileMgmt.init({...}) at boot (further down) and reaches the state via
-  // FRFileMgmt.getMusicFiles()/getVisualFiles(). bpmMap stays here (WS-owned) and
-  // is injected as a getter.
+  // FRFileMgmt.getMusicFiles()/getVisualFiles(). bpmMap lives in broadcast.js
+  // and is injected as a getter.
 
   FRFileMgmt.initDropZones();
 
@@ -222,10 +219,10 @@
   // skip/clear buttons and the search input, the first queue load, and the 5s
   // active-queue poll.
   //
-  // NOTE: updateBroadcastUI further down RE-ASSIGNS skipBtn.onclick and
+  // NOTE: updateBroadcastUI in broadcast.js RE-ASSIGNS skipBtn.onclick and
   // clearQueueBtn.onclick on every repaint, with duplicates of the bodies that
-  // moved into queue.js. Both copies are kept deliberately — collapsing them is
-  // a behaviour change, not part of this extraction.
+  // live in queue.js. Both copies are kept deliberately — collapsing them is a
+  // behaviour change, not part of any extraction so far.
   FRQueue.init({
     authFetch: authFetch,
     log: log,
@@ -252,7 +249,7 @@
   // The WS-fed restream-STATUS widget (updateRestreamStatus /
   // loadRestreamStatusFallback / lastRtmpHealth) now lives in restreamStatus.js
   // (window.FRRestreamStatus), wired via FRRestreamStatus.init(...) below. The WS
-  // handleMessage dispatcher stays here and calls
+  // handler in broadcast.js calls
   // FRRestreamStatus.updateRestreamStatus(...); the boot-time fallback load is
   // re-sourced as FRRestreamStatus.loadRestreamStatusFallback() in that wiring.
 

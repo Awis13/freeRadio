@@ -20,11 +20,10 @@
  * for the analyzer's BPM glow; app.js's FRAnalyzer wiring and the __appStudio
  * test hook both re-point to this module.
  *
- * NOT MOVED — bpmMap. Its writers are the WS 'init' and 'bpm' frames, whose
- * bodies stay in app.js until the broadcast machine moves, and it already has
- * three injected readers there (FRQueue, FRFileMgmt, FRPlaylists). Moving it
- * would mean re-pointing three sibling wirings to gain nothing, so it stays in
- * app.js and this module becomes a fourth getBpmMap consumer.
+ * NOT OWNED HERE — bpmMap. Its writers are the WS 'init' and 'bpm' frames,
+ * whose bodies now live in broadcast.js, so bpmMap lives there too. This module
+ * is one of its four injected readers, alongside FRQueue, FRFileMgmt and
+ * FRPlaylists.
  *
  * Three small helpers encapsulate idioms app.js used at more than one site, so
  * the call sites stay one line each: onAudioFrame (cache then render, the WS

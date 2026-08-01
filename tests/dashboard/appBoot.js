@@ -3,8 +3,8 @@
  *
  * Shared jsdom boot helper for the dashboard characterization tests.
  *
- * app.js is a browser IIFE (~1800 LOC after the player/mixer/analyzer split,
- * with 23 sibling FR* modules alongside it) that runs heavy init immediately on
+ * app.js is a browser IIFE (~580 LOC of boot substrate after the extraction
+ * track, with 27 sibling FR* modules alongside it) that runs heavy init on
  * load (WebSocket connect, fetch, setInterval, canvas, HLS). What is left in the
  * IIFE is trapped in its closure, so app.js exposes test-only guarded hooks
  * (window.__appHelpers, __appDrift, __appPlaylists, __appWs, __appAudio,

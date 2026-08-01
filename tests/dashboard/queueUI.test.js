@@ -1,10 +1,10 @@
 /**
  * tests/dashboard/queueUI.test.js
  *
- * Characterization pins for the queue and track-selector surface still resident
- * in the app.js IIFE: loadQueue / renderQueue / addToQueue, their video-queue
- * twins, loadActiveQueue, renderTrackSelector and the queue-search filter.
- * Taken before that surface is extracted, to be kept green through the move.
+ * Characterization pins for the queue and track-selector surface: loadQueue /
+ * renderQueue / addToQueue, their video-queue twins, loadActiveQueue,
+ * renderTrackSelector and the queue-search filter. Taken while that surface was
+ * still in the app.js IIFE and kept green through its extraction into queue.js.
  *
  * These pin AS-IS observable behaviour and fix nothing.
  *
@@ -19,7 +19,7 @@
  * through the real CLEAR button, whose success branch calls loadQueue(); the
  * fetch stub then answers /api/queue and the render is asserted. The selector is
  * driven through the WS 'init' frame, which calls FRFileMgmt.loadFileList('music'),
- * whose success branch calls back into app.js's renderTrackSelector.
+ * whose success branch calls back into FRQueue.renderTrackSelector.
  *
  * VIDEO-MODE SELECTOR IS NOT PINNED. renderTrackSelector's video branch reads
  * processedVisualFiles, which is only ever populated by loadProcessedVisuals()

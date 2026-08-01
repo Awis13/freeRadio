@@ -34,7 +34,7 @@
  *   - isSafari / isIOS. UA detection stays in app.js and isSafari is injected
  *     as a value (azInit's Safari bail-out and the sync-offset UI read it).
  *     Consolidating it is a separate cleanup, deliberately not done here.
- *   - The WebSocket. connectWs stays in app.js and calls
+ *   - The WebSocket. connectWs lives in wsHub.js and calls
  *     FRAnalyzer.handleFftFrame for binary frames and FRAnalyzer.isServerFFT()
  *     before sending the fft-subscribe message.
  *   - studioBpm, broadcastState, trackStartedAt, studioPlayer and
@@ -1104,7 +1104,7 @@
     ensureInited: ensureInited,
     // Mute control (drives the analyzer gain node)
     setPlayerMuted: setPlayerMuted,
-    // Safari server-FFT path — connectWs stays in app.js and calls these.
+    // Safari server-FFT path — connectWs lives in wsHub.js and calls these.
     handleFftFrame: handleFftFrame,
     isServerFFT: function () { return azServerFFT; },
     // Safari stream decode — the player calls this from restartPlayer.

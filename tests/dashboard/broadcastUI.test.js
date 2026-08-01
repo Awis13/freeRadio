@@ -1,27 +1,27 @@
 /**
  * tests/dashboard/broadcastUI.test.js
  *
- * Characterization pins for the BROADCAST REPAINT CONTRACT currently living
- * inside the app.js IIFE: the pair deriveUiMode() (broadcast.js, delegating
+ * Characterization pins for the BROADCAST REPAINT CONTRACT, taken while it
+ * still lived inside the app.js IIFE: the pair deriveUiMode() (now broadcast.js, delegating
  * to FRUtils.deriveUiMode at utils.js:153-158) + updateBroadcastUI()
  * (broadcast.js, reading the phase from its getBroadcastPhase
  * -> FRUtils.getBroadcastPhase at utils.js:133-142, and the hint table
  * MODE_HINTS, also in broadcast.js). These pin the AS-IS observable contract
- * BEFORE the region is extracted into a module; they must stay green after the
- * extraction to prove zero behaviour change.
+ * BEFORE the region was extracted into a module; staying green across the move
+ * is what proved zero behaviour change.
  *
  * CONSUMER-SHAPED. The pair is never called by a test directly. Both real
  * consumers do the same two calls back to back and are driven end to end here:
  *
  *   1. The WebSocket 'init' frame — the hub's 'init' case (wsHub.js handleMessage,
- *      the pair at 609-610). Driven by boot-time socket.onmessage({ data }) with
+ *      which calls the injected handler). Driven by boot-time socket.onmessage({ data }) with
  *      a real server-shaped JSON payload. onmessage is a plain instance property
  *      assigned in connectWs (wsHub.js), and the appBoot WebSocket stub
  *      (appBoot.js:63-68) never fires anything on its own, so the test supplies
  *      the frame.
  *
- *   2. The /api/status poll — loadBroadcastState (broadcast.js, the pair at
- *      1934-1935). Reached WITHOUT any new app.js hook: FRAuth.init's onLogin
+ *   2. The /api/status poll — loadBroadcastState (broadcast.js, which ends with
+ *      the same pair). Reached WITHOUT any new hook: FRAuth.init's onLogin
  *      callback (app.js wiring) calls FRBroadcast.loadBroadcastState(), and onLogin fires
  *      from doLogin (auth.js:111-134). So the test types a token into the real
  *      #login-token input and clicks the real #login-btn; the fetch stub answers

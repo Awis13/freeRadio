@@ -1,10 +1,11 @@
 /**
  * tests/dashboard/wsHubUI.test.js
  *
- * Characterization pins for the WebSocket message hub still resident in the
- * app.js IIFE — handleMessage's remaining cases — plus the mixing-mode pills and
- * the Live Mode bar. Taken before that surface is extracted, to be kept green
- * through the move. AS-IS only; nothing here fixes anything.
+ * Characterization pins for the WebSocket message hub — handleMessage's
+ * remaining cases — plus the mixing-mode pills and the Live Mode bar. Taken
+ * while all of it was still in the app.js IIFE and kept green through the
+ * extraction into wsHub.js and broadcast.js. AS-IS only; nothing here fixes
+ * anything.
  *
  * NOT DUPLICATED HERE. broadcastUI.test.js pins the 'init' frame's broadcast
  * repaint and playerMixerAnalyzerUI.test.js pins the 'audio' frame's track
@@ -24,8 +25,8 @@
  * 'ws: parse error' after the frame.
  *
  * TIMERS: the win.setTimeout capture spy (wsReconnectUI.test.js:22-30 recipe) is
- * used where a frame schedules work — app.js resolves setTimeout in the jsdom
- * realm, which vi.useFakeTimers() does not intercept.
+ * used where a frame schedules work — the dashboard resolves setTimeout in the
+ * jsdom realm, which vi.useFakeTimers() does not intercept.
  *
  * PHASE-1 DEAD SURFACE pinned as such, so the extraction keeps the guards:
  *   - The whole Live Mode bar (#live-mode-bar and every live-* control) sits in
@@ -293,6 +294,9 @@ describe('video frame', () => {
     // scheduled and the overlay is untouched.
     expect(delays).toEqual([]);
     expect(doc.getElementById('player-overlay').classList.contains('visible')).toBe(false);
+    // "Nothing happened" and "the handler threw before doing anything" look
+    // identical from the DOM, so the no-throw detector is load-bearing here.
+    expectFrameSurvived(doc);
   });
 });
 
