@@ -63,9 +63,15 @@ boot order and exposes a few test-only hooks.
 Each module is a UMD factory that attaches itself to `window.FR*` (`FRPlayer`,
 `FRBroadcast`, `FRQueue`, `FRWsHub`, and so on) and exports an `init(deps)` that
 receives its host services as callbacks and runs whatever boot side effects used
-to be inline. Modules never reach into each other's state: anything one needs
-from another arrives through `init`, which keeps the wiring visible in one place
-and the modules independently testable.
+to be inline. Dependency injection through `init` is the default, which keeps
+the wiring visible in one place and the modules independently testable.
+
+Three places call across module boundaries directly, each deliberately:
+`broadcast.js` is the top layer and drives its siblings as bare globals rather
+than taking thirty-odd injected callbacks; `navigation.js` dispatches per-tab
+lazy loads by calling the owning module directly; and `utils.js` (`FRUtils`) is
+the shared pure-helper module every file may read. Each is documented in the
+header of the file that does it.
 
 ## Features
 
@@ -193,6 +199,9 @@ POST /api/live/on_publish  RTMP ingest callback
 POST /api/live/on_done     RTMP ingest callback
 ```
 
+The `/api/live` router holds only those two callbacks, so the whole mount is
+public — the RTMP ingest server calls them without a token.
+
 ### Protected (Bearer token)
 
 | Mount | Purpose |
@@ -212,7 +221,9 @@ POST /api/live/on_done     RTMP ingest callback
 | `/api/mixing` | Crossfade mixing mode |
 | `/api/dj` | Liquidsoap control: start, resume, cue, stop |
 | `/api/stream-keys` | Encrypted RTMP destinations, keyed by platform |
-| `/api/live` | Live/OBS takeover mode (its two ingest callbacks are public) |
+| `/api/rtmp-urls` | Configured RTMP destination URLs |
+| `/api/visuals-processed` | Transcoded visuals available to the player |
+| `/api/s3/status` | S3 sync state |
 
 Settings share the `/api` mount rather than a prefix of their own, so they read
 as flat paths: `/api/audio`, `/api/video`, `/api/quality`, `/api/channel-strip`,
@@ -246,7 +257,7 @@ freeRadio/
       queue.js                Track/video queues and the track selector
       analyzer.js             CRT analyzer, WebAudio graph, mute control
       mixer.js                Monitor mixer, mic capture, auto-duck
-      ...                     20 more domain modules (playlists, schedule,
+      ...                     19 more domain modules (playlists, schedule,
                               overlays, platforms, quality, PTT, ...)
     lib/                      38 server modules
       boot.js                 Service initialization and state recovery
