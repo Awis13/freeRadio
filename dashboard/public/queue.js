@@ -7,22 +7,23 @@
  * and video queues, the mode-aware active-queue poll, and the track selector
  * with its search filter.
  *
- * SPLIT-BRAIN, PRESERVED ON PURPOSE. The skip and clear buttons have TWO
- * handler bodies: the boot copies (moved here, bound by init) and duplicates
- * that updateBroadcastUI re-assigns on every repaint (now in broadcast.js).
- * They are byte-equivalent today.
- * Consolidating them would be a behaviour change, so both survive this
- * extraction; the divergence and success-timer pins in broadcastUI.test.js keep
- * them honest. This is tracked for a follow-up, not fixed here.
+ * SINGLE OWNER OF SKIP/CLEAR. Both buttons are bound here, once, by init, and
+ * each decides at CLICK time whether it is acting on the music queue or the
+ * video queue — read from the injected broadcast state, the same state
+ * broadcast.js repaints from. updateBroadcastUI used to re-assign both handlers
+ * on every repaint with byte-identical copies of these bodies, which is what
+ * made the pair a split-brain; that duplication is gone and broadcast.js now
+ * writes only the chrome (labels, placeholder, disabled). The dispatch is
+ * pinned both ways in broadcastUI.test.js, with the success-timer assertions
+ * carried over from the old equivalence pins.
  *
  * OWNED STATE: none beyond the DOM refs it renders into. The queue itself lives
  * on the server; every render is driven by a fetch.
  *
- * DOM refs: #queue-list and #track-selector are region-private and resolved
- * once in init(), mirroring app.js's module-scope caching. #skip-btn,
- * #clear-queue-btn and #queue-search are ALSO read by updateBroadcastUI and
- * applyUiMode in broadcast.js, which resolves them itself; this module resolves
- * the same elements by id.
+ * DOM refs: #queue-list, #track-selector and #clear-queue-btn are private to
+ * this module, resolved once in init(). #skip-btn and #queue-search are ALSO
+ * resolved by broadcast.js, which still writes skipBtn.disabled and the search
+ * placeholder on repaint; everything else about those two elements is ours.
  *
  * NOT OWNED HERE, injected instead — all three now belong to broadcast.js and
  * arrive through app.js's wiring:
@@ -196,15 +197,15 @@
   }
 
   function loadActiveQueue() {
-    if (getBroadcastState().visualMode === 'video-playlist') loadVideoQueue();
+    if (isVideoMode()) loadVideoQueue();
     else loadQueue();
   }
 
   // --- Track Selector ---
   function renderTrackSelector(filter) {
     trackSelector.innerHTML = '';
-    var isVideoMode = getBroadcastState().visualMode === 'video-playlist';
-    var sourceFiles = isVideoMode ? getProcessedVisualFiles() : getMusicFiles();
+    var videoMode = isVideoMode();
+    var sourceFiles = videoMode ? getProcessedVisualFiles() : getMusicFiles();
     var search = (filter || '').toLowerCase();
     var filtered = sourceFiles.filter(function(f) {
       return !search || f.name.toLowerCase().indexOf(search) !== -1;
@@ -219,7 +220,7 @@
       name.title = f.name;
       div.appendChild(name);
 
-      if (!isVideoMode) {
+      if (!videoMode) {
         var bpm = getBpmMap()[f.name];
         if (bpm) {
           var bpmEl = document.createElement('span');
@@ -232,8 +233,8 @@
       var addBtn = document.createElement('button');
       addBtn.className = 'btn-add-queue';
       addBtn.textContent = '+';
-      addBtn.title = isVideoMode ? 'Add to video queue' : 'Add to queue';
-      addBtn.onclick = isVideoMode
+      addBtn.title = videoMode ? 'Add to video queue' : 'Add to queue';
+      addBtn.onclick = videoMode
         ? (function(n) { return function() { addToVideoQueue(n); }; })(f.name)
         : (function(n) { return function() { addToQueue(n); }; })(f.name);
       div.appendChild(addBtn);
@@ -242,11 +243,6 @@
     });
   }
 
-  /**
-   * Bind the boot copies of the skip/clear handlers and the search input, then
-   * run the boot load and start the 5s active-queue poll — the same statements,
-   * in the same order, that ran inline in app.js.
-   */
   /** Video mode when the live state says the visuals come from a video playlist. */
   function isVideoMode() {
     var s = getBroadcastState();
@@ -278,6 +274,11 @@
       .catch(function(e) { showError('Clear queue failed: ' + e); });
   }
 
+  /**
+   * Bind the skip/clear handlers and the search input, then run the boot load
+   * and start the 5s active-queue poll — the same statements, in the same
+   * order, that ran inline in app.js.
+   */
   function bindBootHandlers() {
     // SINGLE OWNER. These two handlers used to be bound here AND re-declared,
     // byte for byte, by broadcast.js's updateBroadcastUI on every repaint —
