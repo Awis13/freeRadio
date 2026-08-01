@@ -32,14 +32,33 @@ const path = require('path');
  * be moved (a read-only mount, say) — in which case the caller still gets
  * defaults, which is exactly the old behaviour.
  */
-function quarantine(file) {
+/** How many suffixed names to try before giving up on quarantining. */
+const MAX_QUARANTINE_ATTEMPTS = 50;
+
+/**
+ * Pick a free `<file>.corrupt-<ts>` name, or null if one cannot be found.
+ *
+ * The search is BOUNDED. An earlier version looped until existsSync said no,
+ * which never terminates if existsSync keeps saying yes — it took a whole test
+ * worker down with an out-of-memory abort. Fifty collisions would mean fifty
+ * corruptions of the same file inside one millisecond; past that, skipping the
+ * quarantine is far better than hanging the caller.
+ */
+function quarantineTarget(file) {
   const base = `${file}.corrupt-${Date.now()}`;
-  // Two corruptions inside the same millisecond must not overwrite each other.
-  let target = base;
-  let n = 1;
-  while (fs.existsSync(target)) {
-    target = `${base}-${n}`;
-    n++;
+  if (!fs.existsSync(base)) return base;
+  for (let n = 1; n <= MAX_QUARANTINE_ATTEMPTS; n++) {
+    const candidate = `${base}-${n}`;
+    if (!fs.existsSync(candidate)) return candidate;
+  }
+  return null;
+}
+
+function quarantine(file) {
+  const target = quarantineTarget(file);
+  if (!target) {
+    console.error(`[jsonStore] could not find a free quarantine name for ${file}`);
+    return null;
   }
   try {
     fs.renameSync(file, target);
@@ -48,6 +67,29 @@ function quarantine(file) {
     console.error(`[jsonStore] could not quarantine ${file}: ${e.message}`);
     return null;
   }
+}
+
+/**
+ * Does the parsed document match the shape the caller declared via `defaults`?
+ *
+ * This is not type pedantry — it decides whether the CALLER will crash. `null`
+ * throws on any property access, and several stores dereference two levels
+ * (`data.playlists[id]`, `data.tracks[name]`), so a top-level string, number or
+ * array throws there too: `"abc".playlists` is undefined, and indexing that
+ * undefined is a TypeError escaping as a 500. Those dereferences used to sit
+ * inside each store's own try/catch, which the migration to this module removes.
+ *
+ * So: a document whose top-level type contradicts the defaults is treated as
+ * corrupt. When the caller passes null/undefined defaults it is claiming no
+ * shape, and scalars are handed back as before — one-level access on them
+ * yields undefined, which every such store already falls back on.
+ */
+function shapeMatches(parsed, defaults) {
+  if (parsed === null) return false;
+  if (defaults === null || defaults === undefined) return true;
+  if (typeof defaults !== 'object') return true;
+  if (typeof parsed !== 'object') return false;
+  return Array.isArray(parsed) === Array.isArray(defaults);
 }
 
 /**
@@ -66,17 +108,34 @@ function readStore(file, defaults) {
     return defaults;
   }
 
+  let parsed;
   try {
-    return JSON.parse(raw);
+    parsed = JSON.parse(raw);
   } catch (e) {
-    const moved = quarantine(file);
-    console.error(
-      `[jsonStore] ${file} is not valid JSON (${e.message}) — ` +
-      (moved ? `quarantined as ${moved}; ` : 'could not quarantine it; ') +
-      'returning defaults',
-    );
-    return defaults;
+    return quarantineAndDefault(file, defaults, `not valid JSON (${e.message})`);
   }
+
+  if (!shapeMatches(parsed, defaults)) {
+    return quarantineAndDefault(file, defaults, `parsed as ${describe(parsed)}, which callers cannot use`);
+  }
+  return parsed;
+}
+
+/** Human-readable type for the log line. */
+function describe(value) {
+  if (value === null) return 'null';
+  if (Array.isArray(value)) return 'an array';
+  return `a ${typeof value}`;
+}
+
+function quarantineAndDefault(file, defaults, reason) {
+  const moved = quarantine(file);
+  console.error(
+    `[jsonStore] ${file} ${reason} — ` +
+    (moved ? `quarantined as ${moved}; ` : 'could not quarantine it; ') +
+    'returning defaults',
+  );
+  return defaults;
 }
 
 /**
@@ -85,6 +144,10 @@ function readStore(file, defaults) {
  * `indent` matches what each store already produces: 2 for the human-edited
  * config files, 0 for the compact machine-written ones. Errors propagate, as
  * they do from the fs.writeFileSync calls this replaces.
+ *
+ * If the rename fails the `<file>.tmp` is deliberately left behind: the target
+ * still holds the previous document, and the tmp file is the only copy of the
+ * write that did not land — deleting it would destroy the evidence and the data.
  */
 function writeStore(file, data, { indent = 2 } = {}) {
   const payload = JSON.stringify(data, null, indent);
