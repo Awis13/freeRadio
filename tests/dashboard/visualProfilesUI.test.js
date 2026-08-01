@@ -289,6 +289,34 @@ describe('visual-profiles UI characterization (window.FRVisualProfiles)', () => 
       expect(vp.getSelectedVisualProfileId()).toBe('p1');
     });
 
+    it('a failed video-grid load shows the error and LEAVES THE GRID INTACT', async () => {
+      // CHANGED IN T14-C1. The chain had no .catch and cleared the grid before
+      // fetching, so a transient failure produced an unhandled rejection AND an
+      // empty grid — and saveVisualProfileVideos PUTs whatever tiles are in the
+      // grid, so the next toggle-and-save would have written an empty profile.
+      const { win, doc, vp } = boot();
+      withFetch(win, [
+        routeExact('GET', '/api/visual-profiles/p1', { id: 'p1', name: 'Sunset', videos: ['a.mp4'] }),
+      ]);
+      // Seed the grid as a previous successful render would have left it.
+      const grid = doc.getElementById('vp-video-grid');
+      grid.innerHTML = '<div class="video-tile selected"><div class="video-tile-name">a.mp4</div></div>';
+
+      win.fetch = (url) => (String(url).indexOf('/api/visuals') !== -1
+        ? Promise.reject(new Error('offline'))
+        : Promise.resolve({ ok: true, status: 200, json: () => Promise.resolve({ id: 'p1', name: 'Sunset', videos: [] }) }));
+
+      vp.renderVisualProfileDetail({ id: 'p1', name: 'Sunset', videos: ['a.mp4'] });
+      await flush(10);
+
+      const banner = doc.getElementById('error-banner');
+      expect(banner.classList.contains('visible')).toBe(true);
+      expect(banner.textContent).toContain('Failed to load videos');
+      // The tiles the user could still save from are untouched.
+      expect(grid.querySelectorAll('.video-tile').length).toBe(1);
+      expect(grid.querySelector('.video-tile-name').textContent).toBe('a.mp4');
+    });
+
     it('select error path -> showError writes #error-banner', async () => {
       const { win, doc, vp } = boot();
       win.fetch = () => Promise.reject(new Error('nope'));

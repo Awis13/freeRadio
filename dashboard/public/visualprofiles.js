@@ -119,11 +119,14 @@
   function renderVisualProfileDetail(profile) {
     document.getElementById('vp-detail-title').textContent = profile.name;
     var grid = document.getElementById('vp-video-grid');
-    grid.innerHTML = '';
 
+    // Cleared only once the fetch succeeds — a failed load must leave the tiles
+    // alone, because saveVisualProfileVideos PUTs whatever is in the grid and
+    // an empty grid would save an empty profile.
     authFetch('/api/visuals')
       .then(function(r) { return r.json(); })
       .then(function(allVideos) {
+        grid.innerHTML = '';
         var selectedSet = new Set(profile.videos || []);
         allVideos.forEach(function(v) {
           var div = document.createElement('div');
@@ -145,6 +148,9 @@
 
           grid.appendChild(div);
         });
+      })
+      .catch(function(e) {
+        showError('Failed to load videos: ' + e);
       });
 
     document.getElementById('vp-activate-btn').onclick = function() {
