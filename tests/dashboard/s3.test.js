@@ -7,11 +7,16 @@
  * from env (endpoint/keys/bucket/region/tenant/enabled flag) and a lazy
  * module-private S3Client singleton. So each test:
  *   1. sets env BEFORE a fresh require (cache-deleted) of s3.js;
- *   2. mocks the AWS SDK at the class seam: the test requires
- *      '@aws-sdk/client-s3' through the same Node CJS cache the lib uses
- *      and spies on the prototype `send` method (owned by the smithy
- *      Client base class, found by walking the prototype chain), with a
- *      per-test responder keyed on command constructor name + input.
+ *   2. injects a stub client through s3.js's own _setClientFactory seam,
+ *      with a per-test responder keyed on the command type + input.
+ *
+ * Nothing here touches the AWS SDK's internals. The stub is a plain
+ * object with a send() method, and the commands are identified with
+ * `instanceof` against the classes @aws-sdk/client-s3 exports publicly —
+ * so an SDK upgrade that reshapes the client internally (which is what
+ * broke the previous prototype-spy version of this file) cannot break
+ * these tests. What they DO couple to: that s3.js calls `send(command)`
+ * on whatever getClient() returns, and the public command classes.
  *
  * Pinned here (current behavior, callers depend on it):
  *   - tenantKey(): `tenants/${TENANT_ID}/${key}` with TENANT_ID baked
@@ -52,17 +57,11 @@ import { Readable } from 'node:stream';
 const nodeRequire = createRequire(import.meta.url);
 const S3_SPEC = '../../dashboard/lib/s3';
 
-// Same cached module instance the lib gets via its own require().
-const sdk = nodeRequire('@aws-sdk/client-s3');
-
-// `send` lives on the smithy Client base prototype, not on S3Client
-// itself — walk the chain to find the owner so vi.spyOn targets an own
-// property.
-let sendOwner = sdk.S3Client.prototype;
-while (sendOwner && !Object.getOwnPropertyDescriptor(sendOwner, 'send')) {
-  sendOwner = Object.getPrototypeOf(sendOwner);
-}
-if (!sendOwner) throw new Error('could not locate S3Client send prototype');
+// Public command classes — the only part of the SDK these tests know about.
+const {
+  PutObjectCommand, GetObjectCommand, ListObjectsV2Command,
+  DeleteObjectCommand, HeadObjectCommand
+} = nodeRequire('@aws-sdk/client-s3');
 
 const ENV_KEYS = ['S3_ENDPOINT', 'S3_ACCESS_KEY', 'S3_SECRET_KEY', 'S3_BUCKET', 'S3_REGION', 'TENANT_ID', 'S3_ENABLED'];
 const ORIGINAL_ENV = {};
@@ -82,22 +81,53 @@ const ENABLED_ENV = {
   S3_SECRET_KEY: 'test-secret'
 };
 
+/** The module instance the last freshS3() produced, for mockSend to inject into. */
+let currentS3 = null;
+
+/** The factory stub the last mockSend() installed — never called in disabled mode. */
+let clientFactory = null;
+
 /** Fresh require of s3.js with exactly the given env baked in. */
 function freshS3(env = ENABLED_ENV) {
   for (const k of ENV_KEYS) delete process.env[k];
   Object.assign(process.env, env);
   delete nodeRequire.cache[nodeRequire.resolve(S3_SPEC)];
-  return nodeRequire(S3_SPEC);
+  currentS3 = nodeRequire(S3_SPEC);
+  return currentS3;
 }
 
-/** Spy on the SDK send seam with a programmable responder. */
+/**
+ * Hand the freshly required s3.js a stub client whose send() runs `responder`,
+ * and return that send spy. The module's gate decides whether the factory is
+ * ever called, so a disabled module still builds nothing.
+ */
 function mockSend(responder) {
-  return vi.spyOn(sendOwner, 'send').mockImplementation(async (cmd) => responder(cmd));
+  const send = vi.fn(async (cmd) => responder(cmd));
+  clientFactory = vi.fn(() => ({ send }));
+  currentS3._setClientFactory(clientFactory);
+  return send;
+}
+
+/** Command classes by name, for readable assertions on what was sent. */
+const COMMANDS = new Map([
+  [PutObjectCommand, 'PutObjectCommand'],
+  [GetObjectCommand, 'GetObjectCommand'],
+  [ListObjectsV2Command, 'ListObjectsV2Command'],
+  [DeleteObjectCommand, 'DeleteObjectCommand'],
+  [HeadObjectCommand, 'HeadObjectCommand'],
+]);
+
+/** Identify a command by `instanceof` against the SDK's public exports. */
+function commandName(cmd) {
+  for (const [Cls, name] of COMMANDS) {
+    if (cmd instanceof Cls) return name;
+  }
+  return `unknown command (${cmd && cmd.constructor && cmd.constructor.name})`;
 }
 
 /** Calls made to the send spy as [commandName, input] pairs. */
 function sentCommands(sendSpy) {
-  return sendSpy.mock.calls.map(([cmd]) => [cmd.constructor.name, cmd.input]);
+  return sendSpy.mock.calls.map(([cmd]) => [commandName(cmd), cmd.input]);
 }
 
 let tmpDirs = [];
@@ -139,6 +169,26 @@ describe('dashboard/lib/s3.js', () => {
       const s3 = freshS3({ ...ENABLED_ENV, TENANT_ID: 'acme' });
       expect(s3.tenantKey('config/playlists.json')).toBe('tenants/acme/config/playlists.json');
       expect(s3.TENANT_ID).toBe('acme');
+    });
+  });
+
+  // ─── client construction ─────────────────────────────────────
+
+  describe('client construction', () => {
+    it('builds the client lazily and only once, reusing it across calls', async () => {
+      const s3 = freshS3();
+      const send = mockSend(() => ({}));
+
+      // Nothing built until the first operation needs a client.
+      expect(clientFactory).not.toHaveBeenCalled();
+
+      await s3.uploadBuffer(Buffer.from('a'), 'config/a.json');
+      await s3.uploadBuffer(Buffer.from('b'), 'config/b.json');
+      await s3.remove('config/a.json');
+
+      // Lazy singleton: one client, three sends through it.
+      expect(clientFactory).toHaveBeenCalledTimes(1);
+      expect(send).toHaveBeenCalledTimes(3);
     });
   });
 
@@ -362,7 +412,7 @@ describe('dashboard/lib/s3.js', () => {
       const localDir = makeTmpDir();
       fs.writeFileSync(path.join(localDir, 'a.mp3'), 'local-copy');
       const send = mockSend((cmd) => {
-        if (cmd.constructor.name === 'ListObjectsV2Command') {
+        if (cmd instanceof ListObjectsV2Command) {
           return {
             Contents: [
               { Key: 'tenants/default/music/raw/', Size: 0, LastModified: null },
@@ -392,7 +442,7 @@ describe('dashboard/lib/s3.js', () => {
       const s3 = freshS3();
       const localDir = makeTmpDir();
       mockSend((cmd) => {
-        if (cmd.constructor.name === 'ListObjectsV2Command') {
+        if (cmd instanceof ListObjectsV2Command) {
           return { Contents: [{ Key: 'tenants/default/music/raw/bad.mp3', Size: 1, LastModified: null }] };
         }
         throw new Error('get failed');
@@ -428,6 +478,8 @@ describe('dashboard/lib/s3.js', () => {
       expect(await s3.syncDir('music/raw/', dir)).toBe(0);
 
       expect(send).not.toHaveBeenCalled();
+      // Stronger than "no calls": the gate never even asked for a client.
+      expect(clientFactory).not.toHaveBeenCalled();
       expect(fs.existsSync(missingPath)).toBe(false);
     });
 
@@ -439,6 +491,7 @@ describe('dashboard/lib/s3.js', () => {
       expect(await s3.list('music/processed/')).toEqual([]);
       expect(await s3.exists('x')).toBe(false);
       expect(send).not.toHaveBeenCalled();
+      expect(clientFactory).not.toHaveBeenCalled();
     });
   });
 });
