@@ -104,7 +104,13 @@ describe('queue list rendering', () => {
 
   it('renders the empty state for an empty queue', async () => {
     const { win, doc } = boot();
+    // #queue-list ships the empty-state div in the markup, so render real rows
+    // first — otherwise this would pass with renderQueue's empty branch deleted.
+    await reloadQueueViaClear(win, doc, ['a.mp3']);
+    expect(queueRows(doc).rows).toHaveLength(1);
+
     await reloadQueueViaClear(win, doc, []);
+
     expect(queueRows(doc)).toEqual({ empty: 'Queue empty — random mode' });
   });
 
