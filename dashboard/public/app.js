@@ -58,6 +58,12 @@
   var transportBarFill = document.getElementById('transport-bar-fill');
   var transportCue = document.getElementById('transport-cue');
   var trackStartedAt = 0;
+  // Read-only seam over the track clock. trackStartedAt is written by
+  // updateAudio (from the WS 'audio' frame) and read by updateTrackProgress and
+  // azUpdateGlow — two consumers slated for different modules. PURE indirection:
+  // returns the same live var, zero behaviour change, no setter (updateAudio and
+  // the STOP reset keep direct access).
+  function getTrackStartedAt() { return trackStartedAt; }
   var trackDuration = 0;
   var trackMixDur = 0;
   var lastAudioMsg = null; // cached last audio message (for replay after ARM→PLAY)
@@ -2565,6 +2571,13 @@
   var azMode = 'spectrum';
   var azAnimFrame = null;
   var azInited = false;
+  // Read-only seam over the analyzer's one-shot init latch. azInited gates five
+  // call sites outside this section (the mute button, ARM, PLAY, startMic and
+  // the analyzer mode buttons all do `if (!azInited) azInit()`), so the flag
+  // crosses every module boundary this slice is about to be split along. PURE
+  // indirection: returns the same live var, zero behaviour change, no setter
+  // (azInit keeps direct access as the sole writer).
+  function getAzInited() { return azInited; }
   var azPeaks = [];
   var azPeakHoldL = -100;
   var azPeakHoldR = -100;
@@ -3521,14 +3534,16 @@
       getGainNode: getGainNode,
       getMainAnalyser: getMainAnalyser,
       getAzL: getAzL,
-      getAzR: getAzR
+      getAzR: getAzR,
+      getAzInited: getAzInited
     };
-    // Test-only studio/interaction facade handle: exposes the two read-only
-    // getters so studio state pins can assert getX() === the live var. Additive
-    // only; inert when __APP_TEST__ is unset.
+    // Test-only studio/interaction facade handle: exposes the read-only getters
+    // so studio state pins can assert getX() === the live var. Additive only;
+    // inert when __APP_TEST__ is unset.
     window.__appStudio = {
       getStudioPlayer: getStudioPlayer,
-      getUserInteracted: getUserInteracted
+      getUserInteracted: getUserInteracted,
+      getTrackStartedAt: getTrackStartedAt
     };
   }
 
