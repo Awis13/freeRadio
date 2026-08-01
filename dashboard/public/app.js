@@ -37,14 +37,7 @@
   // --- DOM refs ---
   var studioPlayer = document.getElementById('studio-player');
   function getStudioPlayer() { return studioPlayer; }
-  var modeTag = document.getElementById('mode-tag');
   var uptimeEl = document.getElementById('uptime');
-  var statListeners = document.getElementById('stat-listeners');
-  var statAudioBr = document.getElementById('stat-audio-br');
-  var statFps = document.getElementById('stat-fps');
-  var statSpeed = document.getElementById('stat-speed');
-  var statVideoBr = document.getElementById('stat-video-br');
-  var statTime = document.getElementById('stat-time');
   // music-list / music-count / visuals-list / visuals-count refs moved into
   // filemgmt.js (window.FRFileMgmt), which resolves them via getElementById.
   // #log / #dbg-clear / #dbg-pause refs moved into notify.js (window.FRNotify),
@@ -284,8 +277,7 @@
         setMixMode(data.mode);
         updateMixModeUI();
         var wsB = studioBpm.textContent ? parseInt(studioBpm.textContent) : 0;
-        trackMixDur = FRNowPlaying.computeMixDur(wsB);
-        FRNowPlaying.positionCueMarker();
+        FRNowPlaying.setMixDuration(wsB);
       }
     },
     liveMode: function (data) {
@@ -550,8 +542,9 @@
   // Analytics UI (loadAnalytics / drawListenerChart / loadHistoryStats /
   // drawTopTracksChart) lives in analytics.js (window.FRAnalytics), wired up via
   // FRAnalytics.init near the FRPlaylists.init call. listenerHistory and
-  // peakListeners stay here (fed by the WS updateIcecast handler) and are read by
-  // the module live through the injected getters.
+  // peakListeners moved to nowplaying.js with the updateIcecast that feeds them;
+  // app.js passes FRNowPlaying's getters straight through, so the module still
+  // reads them live.
 
   // ============================
   // RESTREAM SETTINGS (Studio sidebar)
