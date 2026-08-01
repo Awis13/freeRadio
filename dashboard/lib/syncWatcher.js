@@ -8,14 +8,29 @@ const MUSIC_DIR = paths.MUSIC_DIR;
 const VISUALS_DIR = paths.VISUALS_DIR;
 const SHARED_DIR = paths.SHARED_DIR;
 
-// 17 config files to back up to S3
+// 18 config files to back up to S3
 const CONFIG_FILES = [
   'playlists.json', 'schedule.json', 'track_metadata.json', 'play_history.jsonl',
   'visual_profiles.json', 'active_visual_profile.json', 'overlays.json',
   'stream_keys.enc', 'stream_quality.json', 'stream_audio.json', 'stream_video.json',
   'stream_control.json', 'restream_settings.json', 'live_mode.json', 'visual_mode.json',
-  'channel_strip.json', 'video_playlists.json'
+  'channel_strip.json', 'video_playlists.json', 'tier.json'
 ];
+
+/**
+ * Config files that are NOT single JSON documents, so the parse check below
+ * must not touch them: play_history.jsonl is one JSON object per line, and
+ * stream_keys.enc is an encrypted blob. Parsing either always fails, and
+ * treating that as corruption would re-download both on every boot, throwing
+ * away local history and keys.
+ */
+const NON_JSON_FILES = new Set(['play_history.jsonl', 'stream_keys.enc']);
+
+/** Suffix jsonStore gives a file it could not parse. */
+const QUARANTINE_MARK = '.corrupt-';
+
+/** Appended to a quarantine file once its config has been restored. */
+const HANDLED_MARK = '.restored';
 
 // Large append-only files — stat-based detection instead of full hash
 const STAT_BASED_FILES = new Set(['play_history.jsonl']);
@@ -38,6 +53,9 @@ const SKIP_PATTERN = /^(\.transcoding_|_standby_|.*\.s3tmp$)/;
 // In-memory state
 const _knownUploaded = new Set();
 const _hashes = new Map();
+// Configs whose upload is currently blocked by a quarantine file — tracked only
+// so the poll logs the block once instead of every 30 seconds.
+const _uploadBlocked = new Set();
 let _timers = [];
 
 // --- Helpers ---
@@ -119,19 +137,82 @@ async function init() {
 
 // --- Restore: download configs/metadata from S3 if missing or empty locally ---
 
+/** Does this file hold one parseable JSON document? */
+function isParseable(localPath) {
+  try {
+    JSON.parse(fs.readFileSync(localPath, 'utf8'));
+    return true;
+  } catch (e) {
+    return false;
+  }
+}
+
+/**
+ * Quarantine files jsonStore left beside `localPath` that no restore has dealt
+ * with yet. Their presence means the local copy of this config was corrupt
+ * recently, so whatever sits there now may be the defaults a caller wrote after
+ * the failed read.
+ */
+function pendingQuarantines(localPath) {
+  const dir = path.dirname(localPath);
+  const prefix = path.basename(localPath) + QUARANTINE_MARK;
+  try {
+    return fs.readdirSync(dir)
+      .filter(name => name.startsWith(prefix) && !name.endsWith(HANDLED_MARK))
+      .map(name => path.join(dir, name));
+  } catch (e) {
+    return [];
+  }
+}
+
+/**
+ * Mark quarantine files as dealt with, without deleting them — the damaged
+ * bytes stay on disk for diagnosis, they just stop blocking uploads.
+ */
+function markQuarantinesHandled(quarantinePaths) {
+  for (const p of quarantinePaths) {
+    try {
+      fs.renameSync(p, p + HANDLED_MARK);
+    } catch (e) {
+      console.error(`[syncWatcher] could not mark ${p} handled: ${e.message}`);
+    }
+  }
+}
+
 async function restoreConfigs() {
   let restored = 0;
 
-  // Configs — restore if missing or empty (crash/power loss)
+  // Configs — restore if missing, empty (crash/power loss), or unparseable.
+  // The unparseable case is the torn write nobody has read yet: jsonStore
+  // quarantines a bad file the moment a store loads it, which leaves the name
+  // missing and is already covered above, but until then the truncated file
+  // sits there looking healthy to a size check.
   for (const name of CONFIG_FILES) {
     const localPath = path.join(SHARED_DIR, name);
     const stat = fs.statSync(localPath, { throwIfNoEntry: false });
-    if (stat && stat.size > 0) continue;
+    let reason = null;
+    if (!stat || stat.size === 0) {
+      reason = stat ? 'empty' : 'missing';
+    } else if (!NON_JSON_FILES.has(name) && !isParseable(localPath)) {
+      reason = 'unparseable';
+    }
+    if (!reason) continue;
+
+    const pending = pendingQuarantines(localPath);
     try {
       await s3.download('config/' + name, localPath);
       restored++;
+      if (reason === 'unparseable') {
+        console.error(`[syncWatcher] ${name} was unparseable — restored from S3`);
+      }
+      // The local copy is trustworthy again, so uploads may resume.
+      markQuarantinesHandled(pending);
     } catch (e) {
-      if (e.name !== 'NoSuchKey' && e.$metadata?.httpStatusCode !== 404) {
+      if (e.name === 'NoSuchKey' || e.$metadata?.httpStatusCode === 404) {
+        // No backup exists, so there is nothing for the upload guard to
+        // protect — let this file start backing itself up again.
+        markQuarantinesHandled(pending);
+      } else {
         console.error(`[syncWatcher] restore config ${name}: ${e.message}`);
       }
     }
@@ -249,6 +330,24 @@ async function pollConfigs() {
   for (const name of CONFIG_FILES) {
     const localPath = path.join(SHARED_DIR, name);
     const hashKey = 'config/' + name;
+
+    // Do not overwrite a good backup with post-corruption content. An
+    // unhandled quarantine sibling says this config was corrupt and has not
+    // been restored since, so what is on disk now is most likely the defaults
+    // a caller wrote after the failed read. Uploading that would destroy the
+    // last good copy in S3 — the very thing restoreConfigs needs at restart.
+    // Restoring the file clears the mark and uploads resume.
+    if (pendingQuarantines(localPath).length > 0) {
+      if (!_uploadBlocked.has(name)) {
+        _uploadBlocked.add(name);
+        console.error(
+          `[syncWatcher] not uploading ${name}: an unhandled ${QUARANTINE_MARK}* file sits ` +
+          'beside it, so the local copy is post-corruption until a restore heals it',
+        );
+      }
+      continue;
+    }
+    _uploadBlocked.delete(name);
 
     if (STAT_BASED_FILES.has(name)) {
       // Large append-only files: stat-based detection + stream upload
