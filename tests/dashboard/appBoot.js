@@ -49,6 +49,7 @@ const navigationSrc = readFileSync(path.join(publicDir, 'navigation.js'), 'utf8'
 const genericModalSrc = readFileSync(path.join(publicDir, 'genericModal.js'), 'utf8');
 const notifySrc = readFileSync(path.join(publicDir, 'notify.js'), 'utf8');
 const playerSrc = readFileSync(path.join(publicDir, 'player.js'), 'utf8');
+const mixerSrc = readFileSync(path.join(publicDir, 'mixer.js'), 'utf8');
 const appSrc = readFileSync(path.join(publicDir, 'app.js'), 'utf8');
 
 /**
@@ -162,6 +163,7 @@ export function bootWindow() {
   dom.window.eval(genericModalSrc);
   dom.window.eval(notifySrc);
   dom.window.eval(playerSrc);
+  dom.window.eval(mixerSrc);
   let loadError = null;
   try {
     dom.window.eval(appSrc);
