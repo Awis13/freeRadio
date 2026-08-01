@@ -113,7 +113,7 @@
   var broadcastModeTag = null, btnBroadcast = null, btnPlay = null, btnStop = null, btnArm = null;
   var liveModeSettings = null, liveStatusBadge = null, liveIngestUrl = null;
   var liveIngestKey = null, liveAfkFallback = null, liveSourcePills = [];
-  var playerOverlay = null, playerOverlayText = null, modeHint = null;
+  var modeHint = null;
 
   function resolveDom() {
     studioAudioTrack = document.getElementById('studio-audio-track');
@@ -136,8 +136,6 @@
     liveIngestKey = document.getElementById('live-ingest-key');
     liveAfkFallback = document.getElementById('live-afk-fallback');
     liveSourcePills = document.querySelectorAll('.live-source-pill');
-    playerOverlay = document.getElementById('player-overlay');
-    playerOverlayText = document.getElementById('player-overlay-text');
     modeHint = document.getElementById('transport-mode-hint');
   }
 
@@ -365,12 +363,9 @@
     // Ingest URL
     var host = window.location.hostname;
     liveIngestUrl.value = 'rtmp://' + host + ':1935/ingest/';
-    // Key
-    if (liveIngestKey.type === 'password') {
-      liveIngestKey.value = lm.ingestKey || '';
-    } else {
-      liveIngestKey.value = lm.ingestKey || '';
-    }
+    // Key — the value is the same whether the field is masked or revealed;
+    // the masking is the input's own type, toggled by the Show/Hide button.
+    liveIngestKey.value = lm.ingestKey || '';
   }
   // Load processed visuals for video profiles
   function loadProcessedVisuals() {
@@ -437,7 +432,6 @@
           setMixMode(mode);
           updateMixModeUI();
           // Recalculate cue marker for new mode
-          var filename = (studioAudioTrack.textContent || '').split('/').pop();
           var bpm = studioBpm.textContent ? parseInt(studioBpm.textContent) : 0;
           FRNowPlaying.setMixDuration(bpm);
           log('mixing: changed to ' + mode);
@@ -461,16 +455,9 @@
     // States: idle → arming → armed → broadcasting → live
     //         idle → playing → live
 
-
-
-
-
     // ============================
     // MODE CARD STATE MACHINE
     // ============================
-
-
-
 
     // Mode card click handlers
     document.querySelectorAll('.mode-card').forEach(function(card) {
@@ -496,8 +483,9 @@
         var card = pill.closest('.mode-card');
         var mode = card.dataset.mode;
         var subMode = pill.dataset.submode;
-        // Don't switch while on air (unless card is already active)
-        if (broadcastState.streamMode !== 'standby' && mode !== broadcastState.uiMode) return;
+        // Don't switch while on air. The narrower guard that used to sit above
+        // this one — the same test plus `&& mode !== uiMode` — could never
+        // decide anything the broader one did not already decide.
         if (broadcastState.streamMode !== 'standby') return;
         applyUiMode(mode, subMode);
       });
@@ -840,7 +828,6 @@
         });
     };
 
-
     // Source pill clicks
     liveSourcePills.forEach(function(pill) {
       pill.addEventListener('click', function() {
@@ -911,15 +898,10 @@
         .catch(function(e) { showError('Key regeneration failed: ' + e); });
     };
 
-
-
     loadProcessedVisuals();
     loadBroadcastState();
     setInterval(loadBroadcastState, 15000);
     setInterval(loadProcessedVisuals, 30000);
-
-
-
 
     mixPills.forEach(function(pill) {
       pill.addEventListener('click', function() {
