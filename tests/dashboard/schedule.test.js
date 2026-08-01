@@ -34,6 +34,10 @@ function mockScheduleFile(data) {
   vi.spyOn(fs, 'existsSync').mockReturnValue(true);
   vi.spyOn(fs, 'readFileSync').mockReturnValue(JSON.stringify(data));
   vi.spyOn(fs, 'writeFileSync').mockImplementation(() => {});
+  // This suite discards writes rather than storing them, so the rename only has
+  // to stay off the real filesystem — jsonStore renames <file>.tmp into place.
+  vi.spyOn(fs, 'renameSync').mockImplementation(() => {});
+  vi.spyOn(fs, 'mkdirSync').mockImplementation(() => {});
 }
 
 function emptySchedule(overrides = {}) {

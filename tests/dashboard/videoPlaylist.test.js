@@ -67,6 +67,9 @@ function setupMocks({ processedFiles, playlists, trackMeta }) {
   }));
 
   spies.push(vi.spyOn(fs, 'writeFileSync').mockImplementation(() => {}));
+  // Writes are discarded here; the rename just must not reach the real fs.
+  spies.push(vi.spyOn(fs, 'renameSync').mockImplementation(() => {}));
+  spies.push(vi.spyOn(fs, 'mkdirSync').mockImplementation(() => {}));
 }
 
 // ---------------------------------------------------------------------------

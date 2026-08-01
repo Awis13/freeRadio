@@ -69,6 +69,16 @@ export function installPlaylistFsHarness({ delegateToRealFs = true } = {}) {
   vi.spyOn(fs, 'writeFileSync').mockImplementation((p, data) => {
     state.files[p] = data;
   });
+  // jsonStore writes <file>.tmp and renames it into place, so the mock fs has
+  // to model the move (and tolerate the mkdir) or a store write vanishes.
+  vi.spyOn(fs, 'renameSync').mockImplementation((from, to) => {
+    if (from in state.files) {
+      state.files[to] = state.files[from];
+      delete state.files[from];
+    }
+  });
+  vi.spyOn(fs, 'mkdirSync').mockImplementation(() => {});
+
   vi.spyOn(fs, 'readdirSync').mockImplementation((dir, ...rest) => {
     if (dir === MUSIC_DIR) return state.musicFiles;
     return delegateToRealFs ? realReaddirSync(dir, ...rest) : [];
