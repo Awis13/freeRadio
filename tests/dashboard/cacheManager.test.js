@@ -151,20 +151,70 @@ describe('evictOldest', () => {
 });
 
 // ---------------------------------------------------------------------------
-// getCacheSize — platform-safe pins only (macOS du lacks -b)
+// getCacheSize
+//
+// These used to be "non-negative number" pins because the implementation
+// shelled out to `du -sb`, which macOS and busybox both reject — so the real
+// answer everywhere except glibc Linux was 0, and the pins could not say more.
+// It is computed in process now, so the size is assertable exactly.
 // ---------------------------------------------------------------------------
 describe('getCacheSize', () => {
   it('returns 0 for a nonexistent directory', () => {
     expect(cache.getCacheSize('/nonexistent/cache/dir')).toBe(0);
   });
 
-  it('returns a non-negative number for an existing directory', () => {
+  it('sums the bytes of the files in the directory', () => {
     const dir = makeTmpDir();
     seedFile(dir, 'a.bin', 100, 10);
+    seedFile(dir, 'b.bin', 250, 10);
+    expect(cache.getCacheSize(dir)).toBe(350);
+  });
+
+  it('counts dotfiles and walks into subdirectories, as du did', () => {
+    const dir = makeTmpDir();
+    seedFile(dir, 'a.bin', 100, 10);
+    seedFile(dir, '.hidden', 7, 10);
+    const sub = path.join(dir, 'nested');
+    fs.mkdirSync(sub);
+    seedFile(sub, 'deep.bin', 40, 10);
+    expect(cache.getCacheSize(dir)).toBe(147);
+  });
+
+  it('returns 0 for an empty directory', () => {
+    expect(cache.getCacheSize(makeTmpDir())).toBe(0);
+  });
+
+  it('eviction now actually fires at the threshold (the alpine bug)', () => {
+    // server.js gates eviction on getCacheSize(dir) > maxBytes. With du -sb
+    // failing in the image, that call returned 0, the comparison was never
+    // true, and the cache grew without bound however full it got. This is the
+    // whole chain: a directory over the limit reports its real size, and
+    // eviction driven by that number removes the oldest files.
+    const dir = makeTmpDir();
+    seedFile(dir, 'old.bin', 300, 900);
+    seedFile(dir, 'new.bin', 300, 10);
+    const maxBytes = 400;
+
     const size = cache.getCacheSize(dir);
-    expect(typeof size).toBe('number');
-    expect(size).toBeGreaterThanOrEqual(0);
-    expect(Number.isNaN(size)).toBe(false);
+    expect(size).toBe(600);
+    expect(size > maxBytes).toBe(true);
+
+    const evicted = cache.evictOldest(dir, maxBytes);
+    expect(evicted).toBe(1);
+    expect(fs.existsSync(path.join(dir, 'old.bin'))).toBe(false);
+    expect(fs.existsSync(path.join(dir, 'new.bin'))).toBe(true);
+    expect(cache.getCacheSize(dir)).toBe(300);
+  });
+
+  it('agrees with what evictOldest reduces, for a flat cache directory', () => {
+    // The trigger and the eviction have to measure the same thing; a flat
+    // directory of cached media is what both actually see in production.
+    const dir = makeTmpDir();
+    seedFile(dir, 'a.bin', 100, 30);
+    seedFile(dir, 'b.bin', 100, 20);
+    seedFile(dir, 'c.bin', 100, 10);
+    cache.evictOldest(dir, 150);
+    expect(cache.getCacheSize(dir)).toBeLessThanOrEqual(150);
   });
 });
 
