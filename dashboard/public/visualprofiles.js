@@ -116,16 +116,47 @@
       .catch(function(e) { showError('Failed to load profile: ' + e); });
   }
 
+  /**
+   * Replace a tile grid with an explicit failure state.
+   *
+   * Never leaves stale tiles behind — they carry onclick handlers bound to
+   * whatever entity was rendered when they were built — and never leaves the
+   * grid silently blank, which reads as "no videos" rather than "load failed".
+   * The retry button re-runs the SAME render for the SAME entity, so it cannot
+   * reintroduce the staleness the tiles would have.
+   */
+  function renderGridFailure(grid, retry) {
+    grid.innerHTML = '';
+    var box = document.createElement('div');
+    box.className = 'empty-state grid-load-failed';
+
+    var msg = document.createElement('span');
+    msg.textContent = 'Could not load videos. ';
+    box.appendChild(msg);
+
+    var btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className = 'grid-retry-btn';
+    btn.textContent = 'Retry';
+    btn.onclick = retry;
+    box.appendChild(btn);
+
+    grid.appendChild(box);
+  }
+
   function renderVisualProfileDetail(profile) {
     document.getElementById('vp-detail-title').textContent = profile.name;
     var grid = document.getElementById('vp-video-grid');
 
-    // Cleared only once the fetch succeeds — a failed load must leave the tiles
-    // alone, because saveVisualProfileVideos PUTs whatever is in the grid and
-    // an empty grid would save an empty profile.
+    // A failed load must not leave the previous profile's tiles on screen: each
+    // tile's onclick closes over the id it was rendered for, so a surviving
+    // tile would PUT into the OLD profile while the panel shows the new one.
+    // Any failure — rejected request, non-2xx body, anything that is not the
+    // expected array — replaces the grid with a non-clickable failure state.
     authFetch('/api/visuals')
       .then(function(r) { return r.json(); })
       .then(function(allVideos) {
+        if (!Array.isArray(allVideos)) throw new Error('unexpected response');
         grid.innerHTML = '';
         var selectedSet = new Set(profile.videos || []);
         allVideos.forEach(function(v) {
@@ -151,6 +182,7 @@
       })
       .catch(function(e) {
         showError('Failed to load videos: ' + e);
+        renderGridFailure(grid, function() { renderVisualProfileDetail(profile); });
       });
 
     document.getElementById('vp-activate-btn').onclick = function() {

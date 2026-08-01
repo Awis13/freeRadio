@@ -164,26 +164,58 @@ describe('video-playlists UI characterization (window.FRVideoPlaylists)', () => 
   // selectVideoPlaylist -> renderVideoPlaylistDetail
   // -------------------------------------------------------------------------
   describe('selectVideoPlaylist + renderVideoPlaylistDetail (manual branch)', () => {
-    it('a failed video-grid load shows the error and LEAVES THE GRID INTACT', async () => {
-      // CHANGED IN T14-C1, same reason as the visual-profiles twin: no .catch
-      // and a pre-fetch clear meant a transient failure emptied the grid, and
-      // saveVideoPlaylistVideos saves exactly what the grid holds.
+    it('a failed video-grid load shows the error and an explicit failure state', async () => {
+      // CHANGED IN T14-C1 (reworked), same contract as the visual-profiles
+      // twin: no stale tiles (their onclick is bound to the previous playlist
+      // id) and no silent blank grid.
       const { win, doc, vpl } = boot();
       const grid = doc.getElementById('vpl-video-grid');
       grid.innerHTML = '<div class="video-tile selected"><div class="video-tile-name">b.mp4</div></div>';
 
-      win.fetch = (url) => (String(url).indexOf('/api/visuals-processed') !== -1
-        ? Promise.reject(new Error('offline'))
-        : Promise.resolve({ ok: true, status: 200, json: () => Promise.resolve({}) }));
-
+      win.fetch = () => Promise.reject(new Error('offline'));
       vpl.renderVideoPlaylistDetail({ id: 'p1', name: 'Sunset', type: 'manual', tracks: ['b.mp4'] });
       await flush(10);
 
       const banner = doc.getElementById('error-banner');
       expect(banner.classList.contains('visible')).toBe(true);
       expect(banner.textContent).toContain('Failed to load videos');
+      expect(grid.querySelectorAll('.video-tile').length).toBe(0);
+      expect(grid.querySelector('.grid-load-failed')).toBeTruthy();
+      expect(grid.textContent).toContain('Could not load videos');
+    });
+
+    it('a body that is not the expected array is treated as a failure too', async () => {
+      const { win, doc, vpl } = boot();
+      win.fetch = () => Promise.resolve({
+        ok: false, status: 500, json: () => Promise.resolve({ error: 'boom' }),
+      });
+      vpl.renderVideoPlaylistDetail({ id: 'p1', name: 'Sunset', type: 'manual', tracks: [] });
+      await flush(10);
+
+      const grid = doc.getElementById('vpl-video-grid');
+      expect(grid.querySelectorAll('.video-tile').length).toBe(0);
+      expect(grid.querySelector('.grid-load-failed')).toBeTruthy();
+    });
+
+    it('a failed render cannot leave a tile that saves into the PREVIOUS playlist', async () => {
+      const { win, doc, vpl } = boot();
+      const stub = withFetch(win, [
+        routeExact('GET', '/api/visuals-processed', [{ name: 'b.mp4', size: 10 }]),
+      ]);
+      vpl.renderVideoPlaylistDetail({ id: 'p1', name: 'First', type: 'manual', tracks: ['b.mp4'] });
+      await flush(10);
+      const grid = doc.getElementById('vpl-video-grid');
       expect(grid.querySelectorAll('.video-tile').length).toBe(1);
-      expect(grid.querySelector('.video-tile-name').textContent).toBe('b.mp4');
+
+      win.fetch = () => Promise.reject(new Error('offline'));
+      vpl.renderVideoPlaylistDetail({ id: 'p2', name: 'Second', type: 'manual', tracks: [] });
+      await flush(10);
+
+      expect(grid.querySelectorAll('.video-tile').length).toBe(0);
+      const before = stub.calls.length;
+      grid.querySelectorAll('div').forEach((el) => el.onclick && el.onclick());
+      await flush(10);
+      expect(stub.calls.slice(before).filter((c) => c.method === 'PUT')).toEqual([]);
     });
 
     it('shows detail synchronously, sets selection, title, indicator + SELECTED-FIRST tiles from /api/visuals-processed', async () => {
