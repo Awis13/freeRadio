@@ -61,6 +61,9 @@ function freshLiq(host, port, timeoutMs) {
   else process.env.DJ_TIMEOUT_MS = String(timeoutMs);
   const id = nodeRequire.resolve(LIQ_SPEC);
   delete nodeRequire.cache[id];
+  // liqClient reads DJ_HOST/DJ_PORT through paths.js, which bakes env at require
+  // time, so it has to be re-required as well for the values set above to land.
+  delete nodeRequire.cache[nodeRequire.resolve('../../dashboard/lib/paths')];
   return nodeRequire(id);
 }
 

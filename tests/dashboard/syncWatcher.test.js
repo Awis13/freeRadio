@@ -57,6 +57,10 @@ import fs from 'node:fs';
 const nodeRequire = createRequire(import.meta.url);
 const SW_SPEC = '../../dashboard/lib/syncWatcher';
 const S3_SPEC = '../../dashboard/lib/s3';
+// syncWatcher reads MUSIC_DIR/VISUALS_DIR through paths.js, which caches env at
+// require time — so clearing those vars only isolates this suite if paths.js is
+// re-required too.
+const PATHS_SPEC = '../../dashboard/lib/paths';
 
 const ENV_KEYS = [
   'S3_ENDPOINT', 'S3_ACCESS_KEY', 'S3_SECRET_KEY', 'S3_BUCKET', 'S3_REGION',
@@ -75,6 +79,7 @@ function restoreOriginalEnv() {
 function dropModuleCaches() {
   delete nodeRequire.cache[nodeRequire.resolve(SW_SPEC)];
   delete nodeRequire.cache[nodeRequire.resolve(S3_SPEC)];
+  delete nodeRequire.cache[nodeRequire.resolve(PATHS_SPEC)];
 }
 
 // The 17 config files syncWatcher backs up, mirrored from the module.
@@ -145,6 +150,7 @@ function mockFs(initialFiles = {}) {
 function loadS3(enabled = true) {
   for (const k of ENV_KEYS) delete process.env[k];
   delete nodeRequire.cache[nodeRequire.resolve(S3_SPEC)];
+  delete nodeRequire.cache[nodeRequire.resolve(PATHS_SPEC)];
   const s3 = nodeRequire(S3_SPEC);
   s3.S3_ENABLED = enabled; // init()/start() read this property at call time
   const noSuchKey = Object.assign(new Error('NoSuchKey'), { name: 'NoSuchKey' });

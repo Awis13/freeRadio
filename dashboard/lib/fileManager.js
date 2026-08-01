@@ -6,10 +6,14 @@ const s3 = require('./s3');
 const transcoder = require('./transcoderClient');
 const paths = require('./paths');
 
-// These substring checks classify a directory as music or visuals. They match
-// against the CONFIGURED roots on purpose: if MUSIC_DIR/VISUALS_DIR move, the
-// classification has to move with them. Substring (not startsWith) is the
-// existing behaviour and is kept as-is — callers pass subdirectories.
+// DIRECTORY CLASSIFICATION. Three places in this file decide whether a
+// directory is music or visuals — dirToS3Prefix, findProcessed and the upload
+// handler's isVisuals — and all of them test `dir.includes(paths.MUSIC_DIR)` /
+// `dir.includes(paths.VISUALS_DIR)`. Matching the CONFIGURED roots is
+// deliberate: if those directories move, the classification moves with them.
+// Substring rather than startsWith is the existing behaviour and is kept as-is,
+// because callers pass subdirectories (…/incoming, …/processed) as well as the
+// roots themselves.
 
 // Determine S3 prefix from local directory
 function dirToS3Prefix(dir) {
