@@ -246,9 +246,16 @@ describe('player overlay state machine', () => {
     expect(handles).toHaveLength(2);
     const nativeErrorHandle = handles[1];
 
+    // A second error inside the 2s window reschedules rather than orphaning
+    // the first handle, the same way showLoading treats its safety net.
+    doc.getElementById('studio-player').dispatchEvent(new win.Event('error'));
+    expect(cleared).toContain(nativeErrorHandle);
+    expect(handles).toHaveLength(4);
+    const rescheduledHandle = handles[3];
+
     // Any path through clearAllTimers must take it with it.
     win.FRPlayer.restartPlayer('probe');
-    expect(cleared).toContain(nativeErrorHandle);
+    expect(cleared).toContain(rescheduledHandle);
   });
 
   it('a native player error is ignored while armed', () => {

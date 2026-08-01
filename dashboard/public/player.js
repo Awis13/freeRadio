@@ -96,9 +96,9 @@
   var aliveTimer = null;    // 4s no-timeupdate → show "Loading stream..."
   var safetyTimer = null;   // 20s max overlay duration
   var hlsRetryTimer = null;
-  // 2s restart after a native-HLS error. Tracked like the others so a restart
-  // or teardown cancels it — untracked, an error just before a restart fired a
-  // second restartPlayer two seconds into the new session.
+  // 2s restart after a native-HLS error. Tracked like the others so a restart,
+  // a teardown or a second error cancels it — untracked, an error just before a
+  // restart fired a second restartPlayer two seconds into the new session.
   var nativeErrorTimer = null;
   var overlayLockedUntil = 0;  // timestamp — auto-hide blocked until this time
   var pendingModeSwitch = false;  // hard block: overlay stays until mode actually applies
@@ -408,6 +408,7 @@
       var broadcastState = getBroadcastState();
       if (broadcastState && (broadcastState.streamMode === 'armed' || broadcastState.arming)) return;
       showLoading('Reconnecting...', 'native-error');
+      if (nativeErrorTimer) clearTimeout(nativeErrorTimer);
       nativeErrorTimer = setTimeout(function() {
         nativeErrorTimer = null;
         restartPlayer('native-error');
