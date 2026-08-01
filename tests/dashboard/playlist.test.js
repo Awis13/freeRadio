@@ -46,6 +46,16 @@ beforeEach(() => {
   vi.spyOn(fs, 'writeFileSync').mockImplementation((p, data) => {
     files[p] = data;
   });
+  // jsonStore writes <file>.tmp and renames it into place, so the mock fs has
+  // to model the move (and tolerate the mkdir) or a store write vanishes.
+  vi.spyOn(fs, 'renameSync').mockImplementation((from, to) => {
+    if (from in files) {
+      files[to] = files[from];
+      delete files[from];
+    }
+  });
+  vi.spyOn(fs, 'mkdirSync').mockImplementation(() => {});
+
   vi.spyOn(fs, 'readdirSync').mockImplementation((dir) => {
     if (dir === MUSIC_DIR) return musicFiles;
     return [];

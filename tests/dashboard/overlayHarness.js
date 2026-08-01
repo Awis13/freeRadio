@@ -118,6 +118,12 @@ export function installOverlayFsHarness({ assetsDirExists = true, delegateToReal
     if (typeof to === 'string' && to.startsWith(ASSETS_DIR + path.sep)) {
       state.assets[path.basename(to)] = 0;
     }
+    // jsonStore writes <file>.tmp and renames it into place; without moving the
+    // key the store write would vanish from the in-memory map.
+    if (from in state.files) {
+      state.files[to] = state.files[from];
+      delete state.files[from];
+    }
   });
 
   // multer DiskStorage pipes the upload into fs.createWriteStream(finalPath).
