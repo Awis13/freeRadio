@@ -28,27 +28,53 @@ if ! command -v openssl >/dev/null 2>&1; then
   exit 1
 fi
 
-if [ -f "$CRT" ] && [ -f "$KEY" ] && [ -z "${FORCE:-}" ]; then
-  echo "[certs] ${CRT} and ${KEY} already exist — leaving them alone (FORCE=1 to replace)"
-  if openssl x509 -in "$CRT" -noout -checkend 0 >/dev/null 2>&1; then
-    echo "[certs] current certificate is valid until $(openssl x509 -in "$CRT" -noout -enddate | cut -d= -f2)"
-  else
-    echo "[certs] WARNING: the existing certificate has EXPIRED — rerun with FORCE=1 to replace it" >&2
+# Refuse to clobber if EITHER file is present, not just both. A lone tls.key
+# with no certificate is still somebody's private key — quite possibly the
+# match for a certificate they are about to drop in beside it — and silently
+# generating over it would destroy something unrecoverable.
+if [ -z "${FORCE:-}" ] && { [ -f "$CRT" ] || [ -f "$KEY" ]; }; then
+  if [ -f "$CRT" ] && [ -f "$KEY" ]; then
+    echo "[certs] ${CRT} and ${KEY} already exist — leaving them alone (FORCE=1 to replace)"
+    if openssl x509 -in "$CRT" -noout -checkend 0 >/dev/null 2>&1; then
+      echo "[certs] current certificate is valid until $(openssl x509 -in "$CRT" -noout -enddate | cut -d= -f2)"
+    else
+      echo "[certs] WARNING: the existing certificate has EXPIRED — rerun with FORCE=1 to replace it" >&2
+    fi
+    exit 0
   fi
-  exit 0
+  found="$CRT"; missing="$KEY"
+  [ -f "$KEY" ] && { found="$KEY"; missing="$CRT"; }
+  echo "[certs] found ${found} but no ${missing} — refusing to overwrite half a keypair." >&2
+  echo "[certs] Put the matching file next to it, or rerun with FORCE=1 to generate a fresh pair." >&2
+  exit 1
 fi
 
 mkdir -p "$CERT_DIR"
 
+# The key is written with 600 below, but chmod runs AFTER openssl has created
+# the file; umask closes that window instead of narrowing it.
+umask 077
+
 # subjectAltName as well as CN: browsers and most clients have ignored CN for
 # host matching for years, so a CN-only certificate fails validation outright.
-openssl req -x509 -newkey rsa:2048 -nodes \
+# localhost and 127.0.0.1 are always included, and not repeated when CERT_CN is
+# already one of them.
+SAN="DNS:${CERT_CN}"
+[ "$CERT_CN" != "localhost" ] && SAN="${SAN},DNS:localhost"
+[ "$CERT_CN" != "127.0.0.1" ] && SAN="${SAN},IP:127.0.0.1"
+
+# Keep openssl's own diagnostics: without them a failure here aborts the script
+# under set -e with nothing to go on.
+if ! err="$(openssl req -x509 -newkey rsa:2048 -nodes \
   -keyout "$KEY" \
   -out "$CRT" \
   -days "$CERT_DAYS" \
   -subj "/CN=${CERT_CN}" \
-  -addext "subjectAltName=DNS:${CERT_CN},DNS:localhost,IP:127.0.0.1" \
-  >/dev/null 2>&1
+  -addext "subjectAltName=${SAN}" 2>&1)"; then
+  echo "[certs] openssl failed to generate the keypair:" >&2
+  echo "$err" >&2
+  exit 1
+fi
 
 chmod 600 "$KEY"
 chmod 644 "$CRT"
