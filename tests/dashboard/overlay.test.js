@@ -359,12 +359,29 @@ describe('createOverlayRouter construction', () => {
   // and a pin that reads that shape breaks on an upgrade while the code under
   // test is untouched.
   //
-  // Instead: measure what multer alone does, constructing it exactly as the
-  // router does, and subtract. Multer behaves identically in both scenarios, so
-  // the DIFFERENCE is the router's own guarded call, whatever multer's internals
-  // look like.
+  // Instead: measure what multer alone does and subtract it.
+  //
+  // THE LOAD-BEARING ASSUMPTION is that multer's own mkdir count does not depend
+  // on whether ASSETS_DIR already exists — and note the two arms do not observe
+  // the same state. The harness's mkdirSync mock flips assetsDirExists to true,
+  // so in routerMkdirs(false) the router creates the dir first and multer is
+  // then constructed against an EXISTING dir, while multerOwnMkdirs(false)
+  // constructs multer with the dir still MISSING. The subtraction is only valid
+  // because that difference does not change multer's count. Probed on both
+  // versions: multer alone mkdirs ASSETS_DIR exactly once either way (2.0.2 via
+  // mkdirp, 2.2.0 via fs.mkdirSync), giving 2 vs 1 for the router.
+  //
+  // ACCEPTED TRADE: these pins now count calls instead of asserting the
+  // { recursive: true } flag, so they no longer notice HOW the directory gets
+  // created — a router switched to some other creation strategy would keep them
+  // green. Pinning that flag is what coupled the old version to multer.
 
-  /** mkdirs of ASSETS_DIR caused by constructing multer the way the router does. */
+  /**
+   * mkdirs of ASSETS_DIR caused by constructing multer the way the router does.
+   * fileFilter is omitted deliberately: it runs per uploaded file at request
+   * time and cannot affect directory creation, so leaving it out keeps the
+   * baseline to the options that can.
+   */
   function multerOwnMkdirs(assetsDirExists) {
     const local = installOverlayFsHarness({ assetsDirExists });
     multer({ dest: ASSETS_DIR, limits: { fileSize: 10 * 1024 * 1024 } });
