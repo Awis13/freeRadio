@@ -5,7 +5,7 @@
  * All pure utility functions and refactored state-dependent logic are covered.
  */
 
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { createRequire } from 'node:module';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
@@ -32,6 +32,7 @@ const {
   deriveUiMode,
   uniquePlatformName,
   escapeHtml,
+  mergeDeps,
 } = require(utilsPath);
 
 // ---------------------------------------------------------------------------
@@ -363,6 +364,83 @@ describe('escapeHtml(str)', () => {
 // the public API gets attached to window.FRUtils. The ESM/CJS export path is
 // already covered above; this proves the shipped browser entrypoint works.
 // ---------------------------------------------------------------------------
+describe('mergeDeps(deps, injected, name)', () => {
+  let warnings;
+  let restoreWarn;
+
+  beforeEach(() => {
+    warnings = [];
+    const original = console.warn;
+    console.warn = (msg) => warnings.push(String(msg));
+    restoreWarn = () => { console.warn = original; };
+  });
+
+  afterEach(() => restoreWarn());
+
+  it('assigns known keys whose value is defined', () => {
+    const deps = { fetchFn: null, notify: null };
+    const fetchFn = () => {};
+    const out = mergeDeps(deps, { fetchFn }, 'FRQueue');
+    expect(out).toBe(deps);              // mutates in place, as the modules expect
+    expect(deps.fetchFn).toBe(fetchFn);
+    expect(deps.notify).toBeNull();      // untouched
+    expect(warnings).toEqual([]);
+  });
+
+  it('assigns falsy-but-defined values — 0, empty string and false are real', () => {
+    const deps = { retries: 3, prefix: 'x', enabled: true };
+    mergeDeps(deps, { retries: 0, prefix: '', enabled: false }, 'FRThing');
+    expect(deps).toEqual({ retries: 0, prefix: '', enabled: false });
+    expect(warnings).toEqual([]);
+  });
+
+  it('WARNS and ignores a key the module does not declare', () => {
+    // The old loop iterated the target, so a renamed or misspelled dependency
+    // was dropped without a sound and surfaced later as a null reference.
+    const deps = { onDone: null };
+    mergeDeps(deps, { onDoneTypo: () => {} }, 'FRQueue');
+    expect(deps).toEqual({ onDone: null });
+    expect(deps.onDoneTypo).toBeUndefined();
+    expect(warnings).toHaveLength(1);
+    expect(warnings[0]).toContain('FRQueue.init');
+    expect(warnings[0]).toContain('onDoneTypo');
+  });
+
+  it('WARNS and keeps the default when a known key arrives as undefined', () => {
+    // hasOwnProperty is true for an explicitly-undefined key, so the old loop
+    // happily replaced a working default with nothing.
+    const stub = () => 'default';
+    const deps = { render: stub };
+    mergeDeps(deps, { render: undefined }, 'FRQueue');
+    expect(deps.render).toBe(stub);
+    expect(warnings).toHaveLength(1);
+    expect(warnings[0]).toContain('render');
+    expect(warnings[0]).toContain('undefined');
+  });
+
+  it('no-ops for a missing, null or non-object injected argument', () => {
+    const stub = () => {};
+    for (const injected of [undefined, null, 'nope', 42]) {
+      const deps = { a: stub };
+      expect(mergeDeps(deps, injected, 'FRThing')).toEqual({ a: stub });
+    }
+    expect(warnings).toEqual([]);
+  });
+
+  it('falls back to a generic label when no module name is given', () => {
+    mergeDeps({}, { nope: 1 });
+    expect(warnings[0]).toContain('mergeDeps');
+  });
+
+  it('ignores inherited keys on the injected object', () => {
+    const deps = { a: null };
+    const injected = Object.create({ a: 'from the prototype' });
+    mergeDeps(deps, injected, 'FRThing');
+    expect(deps.a).toBeNull();
+    expect(warnings).toEqual([]);
+  });
+});
+
 describe('window.FRUtils (browser-global attachment)', () => {
   function loadInBrowserLikeContext() {
     const source = readFileSync(utilsPath, 'utf8');

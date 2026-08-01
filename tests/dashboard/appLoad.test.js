@@ -28,7 +28,7 @@
  */
 
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
-import { bootWindow, moduleManifest, closeAllWindows } from './appBoot.js';
+import { bootWindow, moduleManifest, closeAllWindows, flush } from './appBoot.js';
 
 // Close every jsdom window this file booted (rationale in appBoot.js).
 afterAll(closeAllWindows);
@@ -76,6 +76,24 @@ describe('app.js jsdom load-smoke (C2 FRUtils cutover)', () => {
 
   it('exposes the guarded __appHelpers test export (window.__APP_TEST__ on)', () => {
     expect(win.__appHelpers).toBeTruthy();
+  });
+
+  it('a clean boot wires every module without a single mergeDeps warning', async () => {
+    // FRUtils.mergeDeps complains about an injected key a module does not
+    // declare, and about a declared key handed in as undefined. app.js wires
+    // all 24 modules at boot, so a warning here means the wiring and a
+    // module's dependency list have drifted apart — which used to be silent.
+    const booted = bootWindow();
+    try {
+      const merge = booted.warnings.filter(w => /\.init\]|mergeDeps/.test(w));
+      expect(merge, merge.join('\n')).toEqual([]);
+    } finally {
+      // Drain the boot's queued microtasks before tearing the window down —
+      // closing in the same tick lets the stubbed play().then() continuation
+      // run against a document that no longer exists (see appBoot's docblock).
+      await flush();
+      booted.close();
+    }
   });
 
   it('the 7 app.js helpers are the SAME objects as window.FRUtils.* (cutover proven)', () => {
