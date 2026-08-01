@@ -9,9 +9,9 @@
  *      substitution cannot move anything on its own. The expected values are
  *      written out as literal strings on purpose — deriving them from the
  *      module would assert nothing.
- *   2. ENV OVERRIDES are honoured, including the derived values (PROCESSED_DIR
- *      and ANALYSIS_MAP follow MUSIC_DIR, which is exactly the split that
- *      exists in the code today).
+ *   2. ENV OVERRIDES are honoured where they exist. PROCESSED_DIR and
+ *      ANALYSIS_MAP deliberately have none — they follow MUSIC_DIR, because
+ *      only some of their consumers ever read a separate override.
  *
  * paths.js reads env once at require time, like liqClient.js and syncWatcher.js,
  * so each case sets env and re-requires with the cache evicted.
@@ -109,20 +109,20 @@ describe('dashboard/lib/paths.js', () => {
       expect(p.processed('track.wav')).toBe('/srv/audio/processed/track.wav');
     });
 
-    it('PROCESSED_DIR can be pointed somewhere off the music tree', () => {
-      const p = freshPaths({ MUSIC_DIR: '/srv/audio', PROCESSED_DIR: '/fast/ssd/wav' });
-      expect(p.MUSIC_DIR).toBe('/srv/audio');
-      expect(p.PROCESSED_DIR).toBe('/fast/ssd/wav');
-      expect(p.processed('track.wav')).toBe('/fast/ssd/wav/track.wav');
+    it('PROCESSED_DIR and ANALYSIS_MAP have no override of their own', () => {
+      // Deliberately not configurable: only some consumers read the overrides,
+      // so setting one split the library rather than moving it.
+      const p = freshPaths({ MUSIC_DIR: '/srv/audio', PROCESSED_DIR: '/fast/ssd/wav', ANALYSIS_MAP: '/state/map.json' });
+      expect(p.PROCESSED_DIR).toBe('/srv/audio/processed');
+      expect(p.ANALYSIS_MAP).toBe('/srv/audio/.analysis_map');
     });
 
     it('file paths and the dj service follow their env vars', () => {
       const p = freshPaths({
-        HLS_JS_PATH: '/vendor/hls.js', ANALYSIS_MAP: '/state/map.json',
+        HLS_JS_PATH: '/vendor/hls.js',
         DJ_HOST: 'liquidsoap.internal', DJ_PORT: '7100',
       });
       expect(p.HLS_JS_PATH).toBe('/vendor/hls.js');
-      expect(p.ANALYSIS_MAP).toBe('/state/map.json');
       expect(p.DJ_HOST).toBe('liquidsoap.internal');
       expect(p.DJ_PORT).toBe(7100);
     });
