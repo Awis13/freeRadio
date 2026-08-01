@@ -82,19 +82,27 @@ function dropModuleCaches() {
   delete nodeRequire.cache[nodeRequire.resolve(PATHS_SPEC)];
 }
 
-// The 17 config files syncWatcher backs up, mirrored from the module.
+// The 18 config files syncWatcher backs up, mirrored from the module.
 const CONFIG_FILES = [
   'playlists.json', 'schedule.json', 'track_metadata.json', 'play_history.jsonl',
   'visual_profiles.json', 'active_visual_profile.json', 'overlays.json',
   'stream_keys.enc', 'stream_quality.json', 'stream_audio.json', 'stream_video.json',
   'stream_control.json', 'restream_settings.json', 'live_mode.json', 'visual_mode.json',
-  'channel_strip.json', 'video_playlists.json'
+  'channel_strip.json', 'video_playlists.json', 'tier.json'
 ];
 
 /** Seed map with every config + metadata file present and non-empty. */
 function allFilesPresent() {
   const files = {};
-  for (const name of CONFIG_FILES) files['/shared/' + name] = 'content-of-' + name;
+  // Real content shapes matter now: restoreConfigs re-downloads a config it
+  // cannot JSON.parse, so the JSON ones have to hold JSON. The two that are
+  // not JSON documents — the jsonl history and the encrypted key blob — stay
+  // opaque on purpose, which is what exercises the parse-check exemption.
+  for (const name of CONFIG_FILES) {
+    files['/shared/' + name] = name.endsWith('.json')
+      ? JSON.stringify({ from: name })
+      : 'opaque-' + name;
+  }
   files['/music/.analysis_map'] = 'analysis-data';
   files['/music/.bpm_map'] = 'bpm-data';
   return files;
@@ -126,6 +134,14 @@ function mockFs(initialFiles = {}) {
       size: ov.size !== undefined ? ov.size : Buffer.byteLength(files[p]),
       mtimeMs: ov.mtimeMs !== undefined ? ov.mtimeMs : 1000
     };
+  });
+  // jsonStore quarantines by renaming, and syncWatcher marks a quarantine
+  // handled the same way, so the model has to move keys.
+  vi.spyOn(fs, 'renameSync').mockImplementation((from, to) => {
+    if (from in files) {
+      files[to] = files[from];
+      delete files[from];
+    }
   });
   vi.spyOn(fs, 'readdirSync').mockImplementation(dir => {
     const prefix = dir.endsWith('/') ? dir : dir + '/';
@@ -570,6 +586,133 @@ describe('dashboard/lib/syncWatcher.js', () => {
       String(msg).includes('restore config')
     );
     expect(restoreErrors).toEqual([]);
+  });
+
+  // ─── Corrupt configs and the backup guard (T9-C3) ────────────
+
+  it('restores a config that is present and non-empty but unparseable', async () => {
+    const { stubs } = loadS3();
+    const files = allFilesPresent();
+    files['/shared/playlists.json'] = '{"playlists": [truncated';   // torn write
+    sw = freshWatcher();
+    const { files: liveFiles } = mockFs(files);
+    stubs.download.mockImplementation(async (key, localPath) => {
+      liveFiles[localPath] = JSON.stringify({ restored: true });
+    });
+
+    await sw.restoreConfigs();
+
+    // A size check alone would have skipped this file — that is the data-loss
+    // path this closes.
+    expect(stubs.download.mock.calls).toEqual([
+      ['config/playlists.json', '/shared/playlists.json']
+    ]);
+    expect(console.error.mock.calls.some(([msg]) =>
+      String(msg).includes('playlists.json was unparseable'))).toBe(true);
+  });
+
+  it('does NOT re-download the non-JSON configs, which never parse', async () => {
+    const { stubs } = loadS3();
+    sw = freshWatcher();
+    // play_history.jsonl is JSON-lines and stream_keys.enc is an encrypted
+    // blob; parsing either always fails. Treating that as corruption would
+    // wipe local history and keys on every boot.
+    mockFs(allFilesPresent());
+
+    await sw.restoreConfigs();
+
+    expect(stubs.download).not.toHaveBeenCalled();
+  });
+
+  it('skips uploading a config while an unhandled quarantine file sits beside it', async () => {
+    const { stubs } = loadS3();
+    sw = freshWatcher();
+    const files = allFilesPresent();
+    // jsonStore quarantined the file and a caller wrote defaults back.
+    files['/shared/playlists.json'] = JSON.stringify({ playlists: {} });
+    files['/shared/playlists.json.corrupt-1700000000000'] = '{"playlists": [truncated';
+    mockFs(files);
+    vi.useFakeTimers();
+
+    // No init(): with an empty hash snapshot the first tick uploads every
+    // config, so a file that is NOT uploaded is unambiguously the guard.
+    sw.start();
+    await vi.advanceTimersByTimeAsync(30000);
+
+    const uploadedKeys = stubs.uploadBuffer.mock.calls.map(([, key]) => key);
+    expect(uploadedKeys).not.toContain('config/playlists.json');
+    // Every other config still backs itself up as usual.
+    expect(uploadedKeys).toContain('config/schedule.json');
+    expect(console.error.mock.calls.some(([msg]) =>
+      String(msg).includes('not uploading playlists.json'))).toBe(true);
+  });
+
+  it('logs the upload block once, not on every poll', async () => {
+    loadS3();
+    sw = freshWatcher();
+    const files = allFilesPresent();
+    files['/shared/playlists.json.corrupt-1700000000000'] = 'broken';
+    mockFs(files);
+    vi.useFakeTimers();
+
+    sw.start();
+    await vi.advanceTimersByTimeAsync(90000);   // three config ticks
+
+    const blocks = console.error.mock.calls.filter(([msg]) =>
+      String(msg).includes('not uploading playlists.json'));
+    expect(blocks).toHaveLength(1);
+  });
+
+  it('a restore marks the quarantine handled, and uploads resume afterwards', async () => {
+    const { stubs } = loadS3();
+    sw = freshWatcher();
+    const files = allFilesPresent();
+    delete files['/shared/playlists.json'];                          // quarantined away
+    files['/shared/playlists.json.corrupt-1700000000000'] = 'broken';
+    const { files: liveFiles } = mockFs(files);
+    stubs.download.mockImplementation(async (key, localPath) => {
+      liveFiles[localPath] = JSON.stringify({ playlists: { restored: true } });
+    });
+
+    await sw.restoreConfigs();
+
+    // Evidence is kept, just renamed so it no longer blocks the backup.
+    expect(liveFiles['/shared/playlists.json.corrupt-1700000000000']).toBeUndefined();
+    expect(liveFiles['/shared/playlists.json.corrupt-1700000000000.restored']).toBe('broken');
+
+    vi.useFakeTimers();
+    sw.start();
+    await vi.advanceTimersByTimeAsync(30000);
+
+    expect(stubs.uploadBuffer.mock.calls.map(([, key]) => key)).toContain('config/playlists.json');
+  });
+
+  it('no backup in S3: the quarantine is cleared so the file can start backing up', async () => {
+    const { stubs } = loadS3();
+    sw = freshWatcher();
+    const files = allFilesPresent();
+    delete files['/shared/playlists.json'];
+    files['/shared/playlists.json.corrupt-1700000000000'] = 'broken';
+    const { files: liveFiles } = mockFs(files);
+    stubs.download.mockRejectedValue(Object.assign(new Error('NoSuchKey'), { name: 'NoSuchKey' }));
+
+    await sw.restoreConfigs();
+
+    // Nothing in S3 to protect, so blocking uploads forever would just mean
+    // this config is never backed up at all.
+    expect(liveFiles['/shared/playlists.json.corrupt-1700000000000.restored']).toBe('broken');
+  });
+
+  it('tier.json is in the restore set', async () => {
+    const { stubs } = loadS3();
+    sw = freshWatcher();
+    const files = allFilesPresent();
+    delete files['/shared/tier.json'];
+    mockFs(files);
+
+    await sw.restoreConfigs();
+
+    expect(stubs.download.mock.calls).toEqual([['config/tier.json', '/shared/tier.json']]);
   });
 
   it('restore non-404 download error is logged but does not throw', async () => {
