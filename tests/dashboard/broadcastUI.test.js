@@ -51,6 +51,34 @@
  * implement — that secondary throw would escape the handler and abort ARM. The
  * arming helper therefore widens the stub with a close() returning a promise.
  * This is a browser-API completion local to this file; appBoot.js is untouched.
+ *
+ * EXTRACTION DESTINATION: this region is slated to move out of the app.js IIFE
+ * into a planned broadcast.js module (window.FRBroadcast), alongside the other
+ * extracted domains. Every pin here is written against observable effects so it
+ * survives that move untouched.
+ *
+ * AS-IS QUIRKS PINNED HERE — each of these locks in behaviour that looks wrong
+ * on purpose. Do not "fix" one to make a pin greener; change it in a separate
+ * behaviour-change commit and update the pin with it.
+ *
+ *   - PLAY vs the button-state table (app.js:1260-1265): the table's idle row
+ *     says PLAY:on but the code disables PLAY in idle, and its playing row says
+ *     PLAY:off but the code enables PLAY while playing. Two rows, same button,
+ *     opposite directions. The idle hint text also invites the user to press a
+ *     button that is disabled in that phase. The pins follow the code.
+ *   - Stale sub-pill highlight in takeover: uiMode 'takeover' has no matching
+ *     .mode-card in Phase 1 markup, so updateModeUI's pill loop never runs and
+ *     whichever pill was lit stays lit while no card is highlighted at all.
+ *   - Live Mode Bar write is inert: #live-mode-bar sits inside a Phase 3 HTML
+ *     comment, so the display write at app.js:1425 is swallowed by its null
+ *     guard. Pinned as null so a Phase 3 markup change fails loudly here.
+ *   - Handler-allocation asymmetry: the music branch builds a fresh skip/clear
+ *     closure pair on EVERY repaint (duplicating bodies already bound at boot,
+ *     app.js:837-860), while the video branch assigns stable named functions.
+ *     Pinned both ways, plus an equivalence pin across the duplicate copies.
+ *   - Synthetic 'browser-mic' payloads: a real uiSubMode that the server's
+ *     visualMode can never be, used to reach the defensive fallback arms in
+ *     MODE_HINTS and deriveUiMode. Marked at each use site.
  */
 
 import { describe, it, expect } from 'vitest';
@@ -165,11 +193,71 @@ function modeClasses(doc) {
   };
 }
 
-/** Queue endpoints the fetch stub saw, in call order (ignores boot data loads). */
+/**
+ * Queue ACTION endpoints the fetch stub saw, in call order. The trailing slash
+ * in 'queue/' is load-bearing: it keeps the skip/clear actions and drops the
+ * bare /api/queue and /api/video-queue reload GETs, so a test asserting which
+ * button fired is not perturbed by the reload each handler triggers.
+ */
 function queueCalls(calls) {
   return calls
     .filter((c) => c.url.indexOf('queue/') !== -1)
     .map((c) => c.method + ' ' + c.url);
+}
+
+/** Every queue request, action and reload alike — the reloads kept. */
+function queueTraffic(calls) {
+  return calls
+    .filter((c) => c.url.indexOf('/api/queue') === 0 || c.url.indexOf('/api/video-queue') === 0)
+    .map((c) => c.method + ' ' + c.url);
+}
+
+/**
+ * Boot a window wired for the skip/clear handler pins.
+ *
+ * Both handler pairs gate all of their work behind `if (data.ok)`, so the
+ * action routes answer { ok: true } — otherwise the success branches never run
+ * and the tests would pin nothing but the POST itself. The reload routes answer
+ * an empty queue so renderQueue has something valid to draw.
+ *
+ * Timers use the capture-spy recipe from wsReconnectUI.test.js:22-30: app.js
+ * resolves setTimeout against win.setTimeout in the jsdom realm, which
+ * vi.useFakeTimers() does not intercept. The spy RECORDS each delay and returns
+ * a non-zero id without scheduling, so the deferred reloads are observable as
+ * delays without ever firing inside the test.
+ *
+ * `reset()` clears both recorders — call it after a repaint so only the traffic
+ * a clicked handler produced is under assertion.
+ */
+function bootQueueHarness(overrideRoutes) {
+  const { win, doc, sendInit } = bootWithInit();
+  const { fetch, calls } = makeFetchStub([
+    ...(overrideRoutes || []),
+    routeExact('POST', '/api/queue/skip', { ok: true }),
+    routeExact('POST', '/api/queue/clear', { ok: true }),
+    routeExact('POST', '/api/video-queue/skip', { ok: true }),
+    routeExact('POST', '/api/video-queue/clear', { ok: true }),
+    routeExact('GET', '/api/queue', []),
+    routeExact('GET', '/api/video-queue', []),
+  ]);
+  win.fetch = fetch;
+
+  const delays = [];
+  win.setTimeout = (fn, ms) => { delays.push(ms); return 1; };
+
+  return {
+    win,
+    doc,
+    sendInit,
+    calls,
+    delays,
+    skipBtn: doc.getElementById('skip-btn'),
+    clearBtn: doc.getElementById('clear-queue-btn'),
+    reset() {
+      calls.length = 0;
+      delays.length = 0;
+    },
+  };
 }
 
 /**
@@ -189,7 +277,9 @@ async function loginAndPoll(win, doc, statusPayload) {
   return calls;
 }
 
-describe('broadcast repaint via the WS init consumer (app.js:592-619 -> 1249-1314)', () => {
+describe('broadcast repaint via the WS init consumer', () => {
+  // handleMessage case 'init' (app.js:592-619) driving updateBroadcastUI (1249-1314).
+
   it('idle: ARM is the only enabled control and stays visible', () => {
     const { doc, sendInit } = bootWithInit();
     sendInit(payloadFor('idle', 'visual-radio'));
@@ -245,6 +335,9 @@ describe('broadcast repaint via the WS init consumer (app.js:592-619 -> 1249-131
   it('playing: SKIP opens up, PLAY stays enabled, BROADCAST still reads BROADCAST', () => {
     const { doc, sendInit } = bootWithInit();
     sendInit(payloadFor('playing', 'visual-radio'));
+    // playDisabled: false is the second half of the PLAY divergence noted in the
+    // header — the table at app.js:1260-1265 documents this row as PLAY:off.
+    // Known doc/UX divergence, pinned as-is and tracked in the Bug Register.
     expect(transportSnapshot(doc)).toEqual({
       tagText: 'PREVIEW',
       tagClass: 'mode-tag preview',
@@ -301,7 +394,9 @@ describe('broadcast repaint via the WS init consumer (app.js:592-619 -> 1249-131
   });
 });
 
-describe('MODE_HINTS text per phase and visual mode (app.js:1216-1247, 1312-1313)', () => {
+describe('MODE_HINTS text per phase and visual mode', () => {
+  // The hint table lives at app.js:1216-1247; updateBroadcastUI renders it at 1312-1313.
+
   /** Walk every phase for one visual mode and collect the rendered hint. */
   function hintsFor(visualMode) {
     const hints = {};
@@ -358,13 +453,17 @@ describe('MODE_HINTS text per phase and visual mode (app.js:1216-1247, 1312-1313
     const { doc, sendInit } = bootWithInit();
     sendInit(payloadFor('live', 'visual-radio'));
     expect(doc.getElementById('transport-mode-hint').textContent).not.toBe('');
-    // 'browser-mic' is a real uiSubMode but has no MODE_HINTS entry.
+    // SYNTHETIC payload: 'browser-mic' is a real uiSubMode but not a server
+    // visualMode — VALID_MODES can never send it, so this reaches the
+    // defensive `hints[s.visualMode] || ''` arm that no live server produces.
     sendInit(payloadFor('live', 'browser-mic'));
     expect(doc.getElementById('transport-mode-hint').textContent).toBe('');
   });
 });
 
-describe('queue chrome and the skip/clear handler swap (app.js:1283-1309)', () => {
+describe('queue chrome and the skip/clear handler swap', () => {
+  // updateBroadcastUI's mode-aware queue block: app.js:1283-1309.
+
   it('music mode labels the queue for tracks', () => {
     const { doc, sendInit } = bootWithInit();
     sendInit(payloadFor('playing', 'visual-radio'));
@@ -391,70 +490,157 @@ describe('queue chrome and the skip/clear handler swap (app.js:1283-1309)', () =
     expect(queueChrome(doc).panelTitle).toBe('Queue');
   });
 
-  it('music mode: SKIP and CLEAR hit the track queue endpoints', () => {
-    const { win, doc, sendInit } = bootWithInit();
-    const { fetch, calls } = makeFetchStub([]);
-    win.fetch = fetch;
-    sendInit(payloadFor('playing', 'visual-radio'));
+  it('music mode: SKIP and CLEAR hit the track queue endpoints', async () => {
+    const h = bootQueueHarness();
+    h.sendInit(payloadFor('playing', 'visual-radio'));
+    h.reset();
 
-    doc.getElementById('skip-btn').click();
-    doc.getElementById('clear-queue-btn').click();
-    expect(queueCalls(calls)).toEqual(['POST /api/queue/skip', 'POST /api/queue/clear']);
+    h.skipBtn.click();
+    h.clearBtn.click();
+    await flush(20);
+    expect(queueCalls(h.calls)).toEqual(['POST /api/queue/skip', 'POST /api/queue/clear']);
   });
 
-  it('video mode: SKIP and CLEAR hit the video queue endpoints', () => {
-    const { win, doc, sendInit } = bootWithInit();
-    const { fetch, calls } = makeFetchStub([]);
-    win.fetch = fetch;
-    sendInit(payloadFor('playing', 'video-playlist'));
+  it('video mode: SKIP and CLEAR hit the video queue endpoints', async () => {
+    const h = bootQueueHarness();
+    h.sendInit(payloadFor('playing', 'video-playlist'));
+    h.reset();
 
-    doc.getElementById('skip-btn').click();
-    doc.getElementById('clear-queue-btn').click();
-    expect(queueCalls(calls)).toEqual(['POST /api/video-queue/skip', 'POST /api/video-queue/clear']);
-  });
-
-  it('switching video mode back to music restores the track queue endpoints', () => {
-    const { win, doc, sendInit } = bootWithInit();
-    const { fetch, calls } = makeFetchStub([]);
-    win.fetch = fetch;
-    const skipBtn = doc.getElementById('skip-btn');
-    const clearBtn = doc.getElementById('clear-queue-btn');
-
-    sendInit(payloadFor('playing', 'video-playlist'));
-    skipBtn.click();
-    clearBtn.click();
-    sendInit(payloadFor('playing', 'visual-radio'));
-    skipBtn.click();
-    clearBtn.click();
-
-    expect(queueCalls(calls)).toEqual([
+    h.skipBtn.click();
+    h.clearBtn.click();
+    await flush(20);
+    expect(queueCalls(h.calls)).toEqual([
       'POST /api/video-queue/skip',
       'POST /api/video-queue/clear',
-      'POST /api/queue/skip',
-      'POST /api/queue/clear',
     ]);
   });
 
-  it('the boot-bound handlers and the music-mode copies call the same endpoints', () => {
+  it('music mode SKIP defers the queue and history reloads on success', async () => {
+    const h = bootQueueHarness();
+    h.sendInit(payloadFor('playing', 'visual-radio'));
+    h.reset();
+
+    h.skipBtn.click();
+    await flush(20);
+    // The success branch (app.js:1291-1295) schedules loadQueue at 1s and
+    // FRTrackHistory.loadTrackHistory at 2s. The capture spy swallows both, so
+    // the reload requests are absent from the traffic — only the skip POST ran.
+    expect(h.delays).toEqual([1000, 2000]);
+    expect(queueTraffic(h.calls)).toEqual(['POST /api/queue/skip']);
+  });
+
+  it('music mode CLEAR reloads the queue synchronously on success', async () => {
+    const h = bootQueueHarness();
+    h.sendInit(payloadFor('playing', 'visual-radio'));
+    h.reset();
+
+    h.clearBtn.click();
+    await flush(20);
+    // The success branch (app.js:1303-1306) calls loadQueue() directly, so the
+    // reload GET lands with no timer involved.
+    expect(h.delays).toEqual([]);
+    expect(queueTraffic(h.calls)).toEqual(['POST /api/queue/clear', 'GET /api/queue']);
+  });
+
+  it('video mode SKIP defers only the video queue reload, and CLEAR reloads it directly', async () => {
+    const h = bootQueueHarness();
+    h.sendInit(payloadFor('playing', 'video-playlist'));
+    h.reset();
+
+    h.skipBtn.click();
+    await flush(20);
+    // skipVideo has no track-history reload, so it schedules one timer, not two.
+    expect(h.delays).toEqual([1000]);
+    expect(queueTraffic(h.calls)).toEqual(['POST /api/video-queue/skip']);
+
+    h.reset();
+    h.clearBtn.click();
+    await flush(20);
+    expect(h.delays).toEqual([]);
+    expect(queueTraffic(h.calls)).toEqual([
+      'POST /api/video-queue/clear',
+      'GET /api/video-queue',
+    ]);
+  });
+
+  it('a failed skip or clear leaves both the reloads and the timers alone', async () => {
+    // The reload work sits behind `if (data.ok)`, so a rejected action must
+    // produce the POST and nothing else.
+    const h = bootQueueHarness([
+      routeExact('POST', '/api/queue/skip', { ok: false }),
+      routeExact('POST', '/api/queue/clear', { ok: false }),
+    ]);
+    h.sendInit(payloadFor('playing', 'visual-radio'));
+    h.reset();
+
+    h.skipBtn.click();
+    h.clearBtn.click();
+    await flush(20);
+    expect(h.delays).toEqual([]);
+    expect(queueTraffic(h.calls)).toEqual(['POST /api/queue/skip', 'POST /api/queue/clear']);
+  });
+
+  it('switching video mode back to music restores the track queue endpoints and chrome', async () => {
+    const h = bootQueueHarness();
+
+    h.sendInit(payloadFor('playing', 'video-playlist'));
+    h.reset();
+    h.skipBtn.click();
+    h.clearBtn.click();
+    await flush(20);
+    const videoTraffic = queueCalls(h.calls);
+    expect(queueChrome(h.doc)).toEqual({
+      panelTitle: 'Video Queue',
+      selectorTitle: 'Add Video',
+      searchPlaceholder: 'Search videos...',
+    });
+
+    h.reset();
+    h.sendInit(payloadFor('playing', 'visual-radio'));
+    h.skipBtn.click();
+    h.clearBtn.click();
+    await flush(20);
+
+    expect(videoTraffic).toEqual(['POST /api/video-queue/skip', 'POST /api/video-queue/clear']);
+    expect(queueCalls(h.calls)).toEqual(['POST /api/queue/skip', 'POST /api/queue/clear']);
+    // The round trip is what pins the music-mode else arms (app.js:1284-1286):
+    // on a fresh boot these three strings equal the markup defaults, so only a
+    // repaint that has already written the video labels can prove they are
+    // written back.
+    expect(queueChrome(h.doc)).toEqual({
+      panelTitle: 'Queue',
+      selectorTitle: 'Add to Queue',
+      searchPlaceholder: 'Search tracks...',
+    });
+  });
+
+  it('the boot-bound handlers and the music-mode copies behave identically', async () => {
     // updateBroadcastUI's non-video branch re-declares handler bodies already
-    // bound at boot (app.js:837-860). Both copies must stay interchangeable.
-    const { win, doc, sendInit } = bootWithInit();
-    const { fetch, calls } = makeFetchStub([]);
-    win.fetch = fetch;
-    const skipBtn = doc.getElementById('skip-btn');
-    const clearBtn = doc.getElementById('clear-queue-btn');
+    // bound at boot (app.js:837-860). Both copies must stay interchangeable
+    // down to the deferred reload delays, not just the endpoint they POST to.
+    const h = bootQueueHarness();
 
-    skipBtn.click();
-    clearBtn.click();
-    const bootEndpoints = queueCalls(calls);
-    calls.length = 0;
+    h.skipBtn.click();
+    h.clearBtn.click();
+    await flush(20);
+    const bootTraffic = queueTraffic(h.calls);
+    const bootDelays = h.delays.slice();
 
-    sendInit(payloadFor('playing', 'visual-radio'));
-    skipBtn.click();
-    clearBtn.click();
+    h.reset();
+    h.sendInit(payloadFor('playing', 'visual-radio'));
+    h.reset();
+    h.skipBtn.click();
+    h.clearBtn.click();
+    await flush(20);
 
-    expect(bootEndpoints).toEqual(['POST /api/queue/skip', 'POST /api/queue/clear']);
-    expect(queueCalls(calls)).toEqual(bootEndpoints);
+    expect(bootTraffic).toEqual([
+      'POST /api/queue/skip',
+      'POST /api/queue/clear',
+      'GET /api/queue',
+    ]);
+    expect(bootDelays).toEqual([1000, 2000]);
+    expect(queueTraffic(h.calls)).toEqual(bootTraffic);
+    expect(h.delays).toEqual(bootDelays);
   });
 
   it('music mode installs a FRESH handler pair on every repaint', () => {
@@ -488,7 +674,9 @@ describe('queue chrome and the skip/clear handler swap (app.js:1283-1309)', () =
   });
 });
 
-describe('deriveUiMode mapping surfaced through the repaint (utils.js:153-158)', () => {
+describe('deriveUiMode mapping and the mode-card class state it drives', () => {
+  // deriveUiMode (app.js:1380-1384 -> utils.js:153-158) feeding updateModeUI (app.js:1387-1433).
+
   it("visualMode 'visual-radio' paints the radio card and its Visual Radio pill", () => {
     const { win, doc, sendInit } = bootWithInit();
     sendInit(payloadFor('idle', 'visual-radio'));
@@ -546,6 +734,9 @@ describe('deriveUiMode mapping surfaced through the repaint (utils.js:153-158)',
 
   it('any other visualMode falls through to radio with the raw value as sub-mode', () => {
     const { win, doc, sendInit } = bootWithInit();
+    // SYNTHETIC payload, as in the MODE_HINTS fallback pin: 'browser-mic' is a
+    // real uiSubMode but never a server visualMode, so this exercises the
+    // defensive fallback arm rather than a reachable production state.
     sendInit(payloadFor('idle', 'browser-mic'));
     expect(modeClasses(doc)).toEqual({
       layout: ['mode-radio', 'studio-layout', 'submode-browser-mic'],
@@ -558,7 +749,8 @@ describe('deriveUiMode mapping surfaced through the repaint (utils.js:153-158)',
     expect([state.uiMode, state.uiSubMode]).toEqual(['radio', 'browser-mic']);
   });
 
-  it('going on air locks every mode card except the active one (app.js:1418-1421)', () => {
+  // The lock rule is `locked && !card.classList.contains('active')` at app.js:1418-1421.
+  it('going on air locks every mode card except the active one', () => {
     const { doc, sendInit } = bootWithInit();
     // Radio card active and on air: the active card is exempt from the lock.
     sendInit(payloadFor('live', 'visual-radio'));
@@ -587,10 +779,11 @@ describe('deriveUiMode mapping surfaced through the repaint (utils.js:153-158)',
     });
   });
 
-  it('the Live Mode Bar write stays inert while its element is absent (app.js:1425)', () => {
-    // Takeover is the mode that would reveal the bar, but Phase 1 comments the
-    // element out of index.html, so updateModeUI's null guard swallows the write
-    // and nothing throws. Pinned as-is; a Phase 3 markup change should fail here.
+  it('the Live Mode Bar write stays inert while its element is absent', () => {
+    // The guarded write is app.js:1425. Takeover is the mode that would reveal
+    // the bar, but Phase 1 comments the element out of index.html, so the null
+    // guard swallows the write and nothing throws. Pinned as-is; a Phase 3
+    // markup change should fail here.
     const { doc, sendInit } = bootWithInit();
     expect(doc.getElementById('live-mode-bar')).toBe(null);
     sendInit(payloadFor('live', 'live'));
@@ -607,7 +800,9 @@ describe('deriveUiMode mapping surfaced through the repaint (utils.js:153-158)',
   });
 });
 
-describe('broadcast repaint via the /api/status poll consumer (app.js:1919-1948)', () => {
+describe('broadcast repaint via the /api/status poll consumer', () => {
+  // loadBroadcastState (app.js:1919-1948), reached through the real login flow.
+
   it('logging in repaints the transport row from the polled state', async () => {
     const { win, doc } = bootWithInit();
     const calls = await loginAndPoll(win, doc, payloadFor('armed', 'video-playlist'));
