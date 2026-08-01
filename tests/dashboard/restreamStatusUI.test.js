@@ -251,10 +251,25 @@ describe('restream-status UI characterization (window.FRRestreamStatus)', () => 
       expect(twSpans[2].textContent).toBe('OFF');
     });
 
-    it('AS-IS: accepts a bare object map (no .platforms wrapper) via data.platforms || data', async () => {
+    it('reads ONLY the server shape: a bare object map renders nothing', async () => {
+      // CHANGED IN T14-C3. `data.platforms || data` let this reader accept a
+      // bare map as well, so it and platforms.js disagreed about the response
+      // shape of the same endpoint and neither matched the server, which always
+      // answers { platforms, maxPlatforms }.
       const { win, doc, rs } = boot();
       withFetch(win, [
         routeExact('GET', '/api/stream-keys', { YouTube: { enabled: true } }),
+      ]);
+      rs.loadRestreamStatusFallback();
+      await flush();
+
+      expect(doc.getElementById('restream-status-list').querySelectorAll('.restream-status-item').length).toBe(0);
+    });
+
+    it('renders the server shape', async () => {
+      const { win, doc, rs } = boot();
+      withFetch(win, [
+        routeExact('GET', '/api/stream-keys', { platforms: { YouTube: { enabled: true } }, maxPlatforms: 3 }),
       ]);
       rs.loadRestreamStatusFallback();
       await flush();

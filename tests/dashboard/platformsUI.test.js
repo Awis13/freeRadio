@@ -127,13 +127,36 @@ describe('platforms / stream-keys UI characterization (window.FRPlatforms)', () 
       expect(hook.getMaxPlatforms()).toBe(3);
     });
 
-    it('AS-IS: response missing `platforms` -> Object.keys throws -> .catch log() (no #error-banner)', async () => {
+    it('a response missing `platforms` is reported and leaves an empty list', async () => {
+      // CHANGED IN T14-C3. Object.keys(undefined) threw inside the .then, so a
+      // body without `platforms` — which authFetch hands over happily on a 500
+      // — took the whole load down into the catch with only a log line, and the
+      // operator saw nothing at all. It is a checked failure now.
       const { win, doc, hook } = boot();
       withFetch(win, [routeExact('GET', '/api/stream-keys', { maxPlatforms: 4 })]);
       hook.loadPlatforms();
       await flush();
+
       const banner = doc.getElementById('error-banner');
-      expect(banner.classList.contains('visible')).toBe(false);
+      expect(banner.classList.contains('visible')).toBe(true);
+      expect(banner.textContent).toContain('Failed to load platforms');
+      // The shape is CHECKED, not discovered by letting Object.keys throw: the
+      // message names the problem instead of surfacing a TypeError about
+      // converting undefined to an object.
+      expect(banner.textContent).toContain('unexpected response');
+      expect(banner.textContent).not.toContain('TypeError');
+      // Empty state rather than a half-rendered list.
+      expect(doc.getElementById('platform-list').querySelectorAll('.platform-item').length).toBe(0);
+      expect(hook.getCurrentPlatformNames()).toEqual([]);
+    });
+
+    it('a null platforms value is treated the same way', async () => {
+      const { win, doc, hook } = boot();
+      withFetch(win, [routeExact('GET', '/api/stream-keys', { platforms: null, maxPlatforms: 4 })]);
+      hook.loadPlatforms();
+      await flush();
+      expect(doc.getElementById('error-banner').classList.contains('visible')).toBe(true);
+      expect(hook.getCurrentPlatformNames()).toEqual([]);
     });
   });
 
