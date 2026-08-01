@@ -55,6 +55,11 @@
 })(function () {
   'use strict';
 
+  // Injected host services (set by init). These defaults are placeholders for a
+  // correctly-initialised host, NOT a safe pre-init mode: getBroadcastState
+  // returning null makes updateAudio and updateTrackProgress throw, exactly as
+  // the app.js closure would have before broadcastState was assigned. init() is
+  // called during boot, before any consumer can reach these.
   var deps = {
     log: function () {},
     getBroadcastState: function () { return null; },
@@ -260,7 +265,6 @@
     updateIcecast: updateIcecast,
     updateFfmpeg: updateFfmpeg,
     getTrackStartedAt: getTrackStartedAt,
-    getLastAudioMsg: function () { return lastAudioMsg; },
     resetTrackState: resetTrackState,
     setMixDuration: setMixDuration,
     getStartTime: function () { return startTime; },

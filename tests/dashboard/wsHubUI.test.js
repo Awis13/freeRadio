@@ -401,6 +401,9 @@ describe('mixing mode pills', () => {
 
     expect(activeMixPill(doc)).toEqual(['cut']);
     expect(calls).toEqual([]);
+    // The pill class moves BEFORE the rest of the case body runs, so without
+    // this the pin stays green even when the frame throws half way through.
+    expectFrameSurvived(doc);
   });
 
   it('a mixing-config frame with no mode is ignored', () => {
@@ -409,6 +412,7 @@ describe('mixing mode pills', () => {
     send({ type: 'mixing-config', data: {} });
     send({ type: 'mixing-config', data: null });
     expect(activeMixPill(doc)).toEqual(['cut']);
+    expectFrameSurvived(doc);
   });
 });
 
