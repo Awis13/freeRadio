@@ -36,9 +36,33 @@ afterEach(() => restoreSpies());
 // ─── POST /auth/verify ────────────────────────────────────────
 
 describe('POST /auth/verify', () => {
-  it('returns ok when no DASHBOARD_TOKEN set', () => {
+  it('DENIES when no DASHBOARD_TOKEN is set and auth was not explicitly disabled', () => {
+    // CHANGED IN T11-C2: an unset token used to mean "everyone is welcome".
+    // A missing environment variable is not consent, so the surface refuses
+    // until the operator picks a posture.
     const orig = process.env.DASHBOARD_TOKEN;
+    const origDisabled = process.env.AUTH_DISABLED;
     process.env.DASHBOARD_TOKEN = '';
+    delete process.env.AUTH_DISABLED;
+
+    const router = createStatusRouter(baseState);
+    const handler = getRouteHandler(router, 'post', '/auth/verify');
+    const res = mockRes();
+    handler({ body: {} }, res);
+
+    expect(res.statusCode).toBe(401);
+    expect(res.body).toEqual({ error: 'Auth is not configured' });
+
+    process.env.DASHBOARD_TOKEN = orig;
+    if (origDisabled === undefined) delete process.env.AUTH_DISABLED;
+    else process.env.AUTH_DISABLED = origDisabled;
+  });
+
+  it('returns ok with no token when AUTH_DISABLED=true', () => {
+    const orig = process.env.DASHBOARD_TOKEN;
+    const origDisabled = process.env.AUTH_DISABLED;
+    process.env.DASHBOARD_TOKEN = '';
+    process.env.AUTH_DISABLED = 'true';
 
     const router = createStatusRouter(baseState);
     const handler = getRouteHandler(router, 'post', '/auth/verify');
@@ -46,7 +70,10 @@ describe('POST /auth/verify', () => {
     handler({ body: {} }, res);
 
     expect(res.body).toEqual({ ok: true });
+
     process.env.DASHBOARD_TOKEN = orig;
+    if (origDisabled === undefined) delete process.env.AUTH_DISABLED;
+    else process.env.AUTH_DISABLED = origDisabled;
   });
 
   it('returns ok for correct token', () => {

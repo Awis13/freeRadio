@@ -38,6 +38,7 @@ const createLiveRouter = require('./routes/live');
 const ssoHandler = require('./routes/sso');
 const tierLimits = require('./lib/tierLimits');
 const paths = require('./lib/paths');
+const authGate = require('./lib/authGate');
 
 // --- Config ---
 const PORT = process.env.PORT || 9090;
@@ -176,15 +177,22 @@ app.get('/api/tier', (req, res) => {
 });
 
 // --- Auth middleware ---
+// Say which posture this process is in before serving anything.
+authGate.logStartupPosture();
+
 const PUBLIC_PATHS = [
   '/api/status', '/api/health', '/api/audio-stream', '/api/rtmp-health',
   '/api/live/on_publish', '/api/live/on_done', '/api/auth/verify', '/api/tier'
 ];
 
 app.use('/api/', (req, res, next) => {
-  if (!DASHBOARD_TOKEN) return next();
+  if (authGate.isOpen()) return next();
   const fullPath = req.baseUrl + req.path;
   if (PUBLIC_PATHS.some(p => fullPath === p || fullPath.startsWith(p + '/'))) return next();
+  // No token configured and no explicit opt-out: deny rather than let everyone in.
+  if (authGate.isClosed()) {
+    return res.status(401).json({ error: 'Auth is not configured' });
+  }
   const auth = req.headers.authorization;
   if (auth === 'Bearer ' + DASHBOARD_TOKEN) return next();
   res.status(401).json({ error: 'Unauthorized' });

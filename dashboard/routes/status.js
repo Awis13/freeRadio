@@ -1,6 +1,7 @@
 const express = require('express');
 const fs = require('fs');
 const path = require('path');
+const authGate = require('../lib/authGate');
 const { spawn } = require('child_process');
 const streamControl = require('../lib/streamControl');
 const streamKeys = require('../lib/streamKeys');
@@ -20,13 +21,12 @@ function createStatusRouter(state) {
 
   // --- Auth verify ---
   router.post('/auth/verify', (req, res) => {
-    if (!DASHBOARD_TOKEN) return res.json({ ok: true });
     const { token } = req.body || {};
-    if (token === DASHBOARD_TOKEN) {
-      res.json({ ok: true });
-    } else {
-      res.status(401).json({ error: 'Invalid token' });
+    if (authGate.accepts(token)) return res.json({ ok: true });
+    if (authGate.isClosed()) {
+      return res.status(401).json({ error: 'Auth is not configured' });
     }
+    res.status(401).json({ error: 'Invalid token' });
   });
 
   // --- Full status ---

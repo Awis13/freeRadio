@@ -13,6 +13,7 @@
 
 const crypto = require('crypto');
 const tierLimits = require('../lib/tierLimits');
+const authGate = require('../lib/authGate');
 
 const SSO_MAX_AGE_SECONDS = 60;
 
@@ -127,9 +128,12 @@ function verifySsoToken(tokenParam, dashboardToken) {
 function ssoHandler(req, res) {
   const DASHBOARD_TOKEN = process.env.DASHBOARD_TOKEN || '';
 
-  if (!DASHBOARD_TOKEN) {
-    // No token configured — auth disabled, just redirect
+  if (authGate.isOpen()) {
+    // Auth explicitly disabled — nothing to verify, just redirect
     return res.redirect('/');
+  }
+  if (authGate.isClosed()) {
+    return res.status(401).send(ssoErrorPage('Auth is not configured'));
   }
 
   const result = verifySsoToken(req.query.token, DASHBOARD_TOKEN);

@@ -157,12 +157,29 @@ describe('verifySsoToken', () => {
 // ─── ssoHandler (integration) ────────────────────────────────
 
 describe('GET /auth/sso handler', () => {
-  it('redirects to / when DASHBOARD_TOKEN is not set', () => {
+  it('DENIES when DASHBOARD_TOKEN is not set and auth was not explicitly disabled', () => {
+    // CHANGED IN T11-C2: this used to redirect straight in, so an instance
+    // that simply forgot its token handed out an authenticated session.
     process.env.DASHBOARD_TOKEN = '';
+    delete process.env.AUTH_DISABLED;
     const req = { query: {} };
     const res = mockRes();
     ssoHandler(req, res);
-    expect(res.redirectUrl).toBe('/');
+    expect(res.statusCode).toBe(401);
+    expect(res.redirectUrl).not.toBe('/');   // did not hand out a session
+  });
+
+  it('redirects to / with no token when AUTH_DISABLED=true', () => {
+    process.env.DASHBOARD_TOKEN = '';
+    process.env.AUTH_DISABLED = 'true';
+    try {
+      const req = { query: {} };
+      const res = mockRes();
+      ssoHandler(req, res);
+      expect(res.redirectUrl).toBe('/');
+    } finally {
+      delete process.env.AUTH_DISABLED;
+    }
   });
 
   it('returns 400 when token param is missing', () => {

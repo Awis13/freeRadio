@@ -261,15 +261,47 @@ describe('auth gate (DASHBOARD_TOKEN set)', () => {
 // ─── Auth bypass with empty DASHBOARD_TOKEN ─────────────────────────────────
 
 describe('auth gate (DASHBOARD_TOKEN empty)', () => {
-  it('CHARACTERIZATION: empty token disables auth entirely — protected routes pass without a token', async () => {
-    // This pins the current, intentional behavior: when DASHBOARD_TOKEN is not
-    // configured the gate is a full bypass (`if (!DASHBOARD_TOKEN) return next()`).
+  it('empty token DENIES protected routes when auth was not explicitly disabled', async () => {
+    // CHANGED IN T11-C2. This used to be a full bypass — no token meant the
+    // gate returned next() for everything, so a deployment that forgot to set
+    // DASHBOARD_TOKEN served its whole API to anyone who could reach it.
+    delete process.env.AUTH_DISABLED;
     const { app } = loadServer('');
     const { client, close } = await serverAgent(app);
     try {
       const res = await client.get('/api/protected-probe');
-      expect(res.status).not.toBe(401);
-      expect(res.status).toBe(404); // fell through all routers, gate never fired
+      expect(res.status).toBe(401);
+      expect(res.body).toEqual({ error: 'Auth is not configured' });
+    } finally {
+      await close();
+    }
+  });
+
+  it('AUTH_DISABLED=true restores the open behaviour, deliberately', async () => {
+    process.env.AUTH_DISABLED = 'true';
+    try {
+      const { app } = loadServer('');
+      const { client, close } = await serverAgent(app);
+      try {
+        const res = await client.get('/api/protected-probe');
+        expect(res.status).not.toBe(401);
+        expect(res.status).toBe(404); // fell through all routers, gate let it by
+      } finally {
+        await close();
+      }
+    } finally {
+      delete process.env.AUTH_DISABLED;
+    }
+  });
+
+  it('public paths stay reachable even when auth is unconfigured', async () => {
+    // A closed gate must not make the health probe unreachable — an
+    // orchestrator has to be able to see the container is alive.
+    delete process.env.AUTH_DISABLED;
+    const { app } = loadServer('');
+    const { client, close } = await serverAgent(app);
+    try {
+      expect((await client.get('/api/health')).status).toBe(200);
     } finally {
       await close();
     }
