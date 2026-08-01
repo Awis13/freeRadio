@@ -195,6 +195,45 @@
       .replace(/'/g, '&#039;');
   }
 
+  /**
+   * Merge injected dependencies into a module's defaults, loudly.
+   *
+   * The hand-rolled loop this replaces iterated the TARGET's keys and guarded
+   * with hasOwnProperty, which loses information in both directions: a key the
+   * module does not declare is dropped in silence (a typo'd or renamed
+   * dependency simply never arrives), and a declared key injected as an
+   * explicit `undefined` overwrites a working default with nothing. Both fail
+   * later, somewhere else, as "x is not a function".
+   *
+   * So this iterates INJECTED instead, and complains rather than guessing:
+   * an unknown key is reported and ignored, an undefined value is reported and
+   * the default is KEPT — a module left on its inert default still boots and
+   * still says what went wrong, which is strictly better than a null-reference
+   * further down.
+   *
+   * @param {Object} deps — the module's defaults, mutated in place
+   * @param {Object} injected — what the caller passed to init()
+   * @param {string} [name] — module name for the warnings, e.g. 'FRQueue'
+   * @returns {Object} deps
+   */
+  function mergeDeps(deps, injected, name) {
+    if (!injected || typeof injected !== 'object') return deps;
+    var label = name ? name + '.init' : 'mergeDeps';
+    for (var k in injected) {
+      if (!Object.prototype.hasOwnProperty.call(injected, k)) continue;
+      if (!Object.prototype.hasOwnProperty.call(deps, k)) {
+        console.warn('[' + label + '] unknown dependency "' + k + '" ignored');
+        continue;
+      }
+      if (typeof injected[k] === 'undefined') {
+        console.warn('[' + label + '] dependency "' + k + '" injected as undefined; keeping the default');
+        continue;
+      }
+      deps[k] = injected[k];
+    }
+    return deps;
+  }
+
   return {
     pad: pad,
     fmtSize: fmtSize,
@@ -207,5 +246,6 @@
     getBroadcastPhase: getBroadcastPhase,
     uniquePlatformName: uniquePlatformName,
     deriveUiMode: deriveUiMode,
+    mergeDeps: mergeDeps,
   };
 });

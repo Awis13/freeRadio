@@ -233,7 +233,8 @@ function installStubs(win) {
 /**
  * Boot one jsdom window with the real index.html, every manifest module and
  * app.js evaluated in index.html order, with __APP_TEST__ = true. Returns
- * { win, doc, loadError, close }.
+ * { win, doc, loadError, warnings, close } — `warnings` collects the page's
+ * own console.warn output, which is otherwise invisible from the node side.
  *
  * loadError is null on success; if app.js threw during its synchronous load it
  * is captured (so the load-smoke can still assert against it instead of the
@@ -277,6 +278,12 @@ export function bootWindow() {
   const virtualConsole = new VirtualConsole();
   // Swallow page console noise; we only care about thrown errors.
   virtualConsole.on('error', () => {});
+
+  // Page-side console.warn calls, captured for assertions. They happen INSIDE
+  // the jsdom realm, so a console.warn replaced on the node side never sees
+  // them — the same realm trap as the timers.
+  const warnings = [];
+  virtualConsole.on('warn', (...args) => warnings.push(args.map(String).join(' ')));
 
   const dom = new JSDOM(indexHtml, {
     runScripts: 'outside-only',
@@ -324,7 +331,7 @@ export function bootWindow() {
     win.close();
   }
 
-  const handle = { win, doc: win.document, loadError, close };
+  const handle = { win, doc: win.document, loadError, warnings, close };
   openWindows.add(handle);
   return handle;
 }

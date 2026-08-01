@@ -282,11 +282,7 @@
 
   function init(injected) {
     injected = injected || {};
-    for (var k in deps) {
-      if (Object.prototype.hasOwnProperty.call(injected, k)) {
-        deps[k] = injected[k];
-      }
-    }
+    window.FRUtils.mergeDeps(deps, injected, 'FRQueue');
     resolveDom();
     bindBootHandlers();
   }
