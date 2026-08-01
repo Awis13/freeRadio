@@ -114,6 +114,9 @@ cd freeRadio
 cp .env.example .env
 # Edit .env with your Icecast passwords and dashboard token
 
+# TLS certificate for the proxy (certs/ is gitignored, so a fresh clone has none)
+scripts/bootstrap-certs.sh
+
 # Add music files
 cp your-tracks/*.mp3 content/music/
 
@@ -123,17 +126,15 @@ docker compose up -d
 # Dashboard available at http://localhost (or :443 with TLS certs)
 ```
 
-> **Known limitation:** a fresh clone cannot start the full stack. Three
-> directories the compose files mount are missing from the repository:
-> `./scripts` and `./configs` were removed during a legacy cleanup, and `./certs`
-> is intentionally gitignored. That leaves five of the seven services unable to
-> start — `audio-analyzer` and `streamer` (both mount `./scripts`), `dj` and
-> `rtmp-ingest` (both mount `./configs`), and `proxy` (needs a TLS keypair in
-> `./certs`). Only `icecast` and `dashboard` come up.
->
-> Restoring them is tracked as follow-up work. Dashboard development is
-> unaffected: the API, the front end and the full test suite all run locally
-> from a clean clone with `npm ci && npm test`.
+> **About the certificate:** `scripts/bootstrap-certs.sh` writes a self-signed
+> pair to `./certs`, which is what `nginx-proxy/nginx.conf` expects at
+> `/certs/tls.crt` and `/certs/tls.key`. It never overwrites an existing pair —
+> drop a real certificate in there instead and the script leaves it alone (it
+> will warn if what it finds has expired). Set `CERT_CN` for a hostname other
+> than `localhost`, or `FORCE=1` to replace the current pair.
+
+> **Dashboard development needs none of this:** the API, the front end and the
+> full test suite run from a clean clone with `npm ci && npm test`.
 
 ## Configuration
 
