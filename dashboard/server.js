@@ -37,12 +37,13 @@ const createVideoQueueRouter = require('./routes/videoQueue');
 const createLiveRouter = require('./routes/live');
 const ssoHandler = require('./routes/sso');
 const tierLimits = require('./lib/tierLimits');
+const paths = require('./lib/paths');
 
 // --- Config ---
 const PORT = process.env.PORT || 9090;
-const HLS_DIR = process.env.HLS_DIR || '/hls';
-const MUSIC_DIR = process.env.MUSIC_DIR || '/music';
-const VISUALS_DIR = process.env.VISUALS_DIR || '/visuals';
+const HLS_DIR = paths.HLS_DIR;
+const MUSIC_DIR = paths.MUSIC_DIR;
+const VISUALS_DIR = paths.VISUALS_DIR;
 const FFMPEG_PROGRESS_FILE = process.env.FFMPEG_PROGRESS_FILE || '';
 const OUTPUT_MODE = process.env.OUTPUT_MODE || 'hls';
 const DASHBOARD_TOKEN = process.env.DASHBOARD_TOKEN || '';
@@ -142,7 +143,7 @@ app.use(express.static(path.join(__dirname, 'public'), {
   }
 }));
 
-app.get('/js/hls.min.js', (req, res) => { res.sendFile('/app/hls.min.js'); });
+app.get('/js/hls.min.js', (req, res) => { res.sendFile(paths.HLS_JS_PATH); });
 
 app.use('/hls', express.static(HLS_DIR, {
   setHeaders(res) {
@@ -208,7 +209,7 @@ app.use('/api/dj', createDjRouter(MUSIC_DIR));
 app.use('/api/stream-keys', createStreamKeysRouter());
 app.use('/api', createSettingsRouter());
 app.use('/api/live', createLiveRouter());
-app.use('/overlay-assets', express.static('/shared/overlay_assets'));
+app.use('/overlay-assets', express.static(paths.shared('overlay_assets')));
 
 // --- Start ---
 const restreamCfg = restreamSettings.getSettings();

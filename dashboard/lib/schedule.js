@@ -5,15 +5,16 @@ const liq = require('./liqClient');
 const { resolvePlaylist, getPlaylist } = require('./playlist');
 const { resolveVideoPlaylist, getVideoPlaylist } = require('./videoPlaylist');
 const { appendEntry } = require('./history');
+const paths = require('./paths');
 
-const SCHEDULE_FILE = '/shared/schedule.json';
-const MUSIC_DIR = '/music';
-const PROCESSED_DIR = '/music/processed';
+const SCHEDULE_FILE = paths.shared('schedule.json');
+const MUSIC_DIR = paths.MUSIC_DIR;
+const PROCESSED_DIR = paths.PROCESSED_DIR;
 
 let currentSlotId = null;
 let currentPlaylistId = null;
 let getBpmMapFn = () => ({});
-let visualsDir = '/visuals';
+let visualsDir = paths.VISUALS_DIR;
 let broadcastFn = null;
 
 // Convert filename to processed .wav path (same as queue.js)
@@ -316,7 +317,7 @@ async function executeScheduleTick() {
       try {
         const resolved = resolveVideoPlaylist(videoPlaylistId, visualsDir);
         if (resolved.length > 0) {
-          const ACTIVE_FILE = '/shared/active_visual_profile.json';
+          const ACTIVE_FILE = paths.shared('active_visual_profile.json');
           const payload = JSON.stringify({
             id: videoPlaylistId,
             name: 'schedule-' + slotId,
@@ -331,7 +332,7 @@ async function executeScheduleTick() {
       }
     } else {
       // Deactivate video playlist — streamer falls back to all processed visuals
-      const ACTIVE_FILE = "/shared/active_visual_profile.json";
+      const ACTIVE_FILE = paths.shared('active_visual_profile.json');
       try {
         if (fs.existsSync(ACTIVE_FILE)) {
           fs.unlinkSync(ACTIVE_FILE);

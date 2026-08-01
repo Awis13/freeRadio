@@ -1,7 +1,8 @@
 const fs = require('fs');
 const path = require('path');
+const paths = require('./paths');
 
-const SETTINGS_FILE = '/shared/restream_settings.json';
+const SETTINGS_FILE = paths.shared('restream_settings.json');
 
 function normalizeAutoStart(value) {
   return value === true || value === 'true' || value === 1 || value === '1';

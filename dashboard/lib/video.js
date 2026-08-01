@@ -1,7 +1,8 @@
 const fs = require('fs');
 const path = require('path');
+const paths = require('./paths');
 
-const VIDEO_FILE = '/shared/current_video.txt';
+const VIDEO_FILE = paths.shared('current_video.txt');
 const POLL_INTERVAL = 2000;
 
 function createVideoPoller(onUpdate) {

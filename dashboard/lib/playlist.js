@@ -3,8 +3,9 @@ const path = require('path');
 const express = require('express');
 const multer = require('multer');
 const { loadMeta } = require('./trackMeta');
+const paths = require('./paths');
 
-const PLAYLIST_FILE = '/shared/playlists.json';
+const PLAYLIST_FILE = paths.shared('playlists.json');
 
 function loadPlaylists() {
   try {

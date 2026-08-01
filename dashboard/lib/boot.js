@@ -6,6 +6,7 @@ const s3 = require('./s3');
 const cacheManager = require('./cacheManager');
 const streamControl = require('./streamControl');
 const syncWatcher = require('./syncWatcher');
+const paths = require('./paths');
 
 let _bootAborted = false;
 
@@ -16,7 +17,7 @@ function probeStatus() {
   const agent = new http.Agent({ keepAlive: false, maxSockets: 1 });
   return new Promise((resolve, reject) => {
     const req = http.get({
-      hostname: 'dj', port: 7000, path: '/playback/status',
+      hostname: paths.DJ_HOST, port: paths.DJ_PORT, path: '/playback/status',
       timeout: 3000, agent
     }, (res) => {
       let d = '';

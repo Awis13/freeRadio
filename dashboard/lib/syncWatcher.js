@@ -2,10 +2,11 @@ const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
 const s3 = require('./s3');
+const paths = require('./paths');
 
-const MUSIC_DIR = process.env.MUSIC_DIR || '/music';
-const VISUALS_DIR = process.env.VISUALS_DIR || '/visuals';
-const SHARED_DIR = '/shared';
+const MUSIC_DIR = paths.MUSIC_DIR;
+const VISUALS_DIR = paths.VISUALS_DIR;
+const SHARED_DIR = paths.SHARED_DIR;
 
 // 17 config files to back up to S3
 const CONFIG_FILES = [

@@ -1,7 +1,8 @@
 const fs = require('fs');
 const tierLimits = require('./tierLimits');
+const paths = require('./paths');
 
-const QUALITY_FILE = '/shared/stream_quality.json';
+const QUALITY_FILE = paths.shared('stream_quality.json');
 
 const PRESETS = {
   godmode: {

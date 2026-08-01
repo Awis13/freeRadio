@@ -1,8 +1,9 @@
 const fs = require('fs');
 const crypto = require('crypto');
 const tierLimits = require('./tierLimits');
+const paths = require('./paths');
 
-const KEYS_FILE = '/shared/stream_keys.enc';
+const KEYS_FILE = paths.shared('stream_keys.enc');
 const ALGORITHM = 'aes-256-gcm';
 const AAD = Buffer.from('stream-keys', 'utf8');
 

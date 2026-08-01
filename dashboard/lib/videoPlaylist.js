@@ -2,10 +2,11 @@ const fs = require('fs');
 const path = require('path');
 const express = require('express');
 const { loadMeta } = require('./trackMeta');
+const paths = require('./paths');
 
-const PLAYLIST_FILE = '/shared/video_playlists.json';
-const ACTIVE_FILE = '/shared/active_visual_profile.json';
-const QUEUE_FILE = '/shared/video_queue.txt';
+const PLAYLIST_FILE = paths.shared('video_playlists.json');
+const ACTIVE_FILE = paths.shared('active_visual_profile.json');
+const QUEUE_FILE = paths.shared('video_queue.txt');
 const VIDEO_EXTENSIONS = /\.(mp4|mov|mkv)$/i;
 
 function loadVideoPlaylists() {
