@@ -3,10 +3,11 @@
  *
  * jsdom LOAD-SMOKE for dashboard/public/app.js.
  *
- * app.js is a ~5900-LOC browser IIFE that runs heavy init immediately on load
- * (WebSocket connect, fetch, setInterval, canvas, HLS). Its functions are
- * trapped in the IIFE closure and cannot be called from outside. So instead of
- * unit-testing them, this smoke proves two things:
+ * app.js is a ~580-LOC browser IIFE of boot substrate (the domain code now lives
+ * in the sibling FR* modules index.html lists) that runs heavy init immediately
+ * on load (WebSocket connect, fetch, setInterval, canvas, HLS). What is left in
+ * the IIFE is trapped in its closure and cannot be called from outside. So
+ * instead of unit-testing it, this smoke proves two things:
  *
  *   1. app.js evaluates top-to-bottom in a real DOM WITHOUT throwing — which
  *      only happens if window.FRUtils is present and the `var pad = FRU.pad`
@@ -18,172 +19,33 @@
  *      objects exposed by window.FRUtils — asserted via the guarded
  *      window.__APP_TEST__ export (identity, ===), proving the cutover.
  *
- * The real shipped utils.js + app.js are loaded (the same files the browser
- * ships) into one jsdom window, after stubbing the browser globals app.js
- * touches during init. The DOM is the real dashboard/public/index.html so every
- * getElementById() app.js runs on boot finds its element.
+ * The window comes from the shared harness (appBoot.bootWindow): the real
+ * shipped modules + app.js, in the order index.html itself lists them, with the
+ * browser globals app.js touches during init stubbed. The DOM is the real
+ * dashboard/public/index.html so every getElementById() app.js runs on boot
+ * finds its element. The module list is NOT restated here — appBoot derives it
+ * from index.html, and moduleManifest exposes it for the load-contract pins.
  */
 
 import { describe, it, expect, beforeAll } from 'vitest';
-import { readFileSync } from 'node:fs';
-import { fileURLToPath } from 'node:url';
-import path from 'node:path';
-import { JSDOM, VirtualConsole } from 'jsdom';
-
-const here = path.dirname(fileURLToPath(import.meta.url));
-const publicDir = path.resolve(here, '../../dashboard/public');
-const indexHtml = readFileSync(path.join(publicDir, 'index.html'), 'utf8');
-const utilsSrc = readFileSync(path.join(publicDir, 'utils.js'), 'utf8');
-const authSrc = readFileSync(path.join(publicDir, 'auth.js'), 'utf8');
-const playlistsSrc = readFileSync(path.join(publicDir, 'playlists.js'), 'utf8');
-const analyticsSrc = readFileSync(path.join(publicDir, 'analytics.js'), 'utf8');
-const fileMgmtSrc = readFileSync(path.join(publicDir, 'filemgmt.js'), 'utf8');
-const visualProfilesSrc = readFileSync(path.join(publicDir, 'visualprofiles.js'), 'utf8');
-const scheduleSrc = readFileSync(path.join(publicDir, 'schedule.js'), 'utf8');
-const videoPlaylistsSrc = readFileSync(path.join(publicDir, 'videoplaylists.js'), 'utf8');
-const platformsSrc = readFileSync(path.join(publicDir, 'platforms.js'), 'utf8');
-const overlaysSrc = readFileSync(path.join(publicDir, 'overlays.js'), 'utf8');
-const qualitySrc = readFileSync(path.join(publicDir, 'quality.js'), 'utf8');
-const enhanceSettingsSrc = readFileSync(path.join(publicDir, 'enhanceSettings.js'), 'utf8');
-const restreamSettingsSrc = readFileSync(path.join(publicDir, 'restreamSettings.js'), 'utf8');
-const channelStripSrc = readFileSync(path.join(publicDir, 'channelstrip.js'), 'utf8');
-const pttSrc = readFileSync(path.join(publicDir, 'ptt.js'), 'utf8');
-const restreamStatusSrc = readFileSync(path.join(publicDir, 'restreamStatus.js'), 'utf8');
-const trackHistorySrc = readFileSync(path.join(publicDir, 'trackhistory.js'), 'utf8');
-const navigationSrc = readFileSync(path.join(publicDir, 'navigation.js'), 'utf8');
-const genericModalSrc = readFileSync(path.join(publicDir, 'genericModal.js'), 'utf8');
-const notifySrc = readFileSync(path.join(publicDir, 'notify.js'), 'utf8');
-const playerSrc = readFileSync(path.join(publicDir, 'player.js'), 'utf8');
-const mixerSrc = readFileSync(path.join(publicDir, 'mixer.js'), 'utf8');
-const analyzerSrc = readFileSync(path.join(publicDir, 'analyzer.js'), 'utf8');
-const queueSrc = readFileSync(path.join(publicDir, 'queue.js'), 'utf8');
-const nowplayingSrc = readFileSync(path.join(publicDir, 'nowplaying.js'), 'utf8');
-const wsHubSrc = readFileSync(path.join(publicDir, 'wsHub.js'), 'utf8');
-const broadcastSrc = readFileSync(path.join(publicDir, 'broadcast.js'), 'utf8');
-const appSrc = readFileSync(path.join(publicDir, 'app.js'), 'utf8');
-
-/**
- * Install the browser-global stubs app.js touches during its synchronous init,
- * so it can evaluate top-to-bottom without a real browser. Each stub is the
- * minimal shape app.js calls on boot.
- */
-function installStubs(win) {
-  // Mark this as a test load so app.js exposes its guarded __appHelpers export.
-  win.__APP_TEST__ = true;
-
-  // WebSocket — app.js opens one on boot (connectWs).
-  win.WebSocket = class {
-    constructor() { this.readyState = 0; }
-    send() {}
-    close() {}
-    addEventListener() {}
-  };
-
-  // fetch — auth check + initial data loads. Never resolves (stays pending) so
-  // no async handler runs during the synchronous load we are measuring.
-  win.fetch = () => new Promise(() => {});
-
-  // HLS player library (normally /js/hls.min.js). app.js feature-detects it.
-  win.Hls = function () {};
-  win.Hls.isSupported = () => false;
-
-  // Web Audio — FFT analyzer setup.
-  win.AudioContext = class {
-    createAnalyser() {
-      return { fftSize: 0, frequencyBinCount: 0, connect() {}, getByteFrequencyData() {} };
-    }
-    createMediaElementSource() { return { connect() {} }; }
-    createGain() { return { gain: {}, connect() {} }; }
-  };
-  win.webkitAudioContext = win.AudioContext;
-
-  // rAF — animation loops. No-op (never actually paints in the smoke).
-  win.requestAnimationFrame = () => 0;
-  win.cancelAnimationFrame = () => {};
-
-  // HTMLMediaElement.play() — jsdom leaves it returning undefined, but app.js
-  // chains .then()/.catch() on it during player init. Return a settled promise.
-  win.HTMLMediaElement.prototype.play = () => Promise.resolve();
-  win.HTMLMediaElement.prototype.pause = () => {};
-  win.HTMLMediaElement.prototype.load = () => {};
-
-  // navigator.mediaDevices — PTT mic access (feature-detected only on boot).
-  if (!win.navigator.mediaDevices) {
-    Object.defineProperty(win.navigator, 'mediaDevices', {
-      value: { getUserMedia: () => new Promise(() => {}) },
-      configurable: true,
-    });
-  }
-
-  // Canvas 2D context — analyzer / waveform drawing.
-  win.HTMLCanvasElement.prototype.getContext = () => ({
-    fillRect() {}, clearRect() {}, beginPath() {}, moveTo() {}, lineTo() {},
-    stroke() {}, fill() {}, arc() {}, save() {}, restore() {}, translate() {},
-    scale() {}, createLinearGradient() { return { addColorStop() {} }; },
-    fillText() {}, measureText() { return { width: 0 }; },
-    set fillStyle(_v) {}, set strokeStyle(_v) {}, set lineWidth(_v) {}, set font(_v) {},
-  });
-}
-
-/** Evaluate a script source string in the jsdom window's global scope. */
-function runScript(dom, src, label) {
-  dom.window.eval(src);
-  return label;
-}
+import { bootWindow, moduleManifest } from './appBoot.js';
 
 describe('app.js jsdom load-smoke (C2 FRUtils cutover)', () => {
   let win;
   let loadError = null;
 
   beforeAll(() => {
-    const virtualConsole = new VirtualConsole();
-    // Swallow page console noise; we only care about thrown errors.
-    virtualConsole.on('error', () => {});
+    ({ win, loadError } = bootWindow());
+  });
 
-    const dom = new JSDOM(indexHtml, {
-      runScripts: 'outside-only',
-      pretendToBeVisual: true,
-      url: 'http://localhost/',
-      virtualConsole,
-    });
-    win = dom.window;
-    installStubs(win);
-
-    // Load order mirrors index.html: utils.js (window.FRUtils), playlists.js
-    // (window.FRPlaylists), analytics.js (window.FRAnalytics), filemgmt.js
-    // (window.FRFileMgmt), then app.js (which calls FRPlaylists.init /
-    // FRAnalytics.init / FRFileMgmt.init on boot).
-    runScript(dom, utilsSrc, 'utils.js');
-    runScript(dom, authSrc, 'auth.js');
-    runScript(dom, playlistsSrc, 'playlists.js');
-    runScript(dom, analyticsSrc, 'analytics.js');
-    runScript(dom, fileMgmtSrc, 'filemgmt.js');
-    runScript(dom, visualProfilesSrc, 'visualprofiles.js');
-    runScript(dom, scheduleSrc, 'schedule.js');
-    runScript(dom, videoPlaylistsSrc, 'videoplaylists.js');
-    runScript(dom, platformsSrc, 'platforms.js');
-    runScript(dom, overlaysSrc, 'overlays.js');
-    runScript(dom, qualitySrc, 'quality.js');
-    runScript(dom, enhanceSettingsSrc, 'enhanceSettings.js');
-    runScript(dom, restreamSettingsSrc, 'restreamSettings.js');
-    runScript(dom, channelStripSrc, 'channelstrip.js');
-    runScript(dom, pttSrc, 'ptt.js');
-    runScript(dom, restreamStatusSrc, 'restreamStatus.js');
-    runScript(dom, trackHistorySrc, 'trackhistory.js');
-    runScript(dom, navigationSrc, 'navigation.js');
-    runScript(dom, genericModalSrc, 'genericModal.js');
-    runScript(dom, notifySrc, 'notify.js');
-    runScript(dom, playerSrc, 'player.js');
-    runScript(dom, mixerSrc, 'mixer.js');
-    runScript(dom, analyzerSrc, 'analyzer.js');
-    runScript(dom, queueSrc, 'queue.js');
-    runScript(dom, nowplayingSrc, 'nowplaying.js');
-    runScript(dom, wsHubSrc, 'wsHub.js');
-    runScript(dom, broadcastSrc, 'broadcast.js');
-    try {
-      runScript(dom, appSrc, 'app.js');
-    } catch (err) {
-      loadError = err;
+  it('every module index.html ships registers its window.FR* global', () => {
+    // bootWindow enforces this structurally (it throws on a missing global);
+    // pinned explicitly so the load contract is stated where it is read, and so
+    // a regression names the module instead of failing every other suite.
+    expect(moduleManifest.files.length).toBeGreaterThan(0);
+    expect(moduleManifest.globals.length).toBe(moduleManifest.files.length);
+    for (const name of moduleManifest.globals) {
+      expect(win[name], `${name} missing from window`).toBeTruthy();
     }
   });
 
@@ -227,46 +89,11 @@ describe('app.js drift-gate (C3 FRUtils delegation of the 4 diverged helpers)', 
   let drift;
 
   beforeAll(() => {
-    const virtualConsole = new VirtualConsole();
-    virtualConsole.on('error', () => {});
-
-    const dom = new JSDOM(indexHtml, {
-      runScripts: 'outside-only',
-      pretendToBeVisual: true,
-      url: 'http://localhost/',
-      virtualConsole,
-    });
-    win = dom.window;
-    installStubs(win);
-
-    runScript(dom, utilsSrc, 'utils.js');
-    runScript(dom, authSrc, 'auth.js');
-    runScript(dom, playlistsSrc, 'playlists.js');
-    runScript(dom, analyticsSrc, 'analytics.js');
-    runScript(dom, fileMgmtSrc, 'filemgmt.js');
-    runScript(dom, visualProfilesSrc, 'visualprofiles.js');
-    runScript(dom, scheduleSrc, 'schedule.js');
-    runScript(dom, videoPlaylistsSrc, 'videoplaylists.js');
-    runScript(dom, platformsSrc, 'platforms.js');
-    runScript(dom, overlaysSrc, 'overlays.js');
-    runScript(dom, qualitySrc, 'quality.js');
-    runScript(dom, enhanceSettingsSrc, 'enhanceSettings.js');
-    runScript(dom, restreamSettingsSrc, 'restreamSettings.js');
-    runScript(dom, channelStripSrc, 'channelstrip.js');
-    runScript(dom, pttSrc, 'ptt.js');
-    runScript(dom, restreamStatusSrc, 'restreamStatus.js');
-    runScript(dom, trackHistorySrc, 'trackhistory.js');
-    runScript(dom, navigationSrc, 'navigation.js');
-    runScript(dom, genericModalSrc, 'genericModal.js');
-    runScript(dom, notifySrc, 'notify.js');
-    runScript(dom, playerSrc, 'player.js');
-    runScript(dom, mixerSrc, 'mixer.js');
-    runScript(dom, analyzerSrc, 'analyzer.js');
-    runScript(dom, queueSrc, 'queue.js');
-    runScript(dom, nowplayingSrc, 'nowplaying.js');
-    runScript(dom, wsHubSrc, 'wsHub.js');
-    runScript(dom, broadcastSrc, 'broadcast.js');
-    runScript(dom, appSrc, 'app.js');
+    // A second, independent window: the delegation tests mutate broadcastState
+    // and swap FRUtils members, so they must not run against the smoke's window.
+    // This block asserts app.js loaded by reaching through __appDrift, so an
+    // app.js load failure surfaces there rather than being captured here.
+    ({ win } = bootWindow());
     drift = win.__appDrift;
   });
 
