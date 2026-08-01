@@ -123,7 +123,11 @@
     authFetch('/api/stream-keys')
       .then(function(r) { return r.json(); })
       .then(function(data) {
-        var platforms = data.platforms || data;
+        // GET /api/stream-keys answers { platforms, maxPlatforms } — always.
+        // The old `data.platforms || data` accepted a bare map as well, so the
+        // two readers of this endpoint disagreed about its shape and neither
+        // could be checked against the server.
+        var platforms = (data && data.platforms) || {};
         var container = document.getElementById('restream-status-list');
         container.innerHTML = '';
         Object.entries(platforms).forEach(function(entry) {

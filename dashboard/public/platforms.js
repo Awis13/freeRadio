@@ -114,11 +114,24 @@
     authFetch('/api/stream-keys')
       .then(function(r) { return r.json(); })
       .then(function(data) {
+        // Object.keys(undefined) throws, and authFetch resolves on a 500, so a
+        // body without `platforms` used to take down the whole load with an
+        // uncaught TypeError instead of showing anything. Checked explicitly so
+        // the error names the problem rather than reporting a TypeError about
+        // converting undefined to an object.
+        if (!data || typeof data.platforms !== 'object' || data.platforms === null) {
+          throw new Error('unexpected response');
+        }
         maxPlatforms = data.maxPlatforms || 3;
         currentPlatformNames = Object.keys(data.platforms);
         renderPlatforms(data.platforms);
       })
-      .catch(function(e) { log('platforms: error loading: ' + e); });
+      .catch(function(e) {
+        log('platforms: error loading: ' + e);
+        showError('Failed to load platforms: ' + e);
+        currentPlatformNames = [];
+        renderPlatforms({});
+      });
   }
 
   function renderPlatforms(platforms) {
