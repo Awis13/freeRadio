@@ -19,7 +19,6 @@ const { readStore, writeStore } = require('./jsonStore');
  *   trackDir      base dir -> dir the tracks actually live in. Audio uses the
  *                 directory it is handed; video uses <dir>/.processed.
  *   extensions    which files a smart playlist may pick up
- *   skipPrefixes  name prefixes a smart scan ignores (video skips _standby_)
  *   smartRules    which rule filters apply — audio honours bpm and genre,
  *                 video honours neither, and turning them on for video would
  *                 silently change what its existing smart playlists resolve to
@@ -29,19 +28,24 @@ const { readStore, writeStore } = require('./jsonStore');
  * cleanup on delete — is supplied by the caller through `extraRoutes` and
  * `beforeDelete` rather than being flagged in here.
  *
- * NOTE ON FIDELITY: this factory reproduces BOTH current contracts exactly,
- * including the quirks. It does not fix the list-vs-detail trackCount gap that
- * both domains share (GET / counts with basename() only, GET /:id additionally
- * requires safe === t, so a traversal-shaped entry is counted but not
- * resolved). Aligning that is a deliberate behaviour change, not something to
- * smuggle in under a refactor.
+ * TWO ALIGNMENTS both domains carry (T10-C2, deliberate behaviour changes):
+ * the list count and the detail resolve now apply the SAME predicate, so a
+ * traversal-shaped entry that GET /:id refuses to resolve is no longer counted
+ * by GET /; and standby fillers are skipped by smart playlists in both
+ * domains, not only video.
  */
+/**
+ * Standby fillers are generated placeholders, never library content, so no
+ * smart playlist in either domain should pick them up. Video already skipped
+ * them; audio does now too (T10-C2 decision).
+ */
+const SKIP_PREFIXES = ['_standby_'];
+
 function createPlaylistStore({
   file,
   idPrefix,
   extensions,
   trackDir = (dir) => dir,
-  skipPrefixes = [],
   smartRules = {},
 }) {
   const useBpm = smartRules.bpm === true;
@@ -72,7 +76,7 @@ function createPlaylistStore({
     try {
       files = fs.readdirSync(dir).filter(f =>
         !f.startsWith('.') &&
-        !skipPrefixes.some(prefix => f.startsWith(prefix)) &&
+        !SKIP_PREFIXES.some(prefix => f.startsWith(prefix)) &&
         extensions.test(f));
     } catch (e) {
       return [];
@@ -115,6 +119,15 @@ function createPlaylistStore({
     });
   }
 
+  /**
+   * Is this manual entry a real, present track? Used by BOTH the resolve path
+   * and the list count, which is what keeps GET / and GET /:id agreeing.
+   */
+  function isPresentTrack(t, dir) {
+    const safe = path.basename(t);
+    return Boolean(safe) && safe === t && fs.existsSync(path.join(dir, safe));
+  }
+
   /** Manual playlists keep their order; missing files and traversal drop out. */
   function resolve(playlistId, baseDir, bpmMap = {}) {
     const playlist = get(playlistId);
@@ -122,10 +135,7 @@ function createPlaylistStore({
 
     if (playlist.type === 'manual') {
       const dir = trackDir(baseDir);
-      return (playlist.tracks || []).filter(t => {
-        const safe = path.basename(t);
-        return safe && safe === t && fs.existsSync(path.join(dir, safe));
-      });
+      return (playlist.tracks || []).filter(t => isPresentTrack(t, dir));
     }
 
     if (playlist.type === 'smart') {
@@ -154,7 +164,7 @@ function createPlaylistStore({
       const list = Object.values(data.playlists).map(pl => {
         const trackCount = pl.type === 'smart'
           ? resolveSmart(pl.rules || {}, baseDir, getBpmMap()).length
-          : (pl.tracks || []).filter(t => fs.existsSync(path.join(dir, path.basename(t)))).length;
+          : (pl.tracks || []).filter(t => isPresentTrack(t, dir)).length;
         return { ...pl, trackCount };
       });
       res.json(list);

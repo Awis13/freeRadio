@@ -102,23 +102,20 @@ describe('GET / — list', () => {
     expect(res.body[0].trackCount).toBe(2);
   });
 
-  it('AS-IS: GET / COUNTS a path-separator track that GET /:id resolve DROPS', async () => {
-    // GET / counts via existsSync(basename(t)) with NO `safe === t` guard, so
-    // 'sub/x.mp4' (basename 'x.mp4' exists on disk) is counted. resolveVideoPlaylist
-    // (used by GET /:id) requires basename(t) === t, so it drops 'sub/x.mp4'. This
-    // divergence between the two count paths is pinned as-is; a future refactor
-    // should reconcile them intentionally.
+  it('GET / and GET /:id agree about a path-separator track: neither counts it', async () => {
+    // CHANGED IN T10-C2. GET / used to count via existsSync(basename(t)) with no
+    // `safe === t` guard, so 'sub/x.mp4' was counted in the list while GET /:id
+    // refused to resolve it — the list promised a track the detail would not
+    // return. Both paths now apply the same predicate.
     h.setProcessedFiles(['x.mp4']);
     seed({
       vpl_d: { id: 'vpl_d', name: 'Div', type: 'manual', tracks: ['x.mp4', 'sub/x.mp4'] }
     });
 
     const list = await client.get('/api/video-playlists');
-    // GET / counts BOTH: bare 'x.mp4' and 'sub/x.mp4' (latter via unguarded basename).
-    expect(list.body[0].trackCount).toBe(2);
+    expect(list.body[0].trackCount).toBe(1);
 
     const detail = await client.get('/api/video-playlists/vpl_d');
-    // GET /:id resolve DROPS 'sub/x.mp4' (basename !== t) — only bare 'x.mp4' survives.
     expect(detail.body.resolvedTracks).toEqual(['x.mp4']);
     expect(detail.body.trackCount).toBe(1);
   });

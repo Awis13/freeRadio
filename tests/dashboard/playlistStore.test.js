@@ -14,7 +14,6 @@
  *   - track directory: audio reads the directory it is given, video reads
  *     <dir>/.processed;
  *   - extensions: audio wav/mp3/flac/ogg/aac/m4a, video mp4/mov/mkv;
- *   - smart scan: video also skips _standby_ files;
  *   - smart rules: audio honours bpmMin/bpmMax and genre, video ignores both
  *     (a video playlist carrying a genre rule resolves as if it were absent);
  *   - id prefix: pl_ vs vpl_.
@@ -258,14 +257,15 @@ for (const domainName of Object.keys(DOMAINS)) {
         expect((await client.post('/api/pl/nope/reorder').send({ from: 0, to: 1 })).status).toBe(404);
       });
 
-      it('list counts a traversal entry that detail refuses to resolve (shared quirk, AS-IS)', async () => {
-        // GET / counts with basename() only; GET /:id additionally requires
-        // safe === t. Both domains have carried this gap; C2 decides whether to
-        // close it, and this pin is what will fail when it does.
+      it('list count and detail resolve apply the same predicate', async () => {
+        // ALIGNED IN T10-C2: the list used to count a traversal-shaped entry
+        // (basename() only) that the detail refused to resolve, so the two
+        // numbers disagreed for the same playlist. Both domains now count
+        // exactly what resolves.
         store.save({ playlists: { p: { id: 'p', name: 'P', type: 'manual', tracks: ['../' + d.present[0]] } } });
         const list = await client.get('/api/pl');
         const detail = await client.get('/api/pl/p');
-        expect(list.body[0].trackCount).toBe(1);
+        expect(list.body[0].trackCount).toBe(0);
         expect(detail.body.trackCount).toBe(0);
       });
 
@@ -321,14 +321,18 @@ describe('divergences between the two parameter sets', () => {
     expect(v.store.resolve('s', v.baseDir)).toEqual(['clip.mp4']);
   });
 
-  it('video skips _standby_ files, audio has no such exclusion', () => {
+  it('BOTH domains skip _standby_ fillers', () => {
+    // ALIGNED IN T10-C2: only video skipped them before. Standby fillers are
+    // generated placeholders, never library content, so an audio smart
+    // playlist picking one up was wrong too — likely a no-op in practice,
+    // since nothing generates standby audio today.
     const v = setup('video', { files: ['keep.mp4', '_standby_filler.mp4'] });
     v.store.save({ playlists: { s: { id: 's', type: 'smart', rules: {} } } });
     expect(v.store.resolve('s', v.baseDir)).toEqual(['keep.mp4']);
 
     const a = setup('audio', { files: ['keep.mp3', '_standby_filler.mp3'] });
     a.store.save({ playlists: { s: { id: 's', type: 'smart', rules: {} } } });
-    expect(a.store.resolve('s', a.baseDir).sort()).toEqual(['_standby_filler.mp3', 'keep.mp3']);
+    expect(a.store.resolve('s', a.baseDir)).toEqual(['keep.mp3']);
   });
 
   it('bpm rules filter audio and are ignored by video', () => {
