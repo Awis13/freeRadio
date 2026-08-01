@@ -1,7 +1,8 @@
 const fs = require('fs');
+const paths = require('./paths');
 
 const POLL_INTERVAL = 2000;
-const STATUS_FILE = '/shared/rtmp_status.json';
+const STATUS_FILE = paths.shared('rtmp_status.json');
 
 function createRtmpHealthPoller(onUpdate) {
   let timer = null;

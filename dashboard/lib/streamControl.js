@@ -1,8 +1,9 @@
 const fs = require('fs');
 const path = require('path');
+const paths = require('./paths');
 
-const CONTROL_FILE = '/shared/stream_control.json';
-const MODE_FILE = '/shared/stream_mode.json';
+const CONTROL_FILE = paths.shared('stream_control.json');
+const MODE_FILE = paths.shared('stream_mode.json');
 
 function normalizeBool(value) {
   if (value === true || value === 'true' || value === 1 || value === '1') return true;

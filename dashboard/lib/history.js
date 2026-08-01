@@ -1,7 +1,8 @@
 const fs = require('fs');
 const express = require('express');
+const paths = require('./paths');
 
-const HISTORY_FILE = '/shared/play_history.jsonl';
+const HISTORY_FILE = paths.shared('play_history.jsonl');
 const startedAt = Date.now();
 
 function appendEntry(entry) {

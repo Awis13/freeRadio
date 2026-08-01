@@ -3,10 +3,11 @@ const path = require('path');
 const express = require('express');
 const multer = require('multer');
 const tierLimits = require('./tierLimits');
+const paths = require('./paths');
 
-const OVERLAY_CONFIG = '/shared/overlays.json';
-const FILTER_STRING_FILE = '/shared/overlay_filter_string.txt';
-const ASSETS_DIR = '/shared/overlay_assets';
+const OVERLAY_CONFIG = paths.shared('overlays.json');
+const FILTER_STRING_FILE = paths.shared('overlay_filter_string.txt');
+const ASSETS_DIR = paths.shared('overlay_assets');
 
 // --- Security helpers ---
 function sanitizeOverlayField(value, regex, fallback) {
@@ -79,7 +80,7 @@ function generateFilterString(config) {
 
   // Write both the simple filter string and the full config
   fs.writeFileSync(FILTER_STRING_FILE, filters.join(','));
-  fs.writeFileSync('/shared/overlay_compiled.json', JSON.stringify(output, null, 2));
+  fs.writeFileSync(paths.shared('overlay_compiled.json'), JSON.stringify(output, null, 2));
 }
 
 function buildDrawtext(layer) {

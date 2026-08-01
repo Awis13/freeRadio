@@ -3,8 +3,9 @@ const multer = require('multer');
 const path = require('path');
 const fs = require('fs');
 const liqClient = require('./liqClient');
+const paths = require('./paths');
 
-const VOICE_DIR = '/shared/voice';
+const VOICE_DIR = paths.shared('voice');
 const MAX_AGE_MS = 60 * 60 * 1000; // 1 hour
 
 function createVoiceRouter(broadcast) {

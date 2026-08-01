@@ -1,7 +1,8 @@
 const fs = require('fs');
 const path = require('path');
+const paths = require('./paths');
 
-const VISUAL_MODE_FILE = '/shared/visual_mode.json';
+const VISUAL_MODE_FILE = paths.shared('visual_mode.json');
 const VALID_MODES = ['live', 'visual-radio', 'video-playlist'];
 
 function getVisualMode() {

@@ -4,6 +4,7 @@ const path = require('path');
 const liqClient = require('../lib/liqClient');
 const s3 = require('../lib/s3');
 const { setBootAborted } = require('../lib/boot');
+const paths = require('../lib/paths');
 
 let cuedTrackPath = null;
 
@@ -15,7 +16,7 @@ function createDjRouter(musicDir) {
     try {
       const result = await liqClient.startPlayback();
       // Signal streamer to restart pipeline with fresh audio
-      try { fs.writeFileSync("/shared/restart_stream", ""); } catch (e) {}
+      try { fs.writeFileSync(paths.shared('restart_stream'), ''); } catch (e) {}
       res.json({ ok: true, data: result.data });
     } catch (e) {
       res.status(500).json({ error: e.message });
@@ -26,7 +27,7 @@ function createDjRouter(musicDir) {
     try {
       const result = await liqClient.resumePlayback();
       if (cuedTrackPath) {
-        try { fs.writeFileSync('/shared/current_audio.txt', cuedTrackPath); } catch (e) {}
+        try { fs.writeFileSync(paths.shared('current_audio.txt'), cuedTrackPath); } catch (e) {}
         cuedTrackPath = null;
       }
       res.json({ ok: true, data: result.data });

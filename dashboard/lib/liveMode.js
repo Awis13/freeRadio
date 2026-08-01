@@ -1,8 +1,9 @@
 const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
+const paths = require('./paths');
 
-const LIVE_MODE_FILE = '/shared/live_mode.json';
+const LIVE_MODE_FILE = paths.shared('live_mode.json');
 
 const VALID_SOURCES = ['obs', 'browser-mic'];
 const VALID_FALLBACKS = ['visual-radio', 'video-playlist'];

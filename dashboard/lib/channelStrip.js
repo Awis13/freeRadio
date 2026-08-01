@@ -2,8 +2,9 @@
 const fs = require('fs');
 const path = require('path');
 const liqClient = require('./liqClient');
+const paths = require('./paths');
 
-const CONFIG_PATH = '/shared/channel_strip.json';
+const CONFIG_PATH = paths.shared('channel_strip.json');
 
 // Parameter ranges for validation
 const PARAM_RANGES = {

@@ -2,9 +2,10 @@ const fs = require('fs');
 const path = require('path');
 const express = require('express');
 const { prefetchVideos } = require('./cacheManager');
+const paths = require('./paths');
 
-const PROFILES_FILE = '/shared/visual_profiles.json';
-const ACTIVE_FILE = '/shared/active_visual_profile.json';
+const PROFILES_FILE = paths.shared('visual_profiles.json');
+const ACTIVE_FILE = paths.shared('active_visual_profile.json');
 
 function loadProfiles() {
   try {

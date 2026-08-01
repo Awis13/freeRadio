@@ -1,8 +1,9 @@
 const fs = require('fs');
 const path = require('path');
 const express = require('express');
+const paths = require('./paths');
 
-const META_FILE = '/shared/track_metadata.json';
+const META_FILE = paths.shared('track_metadata.json');
 
 function loadMeta() {
   try {

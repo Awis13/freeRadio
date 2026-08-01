@@ -4,21 +4,27 @@ const fs = require('fs');
 const path = require('path');
 const s3 = require('./s3');
 const transcoder = require('./transcoderClient');
+const paths = require('./paths');
+
+// These substring checks classify a directory as music or visuals. They match
+// against the CONFIGURED roots on purpose: if MUSIC_DIR/VISUALS_DIR move, the
+// classification has to move with them. Substring (not startsWith) is the
+// existing behaviour and is kept as-is — callers pass subdirectories.
 
 // Determine S3 prefix from local directory
 function dirToS3Prefix(dir) {
-  if (dir.includes('/music')) return 'music/raw/';
-  if (dir.includes('/visuals')) return 'visuals/incoming/';
+  if (dir.includes(paths.MUSIC_DIR)) return 'music/raw/';
+  if (dir.includes(paths.VISUALS_DIR)) return 'visuals/incoming/';
   return '';
 }
 
 // Find processed version of a file (transcoder changes extension: mp3->wav, mov->mp4)
 function findProcessed(dir, name) {
   const base = name.replace(/\.[^.]+$/, '');
-  if (dir.includes('/music')) {
+  if (dir.includes(paths.MUSIC_DIR)) {
     return { dir: path.join(dir, 'processed'), s3Prefix: 'music/processed/', base };
   }
-  if (dir.includes('/visuals')) {
+  if (dir.includes(paths.VISUALS_DIR)) {
     const root = dir.replace(/\/incoming\/?$/, '');
     return { dir: path.join(root, '.processed'), s3Prefix: 'visuals/processed/', base };
   }
@@ -131,7 +137,7 @@ function fileManager(dir) {
       return res.status(400).json({ error: 'No files uploaded' });
     }
     const uploaded = req.files.map((f) => ({ name: f.filename, size: f.size }));
-    const isVisuals = dir.includes('/visuals');
+    const isVisuals = dir.includes(paths.VISUALS_DIR);
 
     // Visuals → transcoder (if enabled), otherwise fallback to S3
     if (isVisuals && transcoder.ENABLED) {

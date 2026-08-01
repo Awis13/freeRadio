@@ -1,6 +1,7 @@
 const fs = require('fs');
+const paths = require('./paths');
 
-const TIER_FILE = '/shared/tier.json';
+const TIER_FILE = paths.shared('tier.json');
 
 const TIER_LIMITS = {
   free:    { maxQuality: 'medium', maxPlatforms: 1, watermark: true, dsp: false, customOverlays: false },

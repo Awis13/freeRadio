@@ -1,8 +1,9 @@
 const fs = require('fs');
 const path = require('path');
+const paths = require('./paths');
 
-const QUEUE_FILE = '/shared/video_queue.txt';
-const SKIP_FILE = '/shared/video_skip';
+const QUEUE_FILE = paths.shared('video_queue.txt');
+const SKIP_FILE = paths.shared('video_skip');
 
 function getQueue() {
   try {

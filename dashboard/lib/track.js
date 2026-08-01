@@ -1,9 +1,10 @@
 const fs = require('fs');
 const path = require('path');
+const paths = require('./paths');
 
-const TRACK_FILE = '/shared/current_audio.txt';
-const CLEAN_TRACK_FILE = '/shared/current_track_clean.txt';
-const ANALYSIS_MAP = '/music/.analysis_map';
+const TRACK_FILE = paths.shared('current_audio.txt');
+const CLEAN_TRACK_FILE = paths.shared('current_track_clean.txt');
+const ANALYSIS_MAP = paths.ANALYSIS_MAP;
 const POLL_INTERVAL = 2000;
 
 // Lookup track duration from analysis map (extensionless basename match)

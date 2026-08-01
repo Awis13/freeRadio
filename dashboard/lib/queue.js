@@ -4,11 +4,12 @@ const liq = require('./liqClient');
 const { resolvePlaylist } = require('./playlist');
 const s3 = require('./s3');
 const { prefetchTracks } = require('./cacheManager');
+const paths = require('./paths');
 
 // Map original filename to processed WAV path (transcoder outputs all audio as .wav)
 function toProcessedPath(filename) {
   const base = path.basename(filename, path.extname(filename));
-  return '/music/processed/' + base + '.wav';
+  return paths.processed(base + '.wav');
 }
 
 function createQueueRouter(musicDir, getBpmMap) {

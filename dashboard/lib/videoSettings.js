@@ -1,6 +1,7 @@
 const fs = require('fs');
+const paths = require('./paths');
 
-const VIDEO_FILE = '/shared/stream_video.json';
+const VIDEO_FILE = paths.shared('stream_video.json');
 
 // Video enhancement filter chain
 const VIDEO_ENHANCEMENT_FILTER = 'eq=saturation=1.15:contrast=1.03,unsharp=3:3:0.5,deband';
