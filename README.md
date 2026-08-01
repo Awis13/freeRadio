@@ -54,6 +54,19 @@ Automated 24/7 streaming platform with BPM-aware music mixing, synchronized vide
 Icecast + Video  ──►  FFmpeg Streamer   ──►  HLS (always) + RTMP (optional)
 ```
 
+## Dashboard Front End
+
+The dashboard ships as plain scripts with no build step. `app.js` is a 579-line
+boot substrate: it resolves shared aliases, then wires 27 sibling modules in
+boot order and exposes a few test-only hooks.
+
+Each module is a UMD factory that attaches itself to `window.FR*` (`FRPlayer`,
+`FRBroadcast`, `FRQueue`, `FRWsHub`, and so on) and exports an `init(deps)` that
+receives its host services as callbacks and runs whatever boot side effects used
+to be inline. Modules never reach into each other's state: anything one needs
+from another arrives through `init`, which keeps the wiring visible in one place
+and the modules independently testable.
+
 ## Features
 
 - **BPM-aware AutoDJ** -- Liquidsoap analyzes track BPM and structures smooth transitions with beat-aligned crossfades
@@ -72,7 +85,7 @@ Icecast + Video  ──►  FFmpeg Streamer   ──►  HLS (always) + RTMP (op
 | Component | Technology |
 |-----------|------------|
 | Dashboard API | Node.js 24, Express 4.21, WebSocket (ws) |
-| Frontend | Vanilla JavaScript (~4300 LOC), no build step |
+| Frontend | Vanilla JavaScript UMD modules (~9500 LOC), no build step |
 | AutoDJ | Liquidsoap v2.3.0 |
 | Audio Analysis | Python 3 + Essentia |
 | Audio Server | Icecast 2 |
@@ -81,7 +94,7 @@ Icecast + Video  ──►  FFmpeg Streamer   ──►  HLS (always) + RTMP (op
 | File Storage | S3-compatible (any provider) |
 | Encryption | AES-256-GCM (stream keys) |
 | TLS Proxy | Nginx |
-| Testing | Vitest (597 tests across 29 files) |
+| Testing | Vitest (1678 tests across 78 files) |
 | Containerization | Docker Compose (7 services) |
 
 ## Quick Start
@@ -104,7 +117,17 @@ docker compose up -d
 # Dashboard available at http://localhost (or :443 with TLS certs)
 ```
 
-> **Known limitation:** the Liquidsoap and nginx RTMP config files referenced by the compose files (`./configs/liquidsoap`, `./configs/nginx/`) are not currently in the repository (removed during legacy cleanup), so the `dj` and RTMP services will not start from a fresh clone. Restoring them is tracked; the dashboard and its test suite are unaffected.
+> **Known limitation:** a fresh clone cannot start the full stack. Three
+> directories the compose files mount are missing from the repository:
+> `./scripts` and `./configs` were removed during a legacy cleanup, and `./certs`
+> is intentionally gitignored. That leaves five of the seven services unable to
+> start — `audio-analyzer` and `streamer` (both mount `./scripts`), `dj` and
+> `rtmp-ingest` (both mount `./configs`), and `proxy` (needs a TLS keypair in
+> `./certs`). Only `icecast` and `dashboard` come up.
+>
+> Restoring them is tracked as follow-up work. Dashboard development is
+> unaffected: the API, the front end and the full test suite all run locally
+> from a clean clone with `npm ci && npm test`.
 
 ## Configuration
 
@@ -153,46 +176,57 @@ All configuration via environment variables. See [`.env.example`](.env.example).
 
 ## API Endpoints
 
-### Public
+Routers are mounted in `dashboard/server.js`. The table lists mount points
+rather than every sub-route; read the router for the full surface.
+
+### Public (no token)
+
 ```
-GET  /api/status           Stream status (listeners, track, uptime)
+GET  /api/status           Stream status (listeners, track, mode)
 GET  /api/health           Health check for monitoring
-GET  /api/audio-stream     Proxy to Icecast audio stream
+GET  /api/audio-stream     Proxy to the Icecast audio stream
 GET  /api/rtmp-health      RTMP ingest status
+GET  /api/tier             Subscription tier and limits
+POST /api/auth/verify      Dashboard token check
+GET  /auth/sso             SSO token exchange (HMAC-signed)
+POST /api/live/on_publish  RTMP ingest callback
+POST /api/live/on_done     RTMP ingest callback
 ```
 
-### Protected (Bearer Token)
-```
-GET    /api/files/music          List music files
-POST   /api/files/music          Upload music files
-DELETE /api/files/music/:file    Delete music file
-GET    /api/files/visuals        List visual files
-POST   /api/files/visuals        Upload visual files
+### Protected (Bearer token)
 
-POST   /api/dj/skip              Skip current track
-POST   /api/dj/request           Request specific track
-GET    /api/dj/queue             Current play queue
+| Mount | Purpose |
+|-------|---------|
+| `/api/music` | Music library: list, upload, delete |
+| `/api/visuals` | Visual library: list, upload, delete |
+| `/api/queue` | Track queue: list, push, skip, clear |
+| `/api/video-queue` | Video queue, same shape as the track queue |
+| `/api/playlists` | Saved playlists |
+| `/api/video-playlists` | Saved video playlists |
+| `/api/visual-profiles` | Visual profile presets |
+| `/api/tracks` | Track metadata and lookup |
+| `/api/history` | Recently played tracks |
+| `/api/schedule` | Weekly slots and one-off events |
+| `/api/overlays` | Overlay layers and assets |
+| `/api/voice` | Push-to-talk voice chunks |
+| `/api/mixing` | Crossfade mixing mode |
+| `/api/dj` | Liquidsoap control: start, resume, cue, stop |
+| `/api/stream-keys` | Encrypted RTMP destinations, keyed by platform |
+| `/api/live` | Live/OBS takeover mode (its two ingest callbacks are public) |
 
-POST   /api/stream/start         Start streaming
-POST   /api/stream/stop          Stop streaming
-
-GET    /api/stream-keys          List RTMP destinations
-POST   /api/stream-keys          Add RTMP destination (encrypted)
-DELETE /api/stream-keys/:id      Remove RTMP destination
-
-GET    /api/schedule             Get schedule
-PUT    /api/schedule             Update schedule
-
-GET    /api/settings/audio       Audio settings
-PUT    /api/settings/audio       Update audio settings
-GET    /api/settings/video       Video settings
-PUT    /api/settings/video       Update video settings
-```
+Settings share the `/api` mount rather than a prefix of their own, so they read
+as flat paths: `/api/audio`, `/api/video`, `/api/quality`, `/api/channel-strip`,
+`/api/stream/control`, `/api/stream/mode`, `/api/visual-mode`, `/api/live-mode`
+and `/api/restream/settings`. Each is `GET` to read and `POST` to write.
 
 ### WebSocket
+
 ```
-ws://host/ws                Real-time events (track changes, stats, waveform data)
+ws://host/                 Real-time events (track changes, stats, FFT frames)
 ```
+
+The socket is served on the same host and port as the API with no path prefix,
+and authenticates by sending the dashboard token as its first message.
 
 ## Project Structure
 
@@ -200,46 +234,45 @@ ws://host/ws                Real-time events (track changes, stats, waveform dat
 freeRadio/
   dashboard/
     server.js                 Express server (API + WebSocket + static files)
-    public/
+    public/                   Dashboard front end, no build step
       index.html              Dashboard SPA
-      app.js                  Frontend logic (~4300 LOC vanilla JS)
       style.css               Styling
-      utils.js                Shared utilities
-    lib/
+      app.js                  Boot substrate (579 lines) wiring the modules below
+      utils.js                Shared pure helpers (window.FRUtils)
+      player.js               HLS player, loading and standby overlays
+      broadcast.js            Broadcast state machine, transport, mode cards
+      wsHub.js                WebSocket transport and message dispatch
+      nowplaying.js           Track clock, transport readout, stat row
+      queue.js                Track/video queues and the track selector
+      analyzer.js             CRT analyzer, WebAudio graph, mute control
+      mixer.js                Monitor mixer, mic capture, auto-duck
+      ...                     20 more domain modules (playlists, schedule,
+                              overlays, platforms, quality, PTT, ...)
+    lib/                      38 server modules
       boot.js                 Service initialization and state recovery
       streamControl.js        FFmpeg process management
       liqClient.js            Liquidsoap telnet client
       fileManager.js          File upload/download with S3 + transcoder
       syncWatcher.js          Bidirectional S3 sync
-      playlist.js             Track playlist management
-      bpmMap.js               BPM map loading and lookup
-      schedule.js             Cron-based schedule engine
+      wsServer.js             WebSocket server
       streamKeys.js           AES-256-GCM encrypted RTMP keys
       tierLimits.js           Subscription tier enforcement
-      s3.js                   S3 client (upload/download/list)
-      transcoderClient.js     External transcoder HTTP client
-      video.js                Video playlist and visual mode
-      wsServer.js             WebSocket server
-      ...                     30+ modules total
-    routes/
-      dj.js                   Liquidsoap control routes
-      live.js                 Live/OBS takeover mode
-      settings.js             Audio/video settings
-      sso.js                  SSO token verification
-      status.js               Stream status
-      streamKeys.js           RTMP key management
-      videoQueue.js           Video queue management
+      ...
+    routes/                   dj, live, settings, sso, status, streamKeys,
+                              videoQueue
     Dockerfile                Dashboard image
     entrypoint.sh             Container entrypoint
   tests/
-    dashboard/                Vitest unit tests (597 tests, incl. routes/)
-  .github/
-    workflows/
-      ci.yml                  GitHub Actions CI (vitest + coverage)
+    dashboard/                Vitest suite (1678 tests across 78 files)
+      routes/                 Router-level tests
+      helpers/                Shared test helpers
+  .github/workflows/ci.yml    GitHub Actions CI (vitest + coverage)
   docker/
-    audio-analyzer/           Audio analyzer image
-  nginx-proxy/
-    nginx.conf                TLS proxy config
+    audio-analyzer/           Dockerfile adding rubberband-cli on top of
+                              Essentia; not currently referenced by compose
+  nginx-proxy/nginx.conf      TLS proxy config
+  content/music, content/visuals
+                              Media drop directories (empty in git)
   docs/                       Images and documentation assets
   Dockerfile.streamer         FFmpeg streamer image
   vitest.config.js            Test runner configuration
