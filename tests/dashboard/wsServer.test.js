@@ -159,6 +159,10 @@ afterEach(async () => {
   harnesses = [];
   if (ORIGINAL_TOKEN === undefined) delete process.env.DASHBOARD_TOKEN;
   else process.env.DASHBOARD_TOKEN = ORIGINAL_TOKEN;
+  // AUTH_DISABLED is set by the explicitly-open cases; without this the file
+  // leaves it on for whatever else shares this worker.
+  if (ORIGINAL_AUTH_DISABLED === undefined) delete process.env.AUTH_DISABLED;
+  else process.env.AUTH_DISABLED = ORIGINAL_AUTH_DISABLED;
   delete nodeRequire.cache[nodeRequire.resolve(WS_SPEC)];
 });
 
@@ -222,6 +226,20 @@ describe('setupWs with auth unconfigured (no token, no opt-out)', () => {
     // state to anyone who connected.
     const h = await startHarness(undefined);
     const ws = connect(h);
+
+    const { code, reason } = await ws.closed;
+    expect(code).toBe(4401);
+    expect(reason).toContain('Auth is not configured');
+  });
+});
+
+describe('setupTlsWs with auth unconfigured (no token, no opt-out)', () => {
+  it('closes the TLS socket too — the twin must not be the way in', async () => {
+    // The TLS server carries a byte-identical copy of the auth branch, so a
+    // fix applied to only one of them would leave the other wide open.
+    const h = await startHarness(undefined);
+    const second = await attachSecondServer(h);
+    const ws = connect(h, second.port);
 
     const { code, reason } = await ws.closed;
     expect(code).toBe(4401);

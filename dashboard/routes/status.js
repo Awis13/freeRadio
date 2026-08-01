@@ -14,7 +14,6 @@ const paths = require('../lib/paths');
 function createStatusRouter(state) {
   const router = express.Router();
 
-  const DASHBOARD_TOKEN = process.env.DASHBOARD_TOKEN || '';
   const MUSIC_DIR = paths.MUSIC_DIR;
   const VISUALS_DIR = paths.VISUALS_DIR;
   const S3_CACHE_MAX_MB = parseInt(process.env.S3_CACHE_MAX_MB) || 4000;
