@@ -138,7 +138,7 @@ function ssoHandler(req, res) {
     return res.status(result.status).send(ssoErrorPage(result.error));
   }
 
-  // Save tier to /shared/tier.json
+  // Persist the tier to the shared tier store
   tierLimits.setTier(result.tier);
 
   // Allow inline script for SSO success page (main CSP middleware blocks it)

@@ -1,8 +1,11 @@
 const http = require('http');
+const paths = require('./paths');
 
-// Defaults match the docker-compose `dj` service; the env overrides exist for tests and non-Docker runs (none of them are set in compose/Docker).
-const DJ_HOST = process.env.DJ_HOST || 'dj';
-const DJ_PORT = parseInt(process.env.DJ_PORT || '7000', 10);
+// Host/port come from paths.js so the dj service is defined in one place (boot.js
+// used to hardcode it). The timeout stays local — it is a client tuning knob,
+// not part of the path/host config.
+const DJ_HOST = paths.DJ_HOST;
+const DJ_PORT = paths.DJ_PORT;
 const REQUEST_TIMEOUT_MS = parseInt(process.env.DJ_TIMEOUT_MS || '5000', 10);
 
 function request(method, path, body) {
