@@ -230,6 +230,53 @@ describe('track selector rendering and the add-to-queue path', () => {
     expect(calls.map((c) => c.url)).toEqual(['/api/queue/push']);
   });
 
+  it('a rejected VIDEO add reports too, matching its music twin', async () => {
+    // CHANGED IN T15-C2. The video push swallowed { ok: false } — the add
+    // simply appeared to do nothing — while its music twin has always surfaced
+    // it. Driven through the real selector button, the same way the music pins
+    // above do, since the video add is reached only from that click.
+    // Note the skip/clear pair stays silent on !ok in BOTH modes: that half was
+    // already symmetric, so only the add path needed aligning.
+    const h = boot();
+    const { fetch, calls } = makeFetchStub([
+      routeExact('GET', '/api/music', []),
+      routeExact('GET', '/api/visuals', []),
+      routeExact('GET', '/api/visuals-processed', [{ name: 'clip.mp4', size: 10 }]),
+      routeExact('POST', '/api/video-queue/push', { ok: false, error: 'queue full' }),
+      routeExact('GET', '/api/video-queue', []),
+    ]);
+    h.win.fetch = fetch;
+    h.send({ type: 'init', data: initState('live', true, 'video-playlist', { bpm: {} }) });
+    await flush(20);
+    calls.length = 0;
+
+    h.win.FRQueue.addToVideoQueue('clip.mp4');
+    await flush(20);
+
+    const banner = h.doc.getElementById('error-banner');
+    expect(banner.textContent).toBe('Video queue push failed: queue full');
+    expect(banner.classList.contains('visible')).toBe(true);
+    expect(calls.map((c) => c.url)).toEqual(['/api/video-queue/push']);
+  });
+
+  it('a rejected VIDEO add with no error field reports unknown', async () => {
+    const h = boot();
+    const { fetch } = makeFetchStub([
+      routeExact('GET', '/api/music', []),
+      routeExact('GET', '/api/visuals', []),
+      routeExact('GET', '/api/visuals-processed', [{ name: 'clip.mp4', size: 10 }]),
+      routeExact('POST', '/api/video-queue/push', { ok: false }),
+      routeExact('GET', '/api/video-queue', []),
+    ]);
+    h.win.fetch = fetch;
+    h.send({ type: 'init', data: initState('live', true, 'video-playlist', { bpm: {} }) });
+    await flush(20);
+    h.win.FRQueue.addToVideoQueue('clip.mp4');
+    await flush(20);
+
+    expect(h.doc.getElementById('error-banner').textContent).toBe('Video queue push failed: unknown');
+  });
+
   it('a rejected add with no error field reports unknown', async () => {
     const h = boot();
     const { fetch } = makeFetchStub([

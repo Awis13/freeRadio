@@ -96,11 +96,33 @@ describe('app.js jsdom load-smoke (C2 FRUtils cutover)', () => {
     }
   });
 
-  it('the 7 app.js helpers are the SAME objects as window.FRUtils.* (cutover proven)', () => {
+  it('the 7 app.js helpers DELEGATE to window.FRUtils.* (cutover proven)', () => {
+    // CHANGED IN T15-C2. These used to be aliases captured at factory load, so
+    // identity was the proof: __appHelpers.pad WAS FRUtils.pad. app.js now uses
+    // the same per-function call-time wrapper every module uses, which means
+    // the identity is deliberately different and delegation is what to assert —
+    // swapping a helper on FRUtils after boot must change what app.js calls.
     const names = ['pad', 'fmtSize', 'cleanTrackName', 'escapeHtml', 'timeAgo', 'formatTime', 'pttFormatTime'];
     for (const name of names) {
-      expect(win.__appHelpers[name]).toBe(win.FRUtils[name]);
+      expect(typeof win.__appHelpers[name]).toBe('function');
+      expect(win.__appHelpers[name]).not.toBe(win.FRUtils[name]);
+
+      const original = win.FRUtils[name];
+      const marker = `delegated:${name}`;
+      win.FRUtils[name] = () => marker;
+      try {
+        expect(win.__appHelpers[name]('x'), `${name} does not reach FRUtils`).toBe(marker);
+      } finally {
+        win.FRUtils[name] = original;
+      }
     }
+  });
+
+  it('the wrappers resolve FRUtils at call time, not at load time', () => {
+    // The point of the idiom: a module loaded before utils.js would have
+    // captured undefined under the old alias form.
+    expect(win.__appHelpers.pad(7)).toBe(win.FRUtils.pad(7));
+    expect(win.__appHelpers.formatTime(90)).toBe(win.FRUtils.formatTime(90));
   });
 });
 

@@ -89,10 +89,8 @@
   function setUserInteracted(v) { return deps.setUserInteracted(v); }
 
   // Shared FRUtils helpers resolved at call time (single source of truth).
-  var FRU = {
-    getBroadcastPhase: function (s) { return window.FRUtils.getBroadcastPhase(s); },
-    deriveUiMode: function (v) { return window.FRUtils.deriveUiMode(v); }
-  };
+  function getBroadcastPhaseFor(s) { return window.FRUtils.getBroadcastPhase(s); }
+  function deriveUiModeFor(v) { return window.FRUtils.deriveUiMode(v); }
 
   // -------------------------------------------------------------------------
   // Module-owned state
@@ -150,7 +148,7 @@
   // Derived phase from state.
   // Delegates to FRUtils (single source of truth), passing the broadcast state.
   function getBroadcastPhase() {
-    return FRU.getBroadcastPhase(broadcastState);
+    return getBroadcastPhaseFor(broadcastState);
   }
   var MODE_HINTS = {
     idle: {
@@ -292,7 +290,7 @@
   // broadcastState (FRUtils returns a value; app.js keeps mutating in place and
   // returns undefined, exactly as before).
   function deriveUiMode() {
-    var d = FRU.deriveUiMode(broadcastState.visualMode);
+    var d = deriveUiModeFor(broadcastState.visualMode);
     broadcastState.uiMode = d.uiMode;
     broadcastState.uiSubMode = d.uiSubMode;
   }
