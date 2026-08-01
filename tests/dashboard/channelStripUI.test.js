@@ -55,8 +55,12 @@
  *    is never wired because #strip-preset is absent at boot.)
  */
 
-import { describe, it, expect, afterEach, vi } from 'vitest';
-import { bootWindow, makeFetchStub, routeExact, flush } from './appBoot.js';
+import { describe, it, expect, afterEach, vi, afterAll } from 'vitest';
+import { bootWindow, makeFetchStub, routeExact, flush, closeAllWindows } from './appBoot.js';
+
+// Tear down every jsdom window this file booted: each one keeps ~13 real
+// timers alive for the rest of the process otherwise.
+afterAll(closeAllWindows);
 
 /**
  * Boot a fresh window and grab the channel-strip hook. No init/deps to inject —

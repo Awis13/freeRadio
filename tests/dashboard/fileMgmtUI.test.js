@@ -53,10 +53,15 @@
  *     badge 'AUTH'; non-2xx and onerror -> badge 'ERROR' + showError (errorBanner).
  */
 
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, afterAll } from 'vitest';
 import {
   bootWindow, makeFetchStub, installXhrStub, routeExact, flush,
+  closeAllWindows,
 } from './appBoot.js';
+
+// Tear down every jsdom window this file booted: each one keeps ~13 real
+// timers alive for the rest of the process otherwise.
+afterAll(closeAllWindows);
 
 /**
  * Boot a fresh window and re-init window.FRFileMgmt with test-controlled deps.

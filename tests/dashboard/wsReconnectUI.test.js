@@ -34,8 +34,12 @@
  * (they are ordinary properties on the object — no addEventListener dispatch).
  */
 
-import { describe, it, expect } from 'vitest';
-import { bootWindow } from './appBoot.js';
+import { describe, it, expect, afterAll } from 'vitest';
+import { bootWindow, closeAllWindows } from './appBoot.js';
+
+// Tear down every jsdom window this file booted: each one keeps ~13 real
+// timers alive for the rest of the process otherwise.
+afterAll(closeAllWindows);
 
 /**
  * Boot a fresh window and install a Recipe A capturing setTimeout spy. Returns

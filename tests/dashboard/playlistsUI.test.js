@@ -22,8 +22,12 @@
  * DOM + recorded fetch calls.
  */
 
-import { describe, it, expect, beforeEach } from 'vitest';
-import { bootWindow, makeFetchStub, route, routeExact, flush } from './appBoot.js';
+import { describe, it, expect, beforeEach, afterAll } from 'vitest';
+import { bootWindow, makeFetchStub, route, routeExact, flush, closeAllWindows } from './appBoot.js';
+
+// Tear down every jsdom window this file booted: each one keeps ~13 real
+// timers alive for the rest of the process otherwise.
+afterAll(closeAllWindows);
 
 /**
  * Boot a fresh window and swap in a controllable fetch built from `routes`.

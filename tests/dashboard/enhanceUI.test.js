@@ -33,8 +33,12 @@
  * checkbox onchange and asserting DOM (in `doc`) + recorded fetches (stub.calls).
  */
 
-import { describe, it, expect } from 'vitest';
-import { bootWindow, makeFetchStub, routeExact, flush } from './appBoot.js';
+import { describe, it, expect, afterAll } from 'vitest';
+import { bootWindow, makeFetchStub, routeExact, flush, closeAllWindows } from './appBoot.js';
+
+// Tear down every jsdom window this file booted: each one keeps ~13 real
+// timers alive for the rest of the process otherwise.
+afterAll(closeAllWindows);
 
 /** Boot a fresh window and grab the enhancement module (window.FREnhance). */
 function boot() {

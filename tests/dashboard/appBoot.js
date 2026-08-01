@@ -141,6 +141,12 @@ const appSrc = readFileSync(path.join(publicDir, APP_ENTRY), 'utf8');
 const moduleGlobals = moduleFiles.map((file, i) => registeredGlobal(file, moduleSources[i]));
 
 /**
+ * Windows booted by this file and not yet closed. Per test file, because vitest
+ * loads this module once per file. See closeAllWindows.
+ */
+const openWindows = new Set();
+
+/**
  * The browser module manifest, exported for tests that pin the load contract
  * itself (appLoad.test.js): `files` are the index.html script sources relative
  * to dashboard/public, `globals` the window.FR* name each one registers, same
@@ -218,12 +224,31 @@ function installStubs(win) {
 /**
  * Boot one jsdom window with the real index.html, every manifest module and
  * app.js evaluated in index.html order, with __APP_TEST__ = true. Returns
- * { win, doc, loadError }.
+ * { win, doc, loadError, close }.
  *
  * loadError is null on success; if app.js threw during its synchronous load it
  * is captured (so the load-smoke can still assert against it instead of the
  * whole suite blowing up). A module that fails to load is NOT captured — it
  * throws out of bootWindow, because every pin downstream would be meaningless.
+ *
+ * CALL close() WHEN THE SUITE IS DONE (afterAll). Boot leaves ~13 real Node
+ * timers running per window — the 1s track-progress tick, the 2s mic-streaming
+ * check, the module polls — and they keep firing for the rest of the process,
+ * competing for the same event loop as every later suite. That is measurable:
+ * a script that boots windows without closing them never exits at all.
+ *
+ * jsdom's own window.close() is enough (verified against jsdom 26.1.0): it stops
+ * every pending timeout and interval in the window realm, so the stubs installed
+ * here need no separate teardown. It also tears the document down — win.document
+ * becomes undefined — so close() must run AFTER the last assertion, never
+ * between tests that still read the DOM.
+ *
+ * What close() does NOT stop is an already-queued microtask: the boot chains
+ * .then() on the stubbed HTMLMediaElement.play(), and that continuation logs
+ * through FRNotify, which reads #log from the document. Closing in the SAME tick
+ * as bootWindow() therefore lets it run against a torn-down document and throw.
+ * Any real suite is safe — a test body runs before afterAll, which drains the
+ * queue — but do not boot and close back to back with nothing in between.
  */
 export function bootWindow() {
   const virtualConsole = new VirtualConsole();
@@ -265,7 +290,31 @@ export function bootWindow() {
     loadError = err;
   }
 
-  return { win, doc: win.document, loadError };
+  // Idempotent: a suite may close a window explicitly AND have it swept by
+  // closeAllWindows. A second close() on a torn-down window would throw on the
+  // missing document.
+  let closed = false;
+  function close() {
+    if (closed) return;
+    closed = true;
+    openWindows.delete(handle);
+    win.close();
+  }
+
+  const handle = { win, doc: win.document, loadError, close };
+  openWindows.add(handle);
+  return handle;
+}
+
+/**
+ * Close every window this file booted and has not closed yet.
+ *
+ * Vitest gives each test file its own module instance, so the registry is
+ * per-file: a suite ending with `afterAll(closeAllWindows)` tears down exactly
+ * what it booted, whatever helper booted it and however many times.
+ */
+export function closeAllWindows() {
+  for (const handle of [...openWindows]) handle.close();
 }
 
 /**
