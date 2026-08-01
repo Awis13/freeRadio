@@ -104,8 +104,7 @@
   // DOM refs the machine's functions read. Siblings resolve the same elements
   // by id for their own use. Assigned once by resolveDom() from init().
   var studioAudioTrack = null, studioBpm = null;
-  var transportElapsed = null, transportDuration = null, transportBarFill = null, transportCue = null;
-  var skipBtn = null, clearQueueBtn = null, queueSearch = null;
+  var skipBtn = null, queueSearch = null;
   var queuePanelTitle = null, queueSelectorTitle = null, playerMuteBtn = null;
   var mixModeContainer = null, mixPills = [];
   var broadcastModeTag = null, btnBroadcast = null, btnPlay = null, btnStop = null, btnArm = null;
@@ -116,12 +115,7 @@
   function resolveDom() {
     studioAudioTrack = document.getElementById('studio-audio-track');
     studioBpm = document.getElementById('studio-bpm');
-    transportElapsed = document.getElementById('transport-elapsed');
-    transportDuration = document.getElementById('transport-duration');
-    transportBarFill = document.getElementById('transport-bar-fill');
-    transportCue = document.getElementById('transport-cue');
     skipBtn = document.getElementById('skip-btn');
-    clearQueueBtn = document.getElementById('clear-queue-btn');
     queueSearch = document.getElementById('queue-search');
     queuePanelTitle = document.getElementById('queue-panel-title');
     queueSelectorTitle = document.getElementById('queue-selector-title');
@@ -227,29 +221,11 @@
     queuePanelTitle.textContent = isVideoMode ? 'Video Queue' : 'Queue';
     queueSelectorTitle.textContent = isVideoMode ? 'Add Video' : 'Add to Queue';
     queueSearch.placeholder = isVideoMode ? 'Search videos...' : 'Search tracks...';
-    skipBtn.onclick = isVideoMode ? FRQueue.skipVideo : function() {
-      authFetch('/api/queue/skip', { method: 'POST' })
-        .then(function(r) { return r.json(); })
-        .then(function(data) {
-          if (data.ok) {
-            log('queue: skipped track');
-            setTimeout(FRQueue.loadQueue, 1000);
-            setTimeout(FRTrackHistory.loadTrackHistory, 2000);
-          }
-        })
-        .catch(function(e) { showError('Skip failed: ' + e); });
-    };
-    clearQueueBtn.onclick = isVideoMode ? FRQueue.clearVideoQueue : function() {
-      authFetch('/api/queue/clear', { method: 'POST' })
-        .then(function(r) { return r.json(); })
-        .then(function(data) {
-          if (data.ok) {
-            log('queue: cleared');
-            FRQueue.loadQueue();
-          }
-        })
-        .catch(function(e) { showError('Clear queue failed: ' + e); });
-    };
+    // The skip/clear handlers are NOT rebound here. queue.js binds them once at
+    // boot and decides music-vs-video at click time from the same broadcast
+    // state this repaint reads, so a repaint no longer has to reinstall a
+    // duplicate copy of them. This function still owns the chrome around them:
+    // the labels above, the placeholder, and skipBtn.disabled.
 
     // Mode hint
     var hints = MODE_HINTS[phase] || {};
@@ -850,12 +826,7 @@
           broadcastState.streamMode = 'standby';
           broadcastState.broadcast = false;
           FRNowPlaying.resetTrackState();
-          studioAudioTrack.textContent = '--';
-          studioBpm.textContent = '';
-          transportBarFill.style.width = '0%';
-          transportElapsed.textContent = '0:00';
-          transportDuration.textContent = '0:00';
-          transportCue.style.display = 'none';
+          FRNowPlaying.resetTransportDom();
           updateBroadcastUI();
           log('STOP: idle');
         })

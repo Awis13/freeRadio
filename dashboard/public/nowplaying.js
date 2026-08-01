@@ -104,6 +104,22 @@
   var statVideoBr = null;
   var statTime = null;
 
+  /**
+   * Clear the transport readout back to its idle state.
+   *
+   * These six elements belong to this module — it resolves them and repaints
+   * them on every tick — but the STOP path in broadcast.js used to write them
+   * directly, so two modules assigned the same nodes. Same writes, one owner.
+   */
+  function resetTransportDom() {
+    studioAudioTrack.textContent = '--';
+    studioBpm.textContent = '';
+    transportBarFill.style.width = '0%';
+    transportElapsed.textContent = '0:00';
+    transportDuration.textContent = '0:00';
+    transportCue.style.display = 'none';
+  }
+
   function resolveDom() {
     modeTag = document.getElementById('mode-tag');
     studioAudioTrack = document.getElementById('studio-audio-track');
@@ -258,6 +274,7 @@
     updateFfmpeg: updateFfmpeg,
     getTrackStartedAt: getTrackStartedAt,
     resetTrackState: resetTrackState,
+    resetTransportDom: resetTransportDom,
     setMixDuration: setMixDuration,
     getStartTime: function () { return startTime; },
     getListenerHistory: function () { return listenerHistory; },

@@ -73,10 +73,11 @@
  *   - Live Mode Bar write is inert: #live-mode-bar sits inside a Phase 3 HTML
  *     comment, so updateModeUI's Live Mode Bar display write is swallowed by its null
  *     guard. Pinned as null so a Phase 3 markup change fails loudly here.
- *   - Handler-allocation asymmetry: the music branch builds a fresh skip/clear
- *     closure pair on EVERY repaint (duplicating bodies already bound at boot,
- *     queue.js bindBootHandlers), while the video branch assigns stable named functions.
- *     Pinned both ways, plus an equivalence pin across the duplicate copies.
+ *   - Skip/clear are bound ONCE, by queue.js at boot, and decide music-vs-video
+ *     at click time from the broadcast state. updateBroadcastUI no longer
+ *     reassigns them — it owns only the chrome (labels, placeholder, disabled).
+ *     Pinned as: stable handler identity across repaints in both modes, and the
+ *     dispatch itself proven both ways through the endpoints it POSTs to.
  *   - Synthetic 'browser-mic' payloads: a real uiSubMode that the server's
  *     visualMode can never be, used to reach the defensive fallback arms in
  *     MODE_HINTS and deriveUiMode. Marked at each use site.
@@ -618,10 +619,44 @@ describe('queue chrome and the skip/clear handler swap', () => {
     });
   });
 
-  it('the boot-bound handlers and the music-mode copies behave identically', async () => {
-    // updateBroadcastUI's non-video branch re-declares handler bodies already
-    // bound at boot (queue.js bindBootHandlers). Both copies must stay interchangeable
-    // down to the deferred reload delays, not just the endpoint they POST to.
+  it('STOP clears the transport readout through the module that owns it', async () => {
+    // broadcast.js used to write these six nodes itself, while nowplaying.js
+    // resolved and repainted the same nodes — two modules assigning one set of
+    // elements. The writes now go through FRNowPlaying.resetTransportDom; this
+    // pins the observable result so the delegation cannot quietly become a
+    // no-op.
+    const h = bootQueueHarness([
+      routeExact('POST', '/api/stream/control', { ok: true }),
+      routeExact('POST', '/api/stream/mode', { ok: true }),
+      routeExact('POST', '/api/broadcast', { ok: true }),
+    ]);
+    h.sendInit(payloadFor('live', 'visual-radio'));
+
+    // Seed the readout as a playing stream leaves it.
+    const doc = h.doc;
+    doc.getElementById('studio-audio-track').textContent = 'track.mp3';
+    doc.getElementById('studio-bpm').textContent = '128';
+    doc.getElementById('transport-bar-fill').style.width = '42%';
+    doc.getElementById('transport-elapsed').textContent = '1:23';
+    doc.getElementById('transport-duration').textContent = '3:45';
+    doc.getElementById('transport-cue').style.display = 'block';
+
+    doc.getElementById('btn-stop').click();
+    await flush(20);
+
+    expect(doc.getElementById('studio-audio-track').textContent).toBe('--');
+    expect(doc.getElementById('studio-bpm').textContent).toBe('');
+    expect(doc.getElementById('transport-bar-fill').style.width).toBe('0%');
+    expect(doc.getElementById('transport-elapsed').textContent).toBe('0:00');
+    expect(doc.getElementById('transport-duration').textContent).toBe('0:00');
+    expect(doc.getElementById('transport-cue').style.display).toBe('none');
+  });
+
+  it('the one bound handler dispatches to the MUSIC endpoints in music mode', async () => {
+    // Was an equivalence pin across two byte-identical copies of these bodies
+    // (queue.js's boot binding and updateBroadcastUI's repaint copy). There is
+    // one copy now, so what is worth pinning is the dispatch and the deferred
+    // reloads it schedules.
     const h = bootQueueHarness();
 
     h.skipBtn.click();
@@ -630,6 +665,14 @@ describe('queue chrome and the skip/clear handler swap', () => {
     const bootTraffic = queueTraffic(h.calls);
     const bootDelays = h.delays.slice();
 
+    expect(bootTraffic).toEqual([
+      'POST /api/queue/skip',
+      'POST /api/queue/clear',
+      'GET /api/queue',
+    ]);
+    expect(bootDelays).toEqual([1000, 2000]);
+
+    // A repaint does not change any of that — it no longer touches the handlers.
     h.reset();
     h.sendInit(payloadFor('playing', 'visual-radio'));
     h.reset();
@@ -637,44 +680,65 @@ describe('queue chrome and the skip/clear handler swap', () => {
     h.clearBtn.click();
     await flush(20);
 
-    expect(bootTraffic).toEqual([
-      'POST /api/queue/skip',
-      'POST /api/queue/clear',
-      'GET /api/queue',
-    ]);
-    expect(bootDelays).toEqual([1000, 2000]);
     expect(queueTraffic(h.calls)).toEqual(bootTraffic);
     expect(h.delays).toEqual(bootDelays);
   });
 
-  it('music mode installs a FRESH handler pair on every repaint', () => {
+  it('the SAME bound handler dispatches to the VIDEO endpoints in video mode', async () => {
+    // The dispatch is read from the broadcast state at click time, so switching
+    // the mode switches the endpoints without rebinding anything.
+    const h = bootQueueHarness();
+    h.sendInit(payloadFor('playing', 'video-playlist'));
+    h.reset();
+
+    h.skipBtn.click();
+    h.clearBtn.click();
+    await flush(20);
+
+    expect(queueTraffic(h.calls)).toEqual([
+      'POST /api/video-queue/skip',
+      'POST /api/video-queue/clear',
+      'GET /api/video-queue',
+    ]);
+    // Video skip defers its reload the same way the music path does.
+    expect(h.delays).toEqual([1000]);
+  });
+
+  it('music mode does NOT reinstall the handlers on repaint', () => {
+    // Inverted deliberately. This used to pin the duplication: every music-mode
+    // repaint replaced both handlers with freshly allocated closures. queue.js
+    // is the single owner now, so the identity bound at boot must survive any
+    // number of repaints.
     const { doc, sendInit } = bootWithInit();
     const skipBtn = doc.getElementById('skip-btn');
     const clearBtn = doc.getElementById('clear-queue-btn');
     const bootSkip = skipBtn.onclick;
+    const bootClear = clearBtn.onclick;
 
     sendInit(payloadFor('playing', 'visual-radio'));
-    const firstSkip = skipBtn.onclick;
-    const firstClear = clearBtn.onclick;
     sendInit(payloadFor('live', 'visual-radio'));
 
-    expect(firstSkip).not.toBe(bootSkip);
-    expect(skipBtn.onclick).not.toBe(firstSkip);
-    expect(clearBtn.onclick).not.toBe(firstClear);
+    expect(skipBtn.onclick).toBe(bootSkip);
+    expect(clearBtn.onclick).toBe(bootClear);
   });
 
-  it('video mode reuses the same named handlers across repaints', () => {
+  it('video mode uses that same boot-bound handler, across repaints', () => {
+    // Previously the video branch assigned FRQueue.skipVideo/clearVideoQueue
+    // directly, so the two modes had different handler identities. One owner
+    // now: the identity is the same in both modes and across repaints, and only
+    // what it dispatches to changes.
     const { doc, sendInit } = bootWithInit();
     const skipBtn = doc.getElementById('skip-btn');
     const clearBtn = doc.getElementById('clear-queue-btn');
+    const bootSkip = skipBtn.onclick;
+    const bootClear = clearBtn.onclick;
 
     sendInit(payloadFor('playing', 'video-playlist'));
-    const firstSkip = skipBtn.onclick;
-    const firstClear = clearBtn.onclick;
+    expect(skipBtn.onclick).toBe(bootSkip);
     sendInit(payloadFor('live', 'video-playlist'));
 
-    expect(skipBtn.onclick).toBe(firstSkip);
-    expect(clearBtn.onclick).toBe(firstClear);
+    expect(skipBtn.onclick).toBe(bootSkip);
+    expect(clearBtn.onclick).toBe(bootClear);
   });
 });
 

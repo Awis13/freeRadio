@@ -247,30 +247,52 @@
    * run the boot load and start the 5s active-queue poll — the same statements,
    * in the same order, that ran inline in app.js.
    */
+  /** Video mode when the live state says the visuals come from a video playlist. */
+  function isVideoMode() {
+    var s = getBroadcastState();
+    return !!s && s.visualMode === 'video-playlist';
+  }
+
+  function skipTrack() {
+    authFetch('/api/queue/skip', { method: 'POST' })
+      .then(function(r) { return r.json(); })
+      .then(function(data) {
+        if (data.ok) {
+          log('queue: skipped track');
+          setTimeout(loadQueue, 1000);
+          setTimeout(loadTrackHistory, 2000);
+        }
+      })
+      .catch(function(e) { showError('Skip failed: ' + e); });
+  }
+
+  function clearQueue() {
+    authFetch('/api/queue/clear', { method: 'POST' })
+      .then(function(r) { return r.json(); })
+      .then(function(data) {
+        if (data.ok) {
+          log('queue: cleared');
+          loadQueue();
+        }
+      })
+      .catch(function(e) { showError('Clear queue failed: ' + e); });
+  }
+
   function bindBootHandlers() {
+    // SINGLE OWNER. These two handlers used to be bound here AND re-declared,
+    // byte for byte, by broadcast.js's updateBroadcastUI on every repaint —
+    // the repaint copies existed only to add the video-mode branch. They now
+    // decide the mode themselves, at click time, from the injected broadcast
+    // state, so the buttons are wired exactly once and broadcast.js no longer
+    // reassigns them.
     skipBtn.onclick = function() {
-      authFetch('/api/queue/skip', { method: 'POST' })
-        .then(function(r) { return r.json(); })
-        .then(function(data) {
-          if (data.ok) {
-            log('queue: skipped track');
-            setTimeout(loadQueue, 1000);
-            setTimeout(loadTrackHistory, 2000);
-          }
-        })
-        .catch(function(e) { showError('Skip failed: ' + e); });
+      if (isVideoMode()) return skipVideo();
+      return skipTrack();
     };
 
     clearQueueBtn.onclick = function() {
-      authFetch('/api/queue/clear', { method: 'POST' })
-        .then(function(r) { return r.json(); })
-        .then(function(data) {
-          if (data.ok) {
-            log('queue: cleared');
-            loadQueue();
-          }
-        })
-        .catch(function(e) { showError('Clear queue failed: ' + e); });
+      if (isVideoMode()) return clearVideoQueue();
+      return clearQueue();
     };
     queueSearch.oninput = function() {
       renderTrackSelector(queueSearch.value);
