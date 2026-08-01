@@ -45,9 +45,14 @@
  *     poll fn settles -> a poll outliving its interval never overlaps
  *     itself;
  *   - stop(): clears all timers, nothing fires afterwards;
- *   - restoreConfigs(): downloads configs that are missing OR empty
- *     locally, restores missing overlay assets and metadata, syncs raw
- *     dirs; NoSuchKey/404 download failures are swallowed silently.
+ *   - restoreConfigs(): downloads configs that are missing, empty,
+ *     unparseable, or still carrying an unhandled quarantine sibling
+ *     (a post-corruption rewrite), restores missing overlay assets and
+ *     metadata, syncs raw dirs; NoSuchKey/404 download failures are
+ *     swallowed silently;
+ *   - pollConfigs(): refuses to upload a config whose quarantine sibling
+ *     is unhandled, so a defaults rewrite cannot overwrite the good S3
+ *     backup before a restore heals it.
  */
 
 import { describe, it, expect, beforeEach, afterEach, afterAll, vi } from 'vitest';
@@ -701,6 +706,42 @@ describe('dashboard/lib/syncWatcher.js', () => {
     // Nothing in S3 to protect, so blocking uploads forever would just mean
     // this config is never backed up at all.
     expect(liveFiles['/shared/playlists.json.corrupt-1700000000000.restored']).toBe('broken');
+  });
+
+  it('restores when main is valid but an unhandled quarantine sits beside it', async () => {
+    // The common path, and the one a size or parse check cannot see: jsonStore
+    // quarantined the file, the caller got defaults and wrote them straight
+    // back, so main is valid JSON of the WRONG content. Only the sibling says
+    // so. Without this the restore short-circuits, the sibling is never marked
+    // handled, and pollConfigs refuses to upload this config forever.
+    const { stubs } = loadS3();
+    sw = freshWatcher();
+    const files = allFilesPresent();
+    files['/shared/playlists.json'] = JSON.stringify({ playlists: {} });   // defaults written back
+    files['/shared/playlists.json.corrupt-1700000000000'] = '{"playlists": [truncated';
+    const { files: liveFiles } = mockFs(files);
+    stubs.download.mockImplementation(async (key, localPath) => {
+      liveFiles[localPath] = JSON.stringify({ playlists: { real: true } });
+    });
+
+    await sw.restoreConfigs();
+
+    // 1. the restore fired at all
+    expect(stubs.download.mock.calls).toEqual([
+      ['config/playlists.json', '/shared/playlists.json']
+    ]);
+    // 2. local now holds the S3 content, not the defaults
+    expect(JSON.parse(liveFiles['/shared/playlists.json'])).toEqual({ playlists: { real: true } });
+    // 3. the sibling is marked handled, evidence intact
+    expect(liveFiles['/shared/playlists.json.corrupt-1700000000000']).toBeUndefined();
+    expect(liveFiles['/shared/playlists.json.corrupt-1700000000000.restored'])
+      .toBe('{"playlists": [truncated');
+
+    // 4. and the backup is unblocked on the next tick
+    vi.useFakeTimers();
+    sw.start();
+    await vi.advanceTimersByTimeAsync(30000);
+    expect(stubs.uploadBuffer.mock.calls.map(([, key]) => key)).toContain('config/playlists.json');
   });
 
   it('tier.json is in the restore set', async () => {

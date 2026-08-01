@@ -394,16 +394,24 @@ describe('DELETE /:id', () => {
     expect(ACTIVE_FILE in h.files).toBe(true);
   });
 
-  it('AS-IS: a corrupt ACTIVE_FILE is swallowed and the delete still succeeds', async () => {
+  it('a corrupt ACTIVE_FILE is swallowed and the delete still succeeds', async () => {
     seed({ vpl_1: { id: 'vpl_1', name: 'M', type: 'manual', tracks: [] } });
     h.files[ACTIVE_FILE] = 'not json{{{';
 
     const res = await client.delete('/api/video-playlists/vpl_1');
     expect(res.status).toBe(200);
     expect(res.body).toEqual({ ok: true });
-    // Corrupt file is NOT touched (parse threw before the id check / unlink).
-    expect(h.files[ACTIVE_FILE]).toBe('not json{{{');
     expect(savedPlaylists().vpl_1).toBeUndefined();
+
+    // CHANGED BY T9: the read goes through jsonStore now, so the unparseable
+    // file is quarantined rather than left sitting there. The delete still
+    // succeeds either way — what moved is that the damaged bytes are preserved
+    // under a .corrupt-* name and the original path is freed, which is what
+    // lets syncWatcher restore it from S3.
+    expect(h.files[ACTIVE_FILE]).toBeUndefined();
+    const quarantined = Object.keys(h.files).filter(k => k.startsWith(ACTIVE_FILE + '.corrupt-'));
+    expect(quarantined).toHaveLength(1);
+    expect(h.files[quarantined[0]]).toBe('not json{{{');
   });
 });
 

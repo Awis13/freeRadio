@@ -82,7 +82,7 @@ function setQuality(preset) {
     return { error: 'Quality preset exceeds tier limit', maxAllowed: limits.maxQuality };
   }
   writeStore(QUALITY_FILE, { preset, timestamp: Date.now() }, { indent: 0 });
-  return { preset, settings: PRESETS[preset] };
+  return { preset, settings: { ...PRESETS[preset] } };
 }
 
 function getPresets() {

@@ -148,31 +148,47 @@ function isParseable(localPath) {
 }
 
 /**
- * Quarantine files jsonStore left beside `localPath` that no restore has dealt
- * with yet. Their presence means the local copy of this config was corrupt
- * recently, so whatever sits there now may be the defaults a caller wrote after
- * the failed read.
+ * Read SHARED_DIR once and group the unhandled quarantine files by the config
+ * they belong to: config name -> absolute paths.
+ *
+ * Their presence means the local copy of that config was corrupt recently, so
+ * whatever sits there now may be the defaults a caller wrote after the failed
+ * read. One directory read per pass, not one per config — this runs inside a
+ * loop over 18 files on a 30s timer.
  */
-function pendingQuarantines(localPath) {
-  const dir = path.dirname(localPath);
-  const prefix = path.basename(localPath) + QUARANTINE_MARK;
+function quarantineIndex() {
+  const index = new Map();
+  let entries;
   try {
-    return fs.readdirSync(dir)
-      .filter(name => name.startsWith(prefix) && !name.endsWith(HANDLED_MARK))
-      .map(name => path.join(dir, name));
+    entries = fs.readdirSync(SHARED_DIR);
   } catch (e) {
-    return [];
+    return index;
   }
+  for (const entry of entries) {
+    if (entry.endsWith(HANDLED_MARK)) continue;
+    const at = entry.indexOf(QUARANTINE_MARK);
+    if (at <= 0) continue;
+    const config = entry.slice(0, at);
+    if (!index.has(config)) index.set(config, []);
+    index.get(config).push(path.join(SHARED_DIR, entry));
+  }
+  return index;
 }
 
 /**
  * Mark quarantine files as dealt with, without deleting them — the damaged
- * bytes stay on disk for diagnosis, they just stop blocking uploads.
+ * bytes stay on disk for diagnosis, they just stop blocking uploads. The
+ * suffixed retry mirrors jsonStore's own bounded collision search, for the
+ * case where a previous quarantine already claimed the .restored name.
  */
 function markQuarantinesHandled(quarantinePaths) {
   for (const p of quarantinePaths) {
+    let target = p + HANDLED_MARK;
+    for (let n = 1; n <= 20 && fs.existsSync(target); n++) {
+      target = `${p}${HANDLED_MARK}-${n}`;
+    }
     try {
-      fs.renameSync(p, p + HANDLED_MARK);
+      fs.renameSync(p, target);
     } catch (e) {
       console.error(`[syncWatcher] could not mark ${p} handled: ${e.message}`);
     }
@@ -182,28 +198,36 @@ function markQuarantinesHandled(quarantinePaths) {
 async function restoreConfigs() {
   let restored = 0;
 
-  // Configs — restore if missing, empty (crash/power loss), or unparseable.
-  // The unparseable case is the torn write nobody has read yet: jsonStore
-  // quarantines a bad file the moment a store loads it, which leaves the name
-  // missing and is already covered above, but until then the truncated file
-  // sits there looking healthy to a size check.
+  // Configs — restore if missing, empty (crash/power loss), unparseable, or
+  // quarantined-but-since-rewritten.
+  //
+  // That last reason is the common path, not an edge case: jsonStore renames a
+  // corrupt file away and hands the caller defaults, the caller writes those
+  // defaults straight back, and the config on disk is now valid JSON of the
+  // wrong content. Judged on its own bytes it looks perfectly healthy — only
+  // the unhandled quarantine sibling says it is post-corruption. Without this
+  // the restore short-circuits, the sibling is never marked, and pollConfigs
+  // keeps refusing to upload that file on every boot, forever.
+  const siblings = quarantineIndex();
   for (const name of CONFIG_FILES) {
     const localPath = path.join(SHARED_DIR, name);
+    const pending = siblings.get(name) || [];
     const stat = fs.statSync(localPath, { throwIfNoEntry: false });
     let reason = null;
     if (!stat || stat.size === 0) {
       reason = stat ? 'empty' : 'missing';
     } else if (!NON_JSON_FILES.has(name) && !isParseable(localPath)) {
       reason = 'unparseable';
+    } else if (pending.length > 0) {
+      reason = 'quarantined';
     }
     if (!reason) continue;
 
-    const pending = pendingQuarantines(localPath);
     try {
       await s3.download('config/' + name, localPath);
       restored++;
-      if (reason === 'unparseable') {
-        console.error(`[syncWatcher] ${name} was unparseable — restored from S3`);
+      if (reason === 'unparseable' || reason === 'quarantined') {
+        console.error(`[syncWatcher] ${name} was ${reason} — restored from S3`);
       }
       // The local copy is trustworthy again, so uploads may resume.
       markQuarantinesHandled(pending);
@@ -327,6 +351,7 @@ async function pollMetadata() {
 // --- Poll: configs -> S3 ---
 
 async function pollConfigs() {
+  const siblings = quarantineIndex();
   for (const name of CONFIG_FILES) {
     const localPath = path.join(SHARED_DIR, name);
     const hashKey = 'config/' + name;
@@ -337,7 +362,7 @@ async function pollConfigs() {
     // a caller wrote after the failed read. Uploading that would destroy the
     // last good copy in S3 — the very thing restoreConfigs needs at restart.
     // Restoring the file clears the mark and uploads resume.
-    if (pendingQuarantines(localPath).length > 0) {
+    if ((siblings.get(name) || []).length > 0) {
       if (!_uploadBlocked.has(name)) {
         _uploadBlocked.add(name);
         console.error(
@@ -419,6 +444,9 @@ function start() {
 function stop() {
   for (const t of _timers) clearTimeout(t);
   _timers = [];
+  // Log-once state, not real state: a fresh start should report a still-blocked
+  // upload again rather than staying quiet because a previous run mentioned it.
+  _uploadBlocked.clear();
   console.log('[syncWatcher] stopped');
 }
 

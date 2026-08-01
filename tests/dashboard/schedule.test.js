@@ -596,19 +596,18 @@ describe('saveSchedule', () => {
   });
 
   it('writes JSON to file', () => {
+    const SCHEDULE_FILE = '/shared/schedule.json';
     const spy = vi.spyOn(fs, 'writeFileSync').mockImplementation(() => {});
-    // saveSchedule now writes atomically: the bytes go to <file>.tmp, which the
-    // rename moves into place. The path matcher below spans both.
+    // saveSchedule writes atomically: bytes to <file>.tmp, rename into place.
+    // Both paths are pinned EXACTLY — a substring match on the destination
+    // would still pass if the rename landed somewhere else entirely.
     const renameSpy = vi.spyOn(fs, 'renameSync').mockImplementation(() => {});
     vi.spyOn(fs, 'mkdirSync').mockImplementation(() => {});
     const data = { weekly: {}, events: {}, settings: {} };
     saveSchedule(data);
-    expect(renameSpy).toHaveBeenCalledWith(
-      expect.stringContaining('schedule.json.tmp'),
-      expect.stringContaining('schedule.json')
-    );
+    expect(renameSpy).toHaveBeenCalledWith(SCHEDULE_FILE + '.tmp', SCHEDULE_FILE);
     expect(spy).toHaveBeenCalledWith(
-      expect.stringContaining('schedule.json'),
+      SCHEDULE_FILE + '.tmp',
       JSON.stringify(data, null, 2)
     );
   });
