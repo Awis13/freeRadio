@@ -17,15 +17,20 @@ export default defineConfig({
       // repo and dragged the total to 33%.
       include: ['dashboard/lib/**', 'dashboard/routes/**', 'dashboard/server.js'],
 
-      // Floors, not targets. Measured over 4 runs on 2026-08-01:
-      //   statements 87.09-87.50, branches 91.26-91.33,
-      //   functions  78.85-80.82, lines    87.09-87.50
-      // Each floor sits below the LOWEST of those, because the numbers are not
-      // stable run to run: a handful of callbacks in small files (channelStrip,
-      // history, videoQueue) execute or not depending on async timing, and with
-      // few functions in those files the aggregate swings ~2 points. Functions
-      // therefore gets the widest margin. Raise these when coverage genuinely
-      // rises; do not lower them to make a red run green.
+      // Floors, not targets. The floors below ARE the contract; the spread that
+      // follows is indicative only, not hard bounds — later runs have already
+      // landed outside the band first recorded here, on both ends.
+      //
+      // Indicative spread, 2026-08-01:
+      //   statements ~87.0-87.6, branches ~91.2-91.4,
+      //   functions  ~78.8-80.9, lines    ~87.0-87.6
+      //
+      // The numbers are not stable run to run: a handful of callbacks in small
+      // files (channelStrip, history, videoQueue) execute or not depending on
+      // async timing, and with few functions in those files the aggregate swings
+      // ~2 points, so functions gets the widest margin. Each floor sits below
+      // anything observed. Raise them when coverage genuinely rises; do not
+      // lower them to make a red run green.
       thresholds: {
         statements: 86,
         branches: 90,
