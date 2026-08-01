@@ -25,7 +25,7 @@
  *     state; stays in app.js, injected here as setUserInteracted.
  *   - playTransitionLock — declared in this region but used ONLY by the
  *     broadcast machine (ARM/PLAY/STOP and the /api/status poll); no player
- *     code reads it. Stays in app.js.
+ *     code reads it. It now lives in broadcast.js.
  *   - isIOS / isSafari — UA detection shared with the analyzer (azInit reads
  *     isSafari). Single source stays in app.js and both flags are injected.
  *   - The Safari analyzer-hide block that sat at the top of this region
@@ -35,7 +35,7 @@
  *   - The analyzer and mute concerns now live in analyzer.js and arrive as
  *     deps: setPlayerMuted, ensureAnalyzer and resyncAnalyzerStream are wired
  *     to FRAnalyzer.setPlayerMuted / ensureInited / resyncStreamDecode.
- *   - The WebSocket stays in app.js; getWs/reconnectWs are injected so this
+ *   - The WebSocket lives in wsHub.js; getWs/reconnectWs are injected so this
  *     module never reaches into the socket or its backoff state.
  *
  * DOM refs are resolved via document.getElementById at call time, exactly as the

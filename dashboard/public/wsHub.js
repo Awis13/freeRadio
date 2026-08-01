@@ -11,8 +11,8 @@
  * deliberately holds no application state.
  *
  * DISPATCH IS INJECTED. Every case body manipulates state that belongs to
- * another slice — broadcastState (still app.js until the broadcast machine
- * moves), the now-playing readout, the restream status panel — so the hub owns
+ * another slice — broadcastState in broadcast.js, the now-playing readout, the
+ * restream status panel — so the hub owns
  * the socket, the parse and the switch, and each case calls a handler the host
  * supplies. The switch shape is preserved exactly, including the absence of a
  * default case: an unknown message type still falls through doing nothing.
@@ -75,8 +75,8 @@
   var wsReconnectDelay = 1000;
   var wsReconnectTimer = null;
 
-  // Facade seam over the shared-mutable `ws` socket handle (C2 of the core
-  // facade-foundation PR). All reads/writes of `ws` route through these so a
+  // Facade seam over the shared-mutable `ws` socket handle. All reads and
+  // writes of `ws` route through these so a
   // future PR can inject the socket without touching every call site. PURE
   // indirection — getWs() returns the same value, setWs() assigns the same
   // value; zero behaviour change. wsReconnectDelay/wsReconnectTimer stay

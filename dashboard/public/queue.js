@@ -9,8 +9,8 @@
  *
  * SPLIT-BRAIN, PRESERVED ON PURPOSE. The skip and clear buttons have TWO
  * handler bodies: the boot copies (moved here, bound by init) and duplicates
- * that updateBroadcastUI re-assigns on every repaint (still in app.js, since
- * the broadcast machine has not moved yet). They are byte-equivalent today.
+ * that updateBroadcastUI re-assigns on every repaint (now in broadcast.js).
+ * They are byte-equivalent today.
  * Consolidating them would be a behaviour change, so both survive this
  * extraction; the divergence and success-timer pins in broadcastUI.test.js keep
  * them honest. This is tracked for a follow-up, not fixed here.
@@ -21,10 +21,11 @@
  * DOM refs: #queue-list and #track-selector are region-private and resolved
  * once in init(), mirroring app.js's module-scope caching. #skip-btn,
  * #clear-queue-btn and #queue-search are ALSO read by updateBroadcastUI and
- * applyUiMode, so app.js keeps its own refs; this module resolves the same
- * elements by id.
+ * applyUiMode in broadcast.js, which resolves them itself; this module resolves
+ * the same elements by id.
  *
- * NOT MOVED, injected instead (all still app.js-resident):
+ * NOT OWNED HERE, injected instead — all three now belong to broadcast.js and
+ * arrive through app.js's wiring:
  *   - bpmMap, written by the WS 'init' and 'bpm' frames, read by the selector's
  *     BPM badge -> getBpmMap.
  *   - processedVisualFiles, written by loadProcessedVisuals -> getProcessedVisualFiles.
