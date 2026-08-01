@@ -1,30 +1,67 @@
 const fs = require('fs');
 const path = require('path');
-const { execSync } = require('child_process');
 const s3 = require('./s3');
 
-// Directory size in bytes
-function getCacheSize(dir) {
+/**
+ * Regular files under `dir`, with the stat fields the cache logic needs.
+ *
+ * One lister for both callers, because they have to agree: server.js decides
+ * whether to evict from getCacheSize and then lets evictOldest work out its own
+ * total. If those two counted differently, the trigger and the thing it
+ * triggers would be measuring different numbers.
+ *
+ * Options mirror what each caller means. getCacheSize walks the whole tree and
+ * counts everything, matching what `du` reported; evictOldest stays at the top
+ * level and skips dotfiles, because those are the only files it can delete.
+ */
+function listFiles(dir, { recursive = false, skipDotfiles = false } = {}) {
+  let entries;
   try {
-    const output = execSync(`du -sb "${dir}" 2>/dev/null`).toString().trim();
-    return parseInt(output.split('\t')[0]) || 0;
+    entries = fs.readdirSync(dir, { withFileTypes: true });
   } catch (e) {
-    return 0;
+    return [];
   }
+
+  const files = [];
+  for (const entry of entries) {
+    if (skipDotfiles && entry.name.startsWith('.')) continue;
+    const fp = path.join(dir, entry.name);
+    if (entry.isDirectory()) {
+      if (recursive) files.push(...listFiles(fp, { recursive, skipDotfiles }));
+      continue;
+    }
+    // Symlinks are skipped rather than followed: du -sb did not add the target
+    // twice, and following them could leave the cache directory entirely.
+    if (!entry.isFile()) continue;
+    try {
+      const stat = fs.statSync(fp);
+      files.push({ path: fp, name: entry.name, atime: stat.atimeMs, size: stat.size });
+    } catch (e) {}
+  }
+  return files;
+}
+
+/**
+ * Total bytes of cached content under `dir`.
+ *
+ * Was `du -sb`, which busybox does not support — alpine's du has no -b, so the
+ * shell-out failed on every call in the shipped image, the catch returned 0,
+ * and the eviction it gates therefore NEVER ran. Same intent, computed in
+ * process: the apparent size of every regular file in the tree.
+ *
+ * Two harmless differences from du: directory inodes themselves are not counted
+ * (du adds a block per directory, noise at the MB/GB scale this guards), and
+ * symlinks are not followed.
+ */
+function getCacheSize(dir) {
+  return listFiles(dir, { recursive: true })
+    .reduce((sum, f) => sum + f.size, 0);
 }
 
 // LRU eviction — delete files by atime while size > maxBytes
 function evictOldest(dir, maxBytes) {
   if (!fs.existsSync(dir)) return 0;
-  const files = [];
-  for (const name of fs.readdirSync(dir)) {
-    if (name.startsWith('.')) continue;
-    const fp = path.join(dir, name);
-    try {
-      const stat = fs.statSync(fp);
-      if (stat.isFile()) files.push({ path: fp, name, atime: stat.atimeMs, size: stat.size });
-    } catch (e) {}
-  }
+  const files = listFiles(dir, { skipDotfiles: true });
   // Sort by atime (oldest first)
   files.sort((a, b) => a.atime - b.atime);
 
