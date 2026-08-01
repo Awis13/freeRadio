@@ -28,12 +28,15 @@
  *     code reads it. Stays in app.js.
  *   - isIOS / isSafari — UA detection shared with the analyzer (azInit reads
  *     isSafari). Single source stays in app.js and both flags are injected.
- *   - The Safari analyzer-hide block that sat at the top of this region is an
- *     analyzer concern and stays in app.js until that slice moves.
- *   - setPlayerMuted, azInit/azInited, the azStreamAbort resync and the WS
- *     reconnect all belong to slices that have not moved yet; each is injected
- *     as a narrow dep (setPlayerMuted, ensureAnalyzer, resyncAnalyzerStream,
- *     getWs/reconnectWs) so this module never reaches into their state.
+ *   - The Safari analyzer-hide block that sat at the top of this region
+ *     deliberately stays in app.js: it hides the analyzer wrapper during app.js
+ *     evaluation, before FRAnalyzer.init runs. Consolidating it with the rest
+ *     of the analyzer is separate work, not done here.
+ *   - The analyzer and mute concerns now live in analyzer.js and arrive as
+ *     deps: setPlayerMuted, ensureAnalyzer and resyncAnalyzerStream are wired
+ *     to FRAnalyzer.setPlayerMuted / ensureInited / resyncStreamDecode.
+ *   - The WebSocket stays in app.js; getWs/reconnectWs are injected so this
+ *     module never reaches into the socket or its backoff state.
  *
  * DOM refs are resolved via document.getElementById at call time, exactly as the
  * former app.js closure referenced them.

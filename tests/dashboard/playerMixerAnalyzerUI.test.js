@@ -1,16 +1,18 @@
 /**
  * tests/dashboard/playerMixerAnalyzerUI.test.js
  *
- * Characterization pins for the player / monitor-mixer / analyzer slice of the
- * app.js IIFE, taken BEFORE it is extracted into its own modules:
+ * Characterization pins for the player / monitor-mixer / analyzer slice, taken
+ * before that slice was extracted out of the app.js IIFE and kept green through
+ * the extraction. Each region now has its own module:
  *
- *   - player        app.js:130-531 (overlay state machine, standby overlay,
- *                   mute button, HLS bootstrap, page-lifecycle recovery)
- *   - monitor mixer app.js:2019-2542
- *   - analyzer      app.js:2545-3496
+ *   - player        player.js   (overlay state machine, standby overlay, mute
+ *                               button, HLS bootstrap, page-lifecycle recovery)
+ *   - monitor mixer mixer.js
+ *   - analyzer      analyzer.js (including setPlayerMuted)
  *
- * They pin AS-IS observable behaviour and must stay green after the extraction
- * to prove zero behaviour change. Nothing here fixes anything.
+ * They pin AS-IS observable behaviour and staying green across the move is what
+ * proved zero behaviour change. Nothing here fixes anything. Code references
+ * below name modules and functions rather than line numbers, which rot.
  *
  * CONSUMER-SHAPED. Every pin is driven through a real entry point — a dispatched
  * media event on <video id="studio-player">, a click on a real button, a WS frame
@@ -20,8 +22,9 @@
  * assertion, never as the primary pin.
  *
  * NATIVE-HLS BRANCH: appBoot stubs Hls.isSupported() to false, so initPlayer
- * takes the native-HLS path (app.js:299-308) and useNativeHls stays true. That is
- * what makes the <video> 'error' handler at app.js:234-241 live in these tests —
+ * takes the native-HLS path (player.js initPlayer) and useNativeHls stays true.
+ * That is what makes the <video> 'error' handler (player.js bindMediaListeners)
+ * live in these tests —
  * it returns early unless useNativeHls. The hls.js branch is unreachable here and
  * is deliberately not pinned.
  *
@@ -50,13 +53,14 @@
  *   - The ENTIRE monitor mixer UI (#monitor-mixer and every mm-* control) sits
  *     inside a PHASE 2 HTML comment, so every element it is wired to is null.
  *     startMic has exactly two call sites and both are behind that markup: the
- *     mm-mic-btn click listener (app.js:2370, bound only under `if (mmMicBtn)`)
- *     and `setTimeout(startMic, 100)` in the mic-input-select change listener
- *     (app.js:2450, bound only under `if (micInputSelect)` at 2446). Neither
+ *     mm-mic-btn click listener (mixer.js bindControls, bound only under
+ *     `if (mmMicBtn)`) and `setTimeout(startMic, 100)` in the mic-input-select
+ *     change listener (also bindControls, under `if (micInputSelect)`). Neither
  *     listener ever binds, so startMic never runs — which makes its
  *     `if (!azInited) azInit()` hop, the monitor meters, and the whole auto-duck
  *     envelope follower unreachable in Phase 1.
- *   - pendingModeSwitch can never become true: the only writer (app.js:1362) is
+ *   - pendingModeSwitch can never become true: the only writer (applyUiMode in
+ *     app.js) is
  *     gated on streamMode === 'live', but both applyUiMode callers bail out
  *     unless streamMode === 'standby'. Its hard-block branch in hideLoading is
  *     therefore dead.
@@ -117,7 +121,7 @@ function captureTimers(win) {
  * analyzer actually latches. appBoot ships only createAnalyser /
  * createMediaElementSource / createGain, so azInit throws on
  * createChannelSplitter and falls into its catch. These extra members are the
- * minimum azInit (app.js:3000-3040) touches on the success path.
+ * minimum azInit (analyzer.js) touches on the success path.
  */
 function installWorkingAudioContext(win) {
   const Base = win.AudioContext;
@@ -169,11 +173,12 @@ async function loginWithStatus(win, doc, status) {
 }
 
 describe('player overlay state machine', () => {
-  // showLoading / hideLoading and the lock fields: app.js:153-181.
+  // showLoading / hideLoading and the lock fields: player.js.
 
   it('ships visible from the markup, before any showLoading call', () => {
     const { doc } = boot();
-    // index.html:86-88 hard-codes class="visible" and the placeholder text, so
+    // The #player-overlay markup in index.html hard-codes class="visible" and
+    // the placeholder text, so
     // the overlay is up from first paint rather than from a showLoading call.
     expect(overlayState(doc)).toEqual({ visible: true, text: 'Loading stream...' });
   });
@@ -195,7 +200,7 @@ describe('player overlay state machine', () => {
   it('timeupdate is a no-op while the standby overlay is up', async () => {
     const { win, doc } = boot();
     // An idle poll turns the static noise on (noiseActive), which is the guard
-    // at app.js:192 — the handler returns before hiding anything.
+    // in player.js's timeupdate listener — it returns before hiding anything.
     await loginWithStatus(win, doc, statePayload('standby', false));
     expect(doc.getElementById('standby-overlay').classList.contains('active')).toBe(true);
 
@@ -214,7 +219,8 @@ describe('player overlay state machine', () => {
 
     expect(overlayState(doc)).toEqual({ visible: true, text: 'Reconnecting...' });
     // showLoading arms its own 20s safety net first, then the error handler
-    // schedules restartPlayer at 2s (app.js:162-167 and 240).
+    // schedules restartPlayer at 2s (player.js showLoading and the media
+    // 'error' listener in bindMediaListeners).
     expect(delays).toEqual([20000, 2000]);
   });
 
@@ -227,14 +233,15 @@ describe('player overlay state machine', () => {
 
     doc.getElementById('studio-player').dispatchEvent(new win.Event('error'));
 
-    // app.js:238 returns before showLoading — the poster loops normally.
+    // player.js's 'error' listener returns before showLoading — the poster
+    // loops normally.
     expect(overlayState(doc).visible).toBe(false);
     expect(delays).toEqual([]);
   });
 });
 
 describe('page lifecycle recovery', () => {
-  // visibilitychange (app.js:452-479) and the bfcache pageshow (app.js:482-491).
+  // visibilitychange and the bfcache pageshow: player.js bindPageLifecycle.
 
   it('a bfcache restore restarts the player behind a locked overlay', () => {
     const { win, doc } = boot();
@@ -268,7 +275,8 @@ describe('page lifecycle recovery', () => {
     const delays = captureTimers(win);
 
     // The 5s absence matters: it is past the 3s staleness threshold, so the
-    // standby guard at app.js:462 is the ONLY thing preventing a restart. Without
+    // standby guard in player.js bindPageLifecycle is the ONLY thing preventing
+    // a restart. Without
     // an advanced clock this pin would pass with that guard deleted.
     goHiddenThenVisible(win, doc, 5000);
 
@@ -298,7 +306,7 @@ describe('page lifecycle recovery', () => {
 
     goHiddenThenVisible(win, doc, 0);
 
-    // Under the 3s threshold app.js takes the tryPlay branch (app.js:470),
+    // Under the 3s threshold bindPageLifecycle takes the tryPlay branch,
     // which shows nothing and schedules nothing while play() resolves.
     expect(overlayState(doc).visible).toBe(false);
     expect(delays).toEqual([]);
@@ -331,7 +339,8 @@ function goHiddenThenVisible(win, doc, awayMs) {
 }
 
 describe('standby overlay and the player mute path', () => {
-  // startStaticNoise/stopStaticNoise (app.js:263-273) and setPlayerMuted (3042).
+  // startStaticNoise/stopStaticNoise (player.js) and setPlayerMuted
+  // (analyzer.js — it drives the analyzer gain node).
 
   it('an idle poll raises the standby overlay and leaves the player muted', async () => {
     const { win, doc } = boot();
@@ -352,7 +361,8 @@ describe('standby overlay and the player mute path', () => {
     await loginWithStatus(win, doc, statePayload('live', false));
 
     expect(doc.getElementById('standby-overlay').classList.contains('active')).toBe(false);
-    // The poll restores mute from the button's own class (app.js:1949), which
+    // The poll restores mute from the button's own class (loadBroadcastState in
+    // app.js), which
     // is still muted here because no gesture has touched it.
     expect(doc.getElementById('studio-player').muted).toBe(true);
     expect(win.__appStudio.getUserInteracted()).toBe(false);
@@ -384,8 +394,9 @@ describe('standby overlay and the player mute path', () => {
 
     doc.getElementById('player-mute-btn').click();
 
-    // setPlayerMuted refuses to unmute without a gesture (app.js:3043), and the
-    // handler sets the flag first (app.js:245) so its own unmute always passes.
+    // setPlayerMuted refuses to unmute without a gesture (analyzer.js), and the
+    // handler sets the flag first (player.js bindMuteButton) so its own unmute
+    // always passes.
     // Every other reachable setPlayerMuted(false) caller — the PLAY button and
     // its async continuations — likewise sets the flag first, so the guard's
     // blocking branch has no consumer that can trip it.
@@ -521,7 +532,7 @@ describe('track clock seam (window.__appStudio.getTrackStartedAt)', () => {
 
     send({ type: 'audio', data: { filename: 'track.mp3', startedAt: Date.now(), duration: 120 } });
 
-    // updateAudio returns at app.js:707 for standby/armed/arming, so neither the
+    // updateAudio (app.js) returns early for standby/armed/arming, so neither the
     // clock nor the transport row moves.
     expect(win.__appStudio.getTrackStartedAt()).toBe(0);
     expect(doc.getElementById('transport-bar-fill').style.width).toBe('');
@@ -536,7 +547,7 @@ describe('track clock seam (window.__appStudio.getTrackStartedAt)', () => {
     send({ type: 'audio', data: { filename: 'a.mp3', startedAt, duration: 100 } });
     send({ type: 'audio', data: { filename: 'b.mp3', duration: 100 } });
 
-    // `if (data.startedAt)` at app.js:722 keeps the old value rather than
+    // The `if (data.startedAt)` guard in updateAudio keeps the old value rather than
     // resetting the clock, so the bar keeps advancing from the old track.
     expect(win.__appStudio.getTrackStartedAt()).toBe(startedAt);
     expect(doc.getElementById('transport-elapsed').textContent).toBe('0:10');
@@ -544,7 +555,7 @@ describe('track clock seam (window.__appStudio.getTrackStartedAt)', () => {
 });
 
 describe('monitor mixer is absent in Phase 1', () => {
-  // The whole section (app.js:2019-2542) is guarded on DOM that index.html
+  // The whole section (now mixer.js) is guarded on DOM that index.html
   // ships inside a PHASE 2 comment. These pins lock that in, so the extraction
   // keeps the null guards rather than assuming the controls exist.
 

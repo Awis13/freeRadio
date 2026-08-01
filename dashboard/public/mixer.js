@@ -21,8 +21,8 @@
  *   duckMultiplier, duckSpeed, duckSpeeds, duckThreshold, duckActive, and the
  *   mm-* DOM refs.
  *
- * monitorMusicGain and mmMasterGain are read by setPlayerMuted, which stays in
- * app.js until the analyzer/mute slice moves, so they are exposed as live
+ * monitorMusicGain and mmMasterGain are read by FRAnalyzer.setPlayerMuted,
+ * which drives the analyzer gain node from them, so they are exposed as live
  * getters (getMonitorMusicGain / getMasterGain) and that call site re-sources
  * through them rather than the module handing out a copy.
  *
@@ -667,7 +667,7 @@
     startMicStreaming: startMicStreaming,
     stopMicStreaming: stopMicStreaming,
     checkMicStreaming: checkMicStreaming,
-    // Live gain getters — setPlayerMuted (still in app.js) reads both.
+    // Live gain getters — FRAnalyzer.setPlayerMuted reads both.
     getMonitorMusicGain: function () { return monitorMusicGain; },
     getMasterGain: function () { return mmMasterGain; },
     isMicActive: function () { return micActive; },
