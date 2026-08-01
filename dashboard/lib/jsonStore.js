@@ -26,12 +26,6 @@ const path = require('path');
  * pass absolute paths (composed via paths.js); this module never builds one.
  */
 
-/**
- * Move a file that failed to parse aside, so it is neither read again nor
- * silently overwritten. Returns the quarantine path, or null if it could not
- * be moved (a read-only mount, say) — in which case the caller still gets
- * defaults, which is exactly the old behaviour.
- */
 /** How many suffixed names to try before falling back to a random one. */
 const MAX_QUARANTINE_ATTEMPTS = 20;
 
@@ -56,6 +50,12 @@ function quarantineTarget(file) {
   return fs.existsSync(random) ? null : random;
 }
 
+/**
+ * Move a file that failed to parse aside, so it is neither read again nor
+ * silently overwritten. Returns the quarantine path, or null if it could not
+ * be moved (a read-only mount, say) — in which case the caller still gets
+ * defaults, which is exactly the old behaviour.
+ */
 function quarantine(file) {
   const target = quarantineTarget(file);
   if (!target) {

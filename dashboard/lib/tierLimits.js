@@ -13,10 +13,10 @@ const TIER_LIMITS = {
 const QUALITY_ORDER = ['low', 'medium', 'high', 'standard', 'kick', 'ultra', 'godmode'];
 
 function getTier() {
-  try {
-    const data = readStore(TIER_FILE, null);
-    if (data && data.tier && TIER_LIMITS[data.tier]) return data.tier;
-  } catch (e) {}
+  // readStore never throws: a missing, unreadable or corrupt file yields the
+  // defaults passed here.
+  const data = readStore(TIER_FILE, null);
+  if (data && data.tier && TIER_LIMITS[data.tier]) return data.tier;
   return 'free';
 }
 

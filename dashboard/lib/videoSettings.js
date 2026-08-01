@@ -7,12 +7,11 @@ const VIDEO_FILE = paths.shared('stream_video.json');
 const VIDEO_ENHANCEMENT_FILTER = 'eq=saturation=1.15:contrast=1.03,unsharp=3:3:0.5,deband';
 
 function getVideoSettings() {
-  try {
-    const data = readStore(VIDEO_FILE, null);
-    if (data) {
-      return { enhanced: data.enhanced === true };
-    }
-  } catch (e) {}
+  // readStore never throws — no catch needed around it.
+  const data = readStore(VIDEO_FILE, null);
+  if (data) {
+    return { enhanced: data.enhanced === true };
+  }
   return { enhanced: false };
 }
 

@@ -287,4 +287,6 @@ if (process.env.NODE_ENV !== 'test') {
 // Test-only exports for the characterization harness (tests/dashboard/server.test.js).
 // `state` is exported so tests can drive /api/health and getInitState() pins;
 // nothing in production reads these exports (entrypoint just runs this file).
-module.exports = { app, server, state, getInitState };
+// PUBLIC_PATHS is exported for the characterization tests: it decides what is
+// reachable without a token, so its contents are pinned literally.
+module.exports = { app, server, state, getInitState, PUBLIC_PATHS };

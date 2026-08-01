@@ -10,9 +10,13 @@ const s3 = require('./s3');
  * total. If those two counted differently, the trigger and the thing it
  * triggers would be measuring different numbers.
  *
- * Options mirror what each caller means. getCacheSize walks the whole tree and
- * counts everything, matching what `du` reported; evictOldest stays at the top
- * level and skips dotfiles, because those are the only files it can delete.
+ * What is shared is the sizing RULES — what counts as a file, and at what
+ * size. The SCOPE deliberately differs, and the options say which is which:
+ * getCacheSize walks the whole tree and counts everything, matching what `du`
+ * reported, while evictOldest stays at the top level and skips dotfiles
+ * because those are the only files it can actually delete. Eviction measuring
+ * a wider scope than it can act on would loop trying to free bytes it is not
+ * allowed to touch.
  */
 function listFiles(dir, { recursive = false, skipDotfiles = false } = {}) {
   let entries;

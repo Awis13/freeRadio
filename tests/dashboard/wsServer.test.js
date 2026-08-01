@@ -3,16 +3,21 @@
  *
  * Characterization of dashboard/lib/wsServer.js (P1-5).
  *
- * Strategy: wsServer is CJS and bakes DASHBOARD_TOKEN into a module-level
- * const at require time (NOT at connection time). vi.mock() is inert for
- * requires made inside CJS modules in this repo (see server.test.js), so we
- * use the liqClient.test.js technique: set env BEFORE a fresh require
+ * Strategy: wsServer decides admission through lib/authGate, which reads env
+ * per call. vi.mock() is inert for requires made inside CJS modules in this
+ * repo (see server.test.js), so we set env BEFORE a fresh require
  * (cache-deleted), then run a REAL loopback http server + real ws clients
  * from the same `ws` package the lib uses.
  *
- * Pinned here (current behavior, dashboard frontend depends on it):
- *   - no-token mode: client is auto-authenticated and receives
- *     {type:'init', data:getInitState()} immediately on connect;
+ * Pinned here — the three authGate postures, on BOTH the plain server and its
+ * TLS twin, which carry byte-identical copies of the decision:
+ *   - open (no token, AUTH_DISABLED=true): client is authenticated on connect
+ *     and receives {type:'init', data:getInitState()} immediately. NOTE this
+ *     used to happen whenever DASHBOARD_TOKEN was merely unset, which meant an
+ *     unconfigured deployment streamed its live state to anyone who connected;
+ *     T11 made it require the explicit opt-out;
+ *   - closed (no token, no opt-out): close(4401, 'Auth is not configured')
+ *     without ever sending state;
  *   - token mode auth state machine, exact close-code contract:
  *       correct first {type:'auth'} -> init + 5s timer cleared (no later close)
  *       wrong token              -> close(4401, 'Invalid token')
