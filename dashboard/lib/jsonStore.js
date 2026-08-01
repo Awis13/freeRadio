@@ -32,17 +32,18 @@ const path = require('path');
  * be moved (a read-only mount, say) — in which case the caller still gets
  * defaults, which is exactly the old behaviour.
  */
-/** How many suffixed names to try before giving up on quarantining. */
-const MAX_QUARANTINE_ATTEMPTS = 50;
+/** How many suffixed names to try before falling back to a random one. */
+const MAX_QUARANTINE_ATTEMPTS = 20;
 
 /**
  * Pick a free `<file>.corrupt-<ts>` name, or null if one cannot be found.
  *
  * The search is BOUNDED. An earlier version looped until existsSync said no,
  * which never terminates if existsSync keeps saying yes — it took a whole test
- * worker down with an out-of-memory abort. Fifty collisions would mean fifty
- * corruptions of the same file inside one millisecond; past that, skipping the
- * quarantine is far better than hanging the caller.
+ * worker down with an out-of-memory abort. Twenty collisions would already mean
+ * twenty corruptions of the same file inside one millisecond, so after that it
+ * tries a single random name and then gives up: skipping the quarantine is far
+ * better than hanging the caller.
  */
 function quarantineTarget(file) {
   const base = `${file}.corrupt-${Date.now()}`;
@@ -51,7 +52,8 @@ function quarantineTarget(file) {
     const candidate = `${base}-${n}`;
     if (!fs.existsSync(candidate)) return candidate;
   }
-  return null;
+  const random = `${base}-${Math.random().toString(36).slice(2, 10)}`;
+  return fs.existsSync(random) ? null : random;
 }
 
 function quarantine(file) {
