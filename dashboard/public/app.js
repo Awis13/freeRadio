@@ -128,7 +128,12 @@
   }, 1000);
 
   // --- HLS Player (live-only, no scrubbing) ---
-  var hlsInstance = null;
+  // The player, the loading/standby overlays and the page-lifecycle recovery now
+  // live in player.js (window.FRPlayer); FRPlayer.init() below injects the host
+  // services and runs the boot side-effects that used to be statements here.
+  // playerMuteBtn stays because the ARM/PLAY/STOP handlers and the /api/status
+  // poll still read and write it; isIOS/isSafari stay because the analyzer reads
+  // isSafari (azInit), and both are injected into the player module.
   var playerMuteBtn = document.getElementById('player-mute-btn');
   var isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
   var isSafari = /^((?!chrome|android).)*safari/i.test(navigator.userAgent) || isIOS;
@@ -139,355 +144,41 @@
     if (_aw) _aw.style.display = 'none';
   }
 
-  // --- Overlay state machine ---
-  // showLoading(text, source, lockMs) — show overlay.
-  //   lockMs: minimum display time. During lock, only 'manifest' and 'safety' can hide.
-  //           timeupdate/canplay from old stream are blocked until lock expires.
-  // hideLoading(source) — hide overlay (respects lock for auto-sources).
-  var aliveTimer = null;    // 4s no-timeupdate → show "Loading stream..."
-  var safetyTimer = null;   // 20s max overlay duration
-  var hlsRetryTimer = null;
-  var overlayLockedUntil = 0;  // timestamp — auto-hide blocked until this time
-  var pendingModeSwitch = false;  // hard block: overlay stays until mode actually applies
-
-  function showLoading(text, source, lockMs) {
-    var overlay = document.getElementById('player-overlay');
-    var overlayText = document.getElementById('player-overlay-text');
-    if (text) overlayText.textContent = text;
-    overlay.classList.add('visible');
-    if (lockMs) overlayLockedUntil = Date.now() + lockMs;
-    log('OVR SHOW "' + text + '" src=' + (source || '?') + (lockMs ? ' lock=' + lockMs + 'ms' : ''));
-    // Safety net: never stuck > 20s
-    if (safetyTimer) clearTimeout(safetyTimer);
-    safetyTimer = setTimeout(function() {
-      safetyTimer = null;
-      log('OVR safety 20s expired');
-      overlayLockedUntil = 0;
-      hideLoading('safety');
-    }, 20000);
-  }
-
-  function hideLoading(source) {
-    // pendingModeSwitch: hard block — only mode-applied and safety can hide
-    if (pendingModeSwitch && source !== 'mode-applied' && source !== 'safety') return;
-    // Timestamp lock: block auto-sources (timeupdate, canplay) for brief overlays
-    if ((source === 'timeupdate' || source === 'canplay') && Date.now() < overlayLockedUntil) return;
-    var overlay = document.getElementById('player-overlay');
-    var wasVisible = overlay.classList.contains('visible');
-    overlay.classList.remove('visible');
-    overlayLockedUntil = 0;
-    if (wasVisible) log('OVR HIDE src=' + (source || '?'));
-    if (safetyTimer) { clearTimeout(safetyTimer); safetyTimer = null; }
-  }
-
-  function clearAllTimers(source) {
-    if (aliveTimer) { clearTimeout(aliveTimer); aliveTimer = null; }
-    if (safetyTimer) { clearTimeout(safetyTimer); safetyTimer = null; }
-    if (hlsRetryTimer) { clearTimeout(hlsRetryTimer); hlsRetryTimer = null; }
-    if (playRetryTimer) { clearTimeout(playRetryTimer); playRetryTimer = null; }
-  }
-
-  // timeupdate = video is receiving frames → stream alive → hide overlay (if not locked)
-  getStudioPlayer().addEventListener('timeupdate', function() {
-    if (noiseActive) return;
-    if (broadcastState && broadcastState.arming) return;
-    if (aliveTimer) { clearTimeout(aliveTimer); aliveTimer = null; }
-    hideLoading('timeupdate');
-    aliveTimer = setTimeout(function() {
-      aliveTimer = null;
-      if (noiseActive) return;
-      // Don't show buffering overlay when armed (poster loops normally)
-      if (broadcastState && broadcastState.streamMode === 'armed') return;
-      showLoading('Buffering...', 'alive-timeout');
-    }, 4000);
-  });
-
-  getStudioPlayer().addEventListener('canplay', function() {
-    hideLoading('canplay');
-  });
-
-  // No seeking handler needed — controls are disabled (pointer-events: none)
-  // Previously had a snap-to-live handler here, but it fought with HLS.js
-  // gap recovery (bufferSeekOverHole), creating an infinite loop every 100ms.
-
-  // iOS/Safari: recover from stalls — video element fires 'stalled' when buffering stops
-  var stallCount = 0;
-  var stallResetTimer = null;
-  getStudioPlayer().addEventListener('stalled', function() {
-    if (noiseActive) return;
-    if (broadcastState && (broadcastState.streamMode === 'armed' || broadcastState.arming)) return;
-    stallCount++;
-    log('PLR stalled (#' + stallCount + ')');
-    if (!stallResetTimer) {
-      stallResetTimer = setTimeout(function() {
-        if (stallCount >= 3) {
-          log('PLR too many stalls (' + stallCount + '), restarting');
-          restartPlayer('stall-recovery');
-        }
-        stallCount = 0;
-        stallResetTimer = null;
-      }, 8000);
-    }
-  });
-
-  // Native HLS (old iOS): recover from errors
-  getStudioPlayer().addEventListener('error', function() {
-    if (!useNativeHls) return;
-    var err = getStudioPlayer().error;
-    log('PLR native error: ' + (err ? err.code + ' ' + err.message : 'unknown'));
-    if (broadcastState && (broadcastState.streamMode === 'armed' || broadcastState.arming)) return;
-    showLoading('Reconnecting...', 'native-error');
-    setTimeout(function() { restartPlayer('native-error'); }, 2000);
-  });
-
-  // Mute/unmute (integrated with CRT Analyzer GainNode)
-  playerMuteBtn.onclick = function() {
-    setUserInteracted(true);
-    if (!azInited) azInit();
-    var muted = !getStudioPlayer().muted;
-    setPlayerMuted(muted);
-    playerMuteBtn.innerHTML = muted ? '&#128263;' : '&#128266;';
-    playerMuteBtn.title = muted ? 'Unmute' : 'Mute';
-    if (!muted) playerMuteBtn.classList.add('unmuted');
-    else playerMuteBtn.classList.remove('unmuted');
-  };
-
-  // --- Standby Overlay (solid black div) ---
-  var standbyOverlay = document.getElementById('standby-overlay');
-  var noiseActive = false;
+  // Player-adjacent state that did NOT move with the player: playTransitionLock
+  // is read/written only by the broadcast machine (ARM/PLAY/STOP and the
+  // /api/status poll) and by no player code at all, and userInteracted is
+  // studio-facade state read by setPlayerMuted and the studio test hook. The
+  // player module receives setUserInteracted as a dep.
   var playTransitionLock = false; // prevents loadBroadcastState from interfering during PLAY
   var userInteracted = false; // blocks unmuting until user clicks ARM/PLAY/mute
   function getUserInteracted() { return userInteracted; }
   function setUserInteracted(v) { userInteracted = v; }
 
-  function startStaticNoise() {
-    noiseActive = true;
-    standbyOverlay.classList.add('active');
-    log('STANDBY overlay on');
-  }
-
-  function stopStaticNoise() {
-    noiseActive = false;
-    standbyOverlay.classList.remove('active');
-    log('STANDBY overlay off');
-  }
-
-  function flashTransition() {
-    var channelFlash = document.getElementById('channel-flash');
-    channelFlash.style.display = 'block';
-    channelFlash.style.opacity = '0.8';
-    var start = performance.now();
-    function fade(now) {
-      var elapsed = now - start;
-      if (elapsed >= 300) {
-        channelFlash.style.display = 'none';
-        return;
+  // Wire the player module and run its boot side-effects (media-element
+  // listeners, mute button, initPlayer(), page-lifecycle listeners) in the same
+  // order they ran as inline statements. The analyzer, mute and WebSocket
+  // helpers it needs belong to slices that have not been extracted yet, so each
+  // is injected as a narrow callback rather than letting the player reach into
+  // app.js state.
+  FRPlayer.init({
+    log: log,
+    getStudioPlayer: getStudioPlayer,
+    getBroadcastState: getBroadcastState,
+    setPlayerMuted: function (m) { setPlayerMuted(m); },
+    setUserInteracted: setUserInteracted,
+    ensureAnalyzer: function () { if (!azInited) azInit(); },
+    resyncAnalyzerStream: function () {
+      // Restart Safari stream decode so analyzer re-syncs with new HLS session
+      if (azStreamAbort) {
+        azStreamAbort.abort();
+        azStreamAbort = null;
+        azStartStreamDecode();
       }
-      channelFlash.style.opacity = (0.8 * (1 - elapsed / 300)).toFixed(3);
-      requestAnimationFrame(fade);
-    }
-    requestAnimationFrame(fade);
-  }
-
-  var hlsSrc = '/hls/stream.m3u8';
-  var useNativeHls = false;
-
-  function initPlayer() {
-    getStudioPlayer().muted = true; // force muted — Safari may persist unmuted state across reloads
-    log('PLR init src=' + hlsSrc);
-
-    if (isSafari || typeof Hls === 'undefined' || !Hls.isSupported()) {
-      // iOS: native HLS (reliable). Desktop fallback when no MSE.
-      // createMediaElementSource doesn't work on Safari (HLS or MMS) — WebKit bug 180696.
-      // Also fallback for very old browsers without MSE.
-      log('PLR mode=native-hls' + (isSafari ? ' (Safari)' : ' (no MSE)'));
-      useNativeHls = true;
-      getStudioPlayer().src = hlsSrc;
-      tryPlay('native-init');
-      return;
-    }
-    // hls.js works on Chrome, Firefox, Safari desktop 17.1+ (via ManagedMediaSource)
-    log('PLR mode=hls.js v' + (Hls.version || '?'));
-    startHls('init');
-  }
-
-  var playRetryTimer = null;
-  function tryPlay(source) {
-    if (playRetryTimer) { clearTimeout(playRetryTimer); playRetryTimer = null; }
-    var attempt = 0;
-    var maxAttempts = isIOS ? 8 : 3;
-    function go() {
-      getStudioPlayer().play().then(function() {
-        log('PLR play() ok src=' + source + ' attempt=' + attempt);
-      }).catch(function(e) {
-        attempt++;
-        if (attempt < maxAttempts) {
-          var delay = Math.min(500 * attempt, 3000);
-          log('PLR play() rejected (#' + attempt + '): ' + e + ', retry in ' + delay + 'ms');
-          playRetryTimer = setTimeout(go, delay);
-        } else {
-          log('PLR play() gave up after ' + attempt + ' attempts');
-        }
-      });
-    }
-    go();
-  }
-
-  function startHls(source, configOverride) {
-    log('HLS startHls src=' + (source || '?'));
-    if (hlsInstance) {
-      hlsInstance.destroy();
-      hlsInstance = null;
-    }
-
-    // Reset stale video element buffers after HLS destroy
-    // Without this, readyState/videoWidth/currentTime retain old values
-    getStudioPlayer().removeAttribute("src");
-    getStudioPlayer().load();
-
-    var hlsConfig = {
-      lowLatencyMode: false,
-      backBufferLength: 0,
-      enableWorker: true,
-      liveSyncDurationCount: 3,
-      liveMaxLatencyDurationCount: 6,
-      liveDurationInfinity: true,
-      maxBufferLength: 4,
-      maxMaxBufferLength: 8,
-      maxLiveSyncPlaybackRate: 1.5
-    };
-    if (configOverride) {
-      for (var k in configOverride) hlsConfig[k] = configOverride[k];
-    }
-    hlsInstance = new Hls(hlsConfig);
-
-    var errorCount = 0;
-    var errorResetTimer = null;
-
-    hlsInstance.on(Hls.Events.ERROR, function (_, data) {
-      if (data.fatal) {
-        // ARM/ARMED: pipeline restarting (flush stale mbuffer), HLS segments updating.
-        // Instead of ignoring — recover with delay to wait for fresh segments.
-        if (broadcastState && (broadcastState.streamMode === 'armed' || broadcastState.arming)) {
-          log('HLS FATAL during ARM/ARMED: ' + data.details + ' (recovering in 2s)');
-          hlsInstance.destroy();
-          hlsInstance = null;
-          if (hlsRetryTimer) clearTimeout(hlsRetryTimer);
-          hlsRetryTimer = setTimeout(function() {
-            hlsRetryTimer = null;
-            startHls('arm-recovery');
-          }, 2000);
-          return;
-        }
-        log('HLS FATAL ' + data.details);
-        showLoading('Reconnecting...', 'hls-fatal');
-        hlsInstance.destroy();
-        hlsInstance = null;
-        if (hlsRetryTimer) clearTimeout(hlsRetryTimer);
-        hlsRetryTimer = setTimeout(function() {
-          hlsRetryTimer = null;
-          startHls('retry');
-        }, 1500);
-        return;
-      }
-      // Non-fatal errors: if too many in a short window, force restart
-      errorCount++;
-      if (!errorResetTimer) {
-        errorResetTimer = setTimeout(function() {
-          errorResetTimer = null;
-          // Don't restart during ARM/ARMED
-          if (broadcastState && (broadcastState.streamMode === 'armed' || broadcastState.arming)) {
-            errorCount = 0;
-            return;
-          }
-          if (errorCount > 15) {
-            log('HLS too many errors (' + errorCount + '), restarting');
-            restartPlayer('error-flood');
-          }
-          errorCount = 0;
-        }, 3000);
-      }
-    });
-
-    hlsInstance.on(Hls.Events.MANIFEST_PARSED, function () {
-      // Don't hide overlay during ARM — checkReady will hide it when video actually appears
-      if (broadcastState && broadcastState.arming) { log('HLS MANIFEST_PARSED (arming, keep overlay)'); tryPlay('manifest'); return; }
-      hideLoading('manifest');
-      log('HLS MANIFEST_PARSED → play()');
-      tryPlay('manifest');
-    });
-
-    hlsInstance.loadSource(hlsSrc);
-    hlsInstance.attachMedia(getStudioPlayer());
-  }
-
-  // restartPlayer: clean restart — clears ALL timers, shows overlay during reconnect
-  function restartPlayer(source, hlsConfigOverride) {
-    log('PLR restart src=' + (source || '?'));
-    clearAllTimers('restart-' + (source || '?'));
-    // Show overlay during reconnection — locked so stale timeupdate can't hide it.
-    // 'manifest' source (MANIFEST_PARSED) always bypasses the lock.
-    showLoading('Loading stream...', 'restart', 3000);
-    // Restart Safari stream decode so analyzer re-syncs with new HLS session
-    if (azStreamAbort) {
-      azStreamAbort.abort();
-      azStreamAbort = null;
-      azStartStreamDecode();
-    }
-    if (useNativeHls) {
-      getStudioPlayer().src = hlsSrc;
-      tryPlay('native-restart');
-    } else {
-      startHls('restart-' + (source || '?'), hlsConfigOverride);
-    }
-  }
-
-  initPlayer();
-
-  // --- Page lifecycle: iOS suspends pages aggressively ---
-  // On return from background/tab-switch, HLS stalls and WS dies.
-  // Detect resume and restart both.
-  var lastVisibleTime = Date.now();
-
-  document.addEventListener('visibilitychange', function() {
-    if (document.hidden) {
-      lastVisibleTime = Date.now();
-      log('PAGE hidden');
-      return;
-    }
-    var away = Date.now() - lastVisibleTime;
-    log('PAGE visible (away ' + Math.round(away / 1000) + 's)');
-
-    // Skip recovery during standby/arming
-    if (broadcastState && (broadcastState.streamMode === 'standby' || broadcastState.arming)) return;
-
-    // If away > 3s, the HLS stream is likely stale — restart player
-    if (away > 3000) {
-      log('PAGE resume: restarting player after ' + Math.round(away / 1000) + 's away');
-      restartPlayer('page-resume');
-    } else {
-      // Short absence — just try play() in case iOS paused the element
-      tryPlay('page-resume-short');
-    }
-
-    // Reconnect WebSocket if dead
-    if (!getWs() || getWs().readyState > 1) {
-      log('PAGE resume: WS dead, reconnecting');
-      wsReconnectDelay = 1000;
-      connectWs();
-    }
-  });
-
-  // bfcache: iOS Safari may restore page from bfcache on back/forward navigation
-  window.addEventListener('pageshow', function(e) {
-    if (e.persisted) {
-      log('PAGE restored from bfcache');
-      restartPlayer('bfcache');
-      if (!getWs() || getWs().readyState > 1) {
-        wsReconnectDelay = 1000;
-        connectWs();
-      }
-    }
+    },
+    getWs: function () { return getWs(); },
+    reconnectWs: function () { wsReconnectDelay = 1000; connectWs(); },
+    isIOS: isIOS,
+    isSafari: isSafari
   });
 
   // Wire the file-management UI module (filemgmt.js / window.FRFileMgmt) BEFORE the
@@ -628,14 +319,14 @@
         updateAudio(msg.data);
         break;
       case 'video':
-        if (pendingModeSwitch) {
+        if (FRPlayer.getPendingModeSwitch()) {
           // New clip started in feed_fifo, but HLS player still has ~2s of buffered
           // old content (hls_time=1 × liveSyncDurationCount=1 + segment pipeline).
           // Wait for buffer to flush before hiding overlay.
           log('MODE new clip detected: ' + (msg.data && msg.data.filename || '?') + ', waiting for HLS buffer...');
           setTimeout(function() {
-            pendingModeSwitch = false;
-            hideLoading('mode-applied');
+            FRPlayer.setPendingModeSwitch(false);
+            FRPlayer.hideLoading('mode-applied');
             log('MODE switch applied');
           }, 2500);
         }
@@ -1359,8 +1050,8 @@
       broadcastState.visualMode = apiMode;
 
       if (broadcastState.streamMode === 'live') {
-        pendingModeSwitch = true;
-        showLoading('Switching mode...', 'pill', 30000);
+        FRPlayer.setPendingModeSwitch(true);
+        FRPlayer.showLoading('Switching mode...', 'pill', 30000);
       }
 
       authFetch('/api/visual-mode', {
@@ -1497,10 +1188,10 @@
     log('ARM: starting...');
 
     // Stop noise, mute — player starts later (after API + cleanup)
-    stopStaticNoise();
+    FRPlayer.stopStaticNoise();
     setPlayerMuted(true);
     // Loading screen for entire ARMING duration — hide stuttery video
-    showLoading('Arming...', 'arm', 20000);
+    FRPlayer.showLoading('Arming...', 'arm', 20000);
 
     // ARM = video pipeline only. Audio starts on PLAY.
 
@@ -1534,7 +1225,7 @@
             return;
           }
           log('ARM: starting player (server had 3s to clean up)');
-          restartPlayer('arm');
+          FRPlayer.restartPlayer('arm');
 
         // Detect real video (not black screen) via canvas pixel check
         var armCanvas = document.createElement('canvas');
@@ -1563,7 +1254,7 @@
           }
           if (getStudioPlayer().readyState >= 3 && getStudioPlayer().videoWidth > 0 && !isVideoBlack()) {
             broadcastState.arming = false;
-            hideLoading('arm-ready');
+            FRPlayer.hideLoading('arm-ready');
             updateBroadcastUI();
             log('ARM: ready — video not black, content visible');
           } else {
@@ -1575,7 +1266,7 @@
         setTimeout(function() {
           if (broadcastState.arming) {
             broadcastState.arming = false;
-            hideLoading('arm-safety');
+            FRPlayer.hideLoading('arm-safety');
             updateBroadcastUI();
             log('ARM: ready (safety timeout — video may still be loading)');
           }
@@ -1616,18 +1307,18 @@
 
     // --- From ARMED: open gate, wait for music to fill pipeline, seek to live edge ---
     if (broadcastState.streamMode === 'armed') {
-      if (aliveTimer) { clearTimeout(aliveTimer); aliveTimer = null; }
-      clearAllTimers('play-armed');
-      pendingModeSwitch = false;
-      overlayLockedUntil = 0;
-      hideLoading('play-armed');
+      FRPlayer.clearAliveTimer();
+      FRPlayer.clearAllTimers('play-armed');
+      FRPlayer.setPendingModeSwitch(false);
+      FRPlayer.setOverlayLockedUntil(0);
+      FRPlayer.hideLoading('play-armed');
       btnPlay.disabled = true;
       playTransitionLock = true;
 
       // Cue track → wait for cross buffer → resume → mode live (sequential)
       authFetch('/api/dj/cue', { method: 'POST' })
         .then(function() {
-          showLoading('Cueing track...', 'pill', 7000);
+          FRPlayer.showLoading('Cueing track...', 'pill', 7000);
           return new Promise(function(resolve) { setTimeout(resolve, 5500); });
         })
         .then(function() { return authFetch('/api/dj/resume', { method: 'POST' }); })
@@ -1642,8 +1333,8 @@
         .then(function() {
           broadcastState.streamMode = 'live';
           updateBroadcastUI();
-          flashTransition();
-          hideLoading('play-armed-done');
+          FRPlayer.flashTransition();
+          FRPlayer.hideLoading('play-armed-done');
           setPlayerMuted(false);
           playerMuteBtn.innerHTML = '&#128266;';
           playerMuteBtn.title = 'Mute';
@@ -1655,7 +1346,7 @@
         .catch(function(e) {
           log('PLAY: cue/resume FAILED: ' + e);
           showError('Audio start failed');
-          hideLoading('play-armed-err');
+          FRPlayer.hideLoading('play-armed-err');
           broadcastState.streamMode = 'armed';
           updateBroadcastUI();
         })
@@ -1668,7 +1359,7 @@
     // --- Cold start from IDLE (~4-5s) ---
     btnPlay.disabled = true;
     playTransitionLock = true;
-    flashTransition();
+    FRPlayer.flashTransition();
     setPlayerMuted(true);
     log('PLAY: cold start');
 
@@ -1680,7 +1371,7 @@
     })
       .then(function() { return authFetch('/api/dj/cue', { method: 'POST' }); })
       .then(function() {
-        showLoading('Cueing track...', 'pill', 7000);
+        FRPlayer.showLoading('Cueing track...', 'pill', 7000);
         return new Promise(function(resolve) { setTimeout(resolve, 5500); });
       })
       .then(function() { return authFetch('/api/dj/resume', { method: 'POST' }); })
@@ -1696,7 +1387,7 @@
         broadcastState.streamMode = 'live';
         updateBroadcastUI();
         // Stop static noise immediately — video appears when HLS connects
-        stopStaticNoise();
+        FRPlayer.stopStaticNoise();
         log('PLAY: pipeline live, waiting for content...');
         // Replay cached audio — may have arrived while streamMode was standby
         if (lastAudioMsg) updateAudio(lastAudioMsg);
@@ -1704,12 +1395,12 @@
         // FFmpeg writing first HLS segments with music. After player restart
         // it picks up fresh segments and starts from track beginning.
         setTimeout(function() {
-          restartPlayer('play');
+          FRPlayer.restartPlayer('play');
           var unmuteDone = false;
           var doUnmute = function() {
             if (unmuteDone) return;
             unmuteDone = true;
-            flashTransition();
+            FRPlayer.flashTransition();
             if (getStudioPlayer().seekable.length > 0) {
               var edge = getStudioPlayer().seekable.end(getStudioPlayer().seekable.length - 1) - 0.1;
               if (edge > 0) getStudioPlayer().currentTime = edge;
@@ -1732,7 +1423,7 @@
       })
       .catch(function(e) {
         showError('Play failed: ' + e);
-        hideLoading('play-cold-err');
+        FRPlayer.hideLoading('play-cold-err');
         playTransitionLock = false;
         btnPlay.disabled = false;
       });
@@ -1743,7 +1434,7 @@
     if (broadcastState.arming) return;
     var newBroadcast = !broadcastState.broadcast;
     btnBroadcast.disabled = true;
-    showLoading(newBroadcast ? 'Starting broadcast...' : 'Ending broadcast...', 'broadcast', 4000);
+    FRPlayer.showLoading(newBroadcast ? 'Starting broadcast...' : 'Ending broadcast...', 'broadcast', 4000);
     authFetch('/api/stream/control', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -1768,8 +1459,8 @@
     playTransitionLock = false;
 
     btnStop.disabled = true;
-    startStaticNoise();
-    flashTransition();
+    FRPlayer.startStaticNoise();
+    FRPlayer.flashTransition();
     setPlayerMuted(true);
     getStudioPlayer().pause();
     playerMuteBtn.innerHTML = '&#128263;';
@@ -1809,7 +1500,7 @@
       })
       .catch(function(e) {
         showError('Stop failed: ' + e);
-        stopStaticNoise();
+        FRPlayer.stopStaticNoise();
         btnStop.disabled = false;
       });
   };
@@ -1941,11 +1632,11 @@
         updateBroadcastUI();
         if (!playTransitionLock && !broadcastState.arming) {
           var phase = getBroadcastPhase();
-          if (phase === 'idle' && !noiseActive) {
-            startStaticNoise();
+          if (phase === 'idle' && !FRPlayer.isNoiseActive()) {
+            FRPlayer.startStaticNoise();
             setPlayerMuted(true);
-          } else if ((phase === 'playing' || phase === 'live') && noiseActive) {
-            stopStaticNoise();
+          } else if ((phase === 'playing' || phase === 'live') && FRPlayer.isNoiseActive()) {
+            FRPlayer.stopStaticNoise();
             setPlayerMuted(!playerMuteBtn.classList.contains('unmuted'));
           }
         }
