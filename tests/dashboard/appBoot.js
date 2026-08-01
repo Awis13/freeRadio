@@ -1,18 +1,20 @@
 /**
  * tests/dashboard/appBoot.js
  *
- * Shared jsdom boot helper for the dashboard app.js characterization tests.
+ * Shared jsdom boot helper for the dashboard characterization tests.
  *
- * app.js is a ~5900-LOC browser IIFE that runs heavy init immediately on load
- * (WebSocket connect, fetch, setInterval, canvas, HLS). Its functions are
- * trapped in the IIFE closure. The foundation exposes test-only guarded hooks
- * (window.__appHelpers, window.__appDrift, window.__appPlaylists) under the
- * window.__APP_TEST__ flag so tests can reach in and drive them.
+ * app.js is a browser IIFE (~1800 LOC after the player/mixer/analyzer split,
+ * with 23 sibling FR* modules alongside it) that runs heavy init immediately on
+ * load (WebSocket connect, fetch, setInterval, canvas, HLS). What is left in the
+ * IIFE is trapped in its closure, so app.js exposes test-only guarded hooks
+ * (window.__appHelpers, __appDrift, __appPlaylists, __appWs, __appAudio,
+ * __appStudio) under the window.__APP_TEST__ flag so tests can reach in and
+ * drive them. The extracted modules need no hooks — their APIs are public.
  *
  * This helper boots ONE jsdom window from the REAL dashboard/public/index.html,
  * installs the minimal browser-global stubs app.js touches on boot, then
- * evaluates the REAL utils.js + app.js (the same files the browser ships) in
- * load order, with __APP_TEST__ = true.
+ * evaluates the REAL sibling modules and app.js (the same files the browser
+ * ships) in index.html load order, with __APP_TEST__ = true.
  *
  * By default `win.fetch` is a never-resolving pending promise (matching the
  * load-smoke), so no async handler runs during the synchronous boot. Tests that

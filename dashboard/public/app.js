@@ -156,10 +156,11 @@
 
   // Wire the player module and run its boot side-effects (media-element
   // listeners, mute button, initPlayer(), page-lifecycle listeners) in the same
-  // order they ran as inline statements. The analyzer, mute and WebSocket
-  // helpers it needs belong to slices that have not been extracted yet, so each
-  // is injected as a narrow callback rather than letting the player reach into
-  // app.js state.
+  // order they ran as inline statements. Everything the player needs from
+  // another slice is injected as a narrow callback rather than reached for: the
+  // analyzer and mute concerns resolve to FRAnalyzer methods (setPlayerMuted,
+  // ensureInited, resyncStreamDecode), and only the WebSocket helpers are still
+  // app.js-resident.
   FRPlayer.init({
     log: log,
     getStudioPlayer: getStudioPlayer,

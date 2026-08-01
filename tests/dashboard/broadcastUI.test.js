@@ -45,11 +45,11 @@
  * ARM in every phase but idle, and a disabled button runs no activation
  * behaviour. With appBoot's never-resolving default fetch the ARM API chain stays
  * pending, so the flag holds for the duration of the test. btnArm.onclick calls
- * azInit()
- * BEFORE setting the flag (app.js:1488), and azInit's own error path calls
- * azAudioCtx.close() (app.js:3025) which the appBoot AudioContext stub does not
- * implement — that secondary throw would escape the handler and abort ARM. The
- * arming helper therefore widens the stub with a close() returning a promise.
+ * the analyzer init hop BEFORE setting the flag, and azInit's own error path
+ * (now analyzer.js) calls azAudioCtx.close(), which the appBoot AudioContext
+ * stub does not implement — that secondary throw would escape the handler and
+ * abort ARM. The arming helper therefore widens the stub with a close()
+ * returning a promise.
  * This is a browser-API completion local to this file; appBoot.js is untouched.
  *
  * EXTRACTION DESTINATION: this region is slated to move out of the app.js IIFE
