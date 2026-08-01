@@ -2,20 +2,16 @@ const fs = require('fs');
 const path = require('path');
 const express = require('express');
 const paths = require('./paths');
+const { readStore, writeStore } = require('./jsonStore');
 
 const META_FILE = paths.shared('track_metadata.json');
 
 function loadMeta() {
-  try {
-    if (fs.existsSync(META_FILE)) {
-      return JSON.parse(fs.readFileSync(META_FILE, 'utf8'));
-    }
-  } catch (e) {}
-  return { tracks: {} };
+  return readStore(META_FILE, { tracks: {} });
 }
 
 function saveMeta(data) {
-  fs.writeFileSync(META_FILE, JSON.stringify(data, null, 2));
+  writeStore(META_FILE, data);
 }
 
 function getTrackMeta(filename) {

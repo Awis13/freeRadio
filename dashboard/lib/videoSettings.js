@@ -1,5 +1,5 @@
-const fs = require('fs');
 const paths = require('./paths');
+const { readStore, writeStore } = require('./jsonStore');
 
 const VIDEO_FILE = paths.shared('stream_video.json');
 
@@ -8,8 +8,8 @@ const VIDEO_ENHANCEMENT_FILTER = 'eq=saturation=1.15:contrast=1.03,unsharp=3:3:0
 
 function getVideoSettings() {
   try {
-    if (fs.existsSync(VIDEO_FILE)) {
-      const data = JSON.parse(fs.readFileSync(VIDEO_FILE, 'utf8'));
+    const data = readStore(VIDEO_FILE, null);
+    if (data) {
       return { enhanced: data.enhanced === true };
     }
   } catch (e) {}
@@ -21,7 +21,7 @@ function setVideoSettings(settings) {
     enhanced: settings.enhanced === true,
     timestamp: Date.now()
   };
-  fs.writeFileSync(VIDEO_FILE, JSON.stringify(data));
+  writeStore(VIDEO_FILE, data, { indent: 0 });
   return data;
 }
 

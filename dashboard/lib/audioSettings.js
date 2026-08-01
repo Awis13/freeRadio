@@ -1,5 +1,5 @@
-const fs = require('fs');
 const paths = require('./paths');
+const { readStore, writeStore } = require('./jsonStore');
 
 const AUDIO_FILE = paths.shared('stream_audio.json');
 
@@ -7,8 +7,8 @@ const AUDIO_ENHANCEMENT_FILTER = 'loudnorm=I=-14:TP=-1.5:LRA=11,mcompand=0.005,0
 
 function getAudioSettings() {
   try {
-    if (fs.existsSync(AUDIO_FILE)) {
-      const data = JSON.parse(fs.readFileSync(AUDIO_FILE, 'utf8'));
+    const data = readStore(AUDIO_FILE, null);
+    if (data) {
       return { enhanced: data.enhanced === true };
     }
   } catch (e) {}
@@ -20,7 +20,7 @@ function setAudioSettings(settings) {
     enhanced: settings.enhanced === true,
     timestamp: Date.now()
   };
-  fs.writeFileSync(AUDIO_FILE, JSON.stringify(data));
+  writeStore(AUDIO_FILE, data, { indent: 0 });
   return data;
 }
 

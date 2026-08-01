@@ -1,5 +1,5 @@
-const fs = require('fs');
 const paths = require('./paths');
+const { readStore, writeStore } = require('./jsonStore');
 
 const TIER_FILE = paths.shared('tier.json');
 
@@ -14,10 +14,8 @@ const QUALITY_ORDER = ['low', 'medium', 'high', 'standard', 'kick', 'ultra', 'go
 
 function getTier() {
   try {
-    if (fs.existsSync(TIER_FILE)) {
-      const data = JSON.parse(fs.readFileSync(TIER_FILE, 'utf8'));
-      if (data.tier && TIER_LIMITS[data.tier]) return data.tier;
-    }
+    const data = readStore(TIER_FILE, null);
+    if (data && data.tier && TIER_LIMITS[data.tier]) return data.tier;
   } catch (e) {}
   return 'free';
 }
@@ -25,7 +23,7 @@ function getTier() {
 function setTier(tier) {
   const safeTier = TIER_LIMITS[tier] ? tier : 'free';
   try {
-    fs.writeFileSync(TIER_FILE, JSON.stringify({ tier: safeTier, updatedAt: Date.now() }));
+    writeStore(TIER_FILE, { tier: safeTier, updatedAt: Date.now() }, { indent: 0 });
   } catch (e) {
     console.error('[tierLimits] failed to write tier file:', e.message);
   }

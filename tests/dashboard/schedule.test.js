@@ -597,8 +597,16 @@ describe('saveSchedule', () => {
 
   it('writes JSON to file', () => {
     const spy = vi.spyOn(fs, 'writeFileSync').mockImplementation(() => {});
+    // saveSchedule now writes atomically: the bytes go to <file>.tmp, which the
+    // rename moves into place. The path matcher below spans both.
+    const renameSpy = vi.spyOn(fs, 'renameSync').mockImplementation(() => {});
+    vi.spyOn(fs, 'mkdirSync').mockImplementation(() => {});
     const data = { weekly: {}, events: {}, settings: {} };
     saveSchedule(data);
+    expect(renameSpy).toHaveBeenCalledWith(
+      expect.stringContaining('schedule.json.tmp'),
+      expect.stringContaining('schedule.json')
+    );
     expect(spy).toHaveBeenCalledWith(
       expect.stringContaining('schedule.json'),
       JSON.stringify(data, null, 2)
@@ -799,8 +807,11 @@ describe('executeScheduleTick — video playlist activation file', () => {
 
     await tick();
 
-    const activeCall = writeSpy.mock.calls.find(c => c[0] === ACTIVE_VISUAL_FILE);
+    // Written atomically now: bytes land in ACTIVE_VISUAL_FILE + '.tmp' and the
+    // rename publishes them under ACTIVE_VISUAL_FILE.
+    const activeCall = writeSpy.mock.calls.find(c => c[0] === ACTIVE_VISUAL_FILE + '.tmp');
     expect(activeCall).toBeDefined();
+    expect(fs.renameSync).toHaveBeenCalledWith(ACTIVE_VISUAL_FILE + '.tmp', ACTIVE_VISUAL_FILE);
     const payload = JSON.parse(activeCall[1]);
     expect(payload).toEqual({
       id: 'vpl-9',
@@ -819,7 +830,9 @@ describe('executeScheduleTick — video playlist activation file', () => {
 
     await tick();
 
-    const activeCall = writeSpy.mock.calls.find(c => c[0] === ACTIVE_VISUAL_FILE);
+    const activeCall = writeSpy.mock.calls.find(
+      c => c[0] === ACTIVE_VISUAL_FILE || c[0] === ACTIVE_VISUAL_FILE + '.tmp'
+    );
     expect(activeCall).toBeUndefined();
   });
 
@@ -963,6 +976,8 @@ describe('startExecutor (P1-7)', () => {
     vi.spyOn(fs, 'existsSync').mockReturnValue(true);
     vi.spyOn(fs, 'readFileSync').mockReturnValue(JSON.stringify(data));
     const writeSpy = vi.spyOn(fs, 'writeFileSync').mockImplementation(() => {});
+    vi.spyOn(fs, 'renameSync').mockImplementation(() => {});
+    vi.spyOn(fs, 'mkdirSync').mockImplementation(() => {});
     vi.spyOn(fs, 'unlinkSync').mockImplementation(() => {});
 
     startExec(() => ({}), '/visuals', vi.fn());

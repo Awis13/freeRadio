@@ -3,30 +3,21 @@ const path = require('path');
 const express = require('express');
 const { prefetchVideos } = require('./cacheManager');
 const paths = require('./paths');
+const { readStore, writeStore } = require('./jsonStore');
 
 const PROFILES_FILE = paths.shared('visual_profiles.json');
 const ACTIVE_FILE = paths.shared('active_visual_profile.json');
 
 function loadProfiles() {
-  try {
-    if (fs.existsSync(PROFILES_FILE)) {
-      return JSON.parse(fs.readFileSync(PROFILES_FILE, 'utf8'));
-    }
-  } catch (e) {}
-  return { profiles: {} };
+  return readStore(PROFILES_FILE, { profiles: {} });
 }
 
 function saveProfiles(data) {
-  fs.writeFileSync(PROFILES_FILE, JSON.stringify(data, null, 2));
+  writeStore(PROFILES_FILE, data);
 }
 
 function getActiveProfile() {
-  try {
-    if (fs.existsSync(ACTIVE_FILE)) {
-      return JSON.parse(fs.readFileSync(ACTIVE_FILE, 'utf8'));
-    }
-  } catch (e) {}
-  return null;
+  return readStore(ACTIVE_FILE, null);
 }
 
 function activateProfile(id) {
@@ -40,7 +31,7 @@ function activateProfile(id) {
     videos: (profile.videos || []).map(v => path.basename(v)).filter(Boolean),
     activatedAt: Date.now()
   };
-  fs.writeFileSync(ACTIVE_FILE, JSON.stringify(active, null, 2));
+  writeStore(ACTIVE_FILE, active);
   return active;
 }
 
