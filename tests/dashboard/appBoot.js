@@ -54,6 +54,8 @@ const playerSrc = readFileSync(path.join(publicDir, 'player.js'), 'utf8');
 const mixerSrc = readFileSync(path.join(publicDir, 'mixer.js'), 'utf8');
 const analyzerSrc = readFileSync(path.join(publicDir, 'analyzer.js'), 'utf8');
 const queueSrc = readFileSync(path.join(publicDir, 'queue.js'), 'utf8');
+const nowplayingSrc = readFileSync(path.join(publicDir, 'nowplaying.js'), 'utf8');
+const wsHubSrc = readFileSync(path.join(publicDir, 'wsHub.js'), 'utf8');
 const appSrc = readFileSync(path.join(publicDir, 'app.js'), 'utf8');
 
 /**
@@ -170,6 +172,8 @@ export function bootWindow() {
   dom.window.eval(mixerSrc);
   dom.window.eval(analyzerSrc);
   dom.window.eval(queueSrc);
+  dom.window.eval(nowplayingSrc);
+  dom.window.eval(wsHubSrc);
   let loadError = null;
   try {
     dom.window.eval(appSrc);
