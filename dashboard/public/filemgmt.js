@@ -309,10 +309,10 @@
     loadFileList: loadFileList,
     initDropZones: initDropZones,
     getMusicFiles: function () { return musicFiles; },
-    getVisualFiles: function () { return visualFiles; },
+    refreshBpmInList: refreshBpmInList,
 
     // Surface used by the characterization tests to drive the module.
-    refreshBpmInList: refreshBpmInList,
+    getVisualFiles: function () { return visualFiles; },
     renderFileList: renderFileList,
     deleteFile: deleteFile,
     initDropZone: initDropZone,

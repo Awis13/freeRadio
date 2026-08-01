@@ -295,9 +295,11 @@
   return {
     init: init,
     loadOverlays: loadOverlays,
+    loadOverlayAssets: loadOverlayAssets,
+
+    // Surface used by the characterization tests to drive the module.
     renderOverlayLayers: renderOverlayLayers,
     saveOverlays: saveOverlays,
-    loadOverlayAssets: loadOverlayAssets,
     toggleOverlayLayer: toggleOverlayLayer,
     updateOverlayLayer: updateOverlayLayer,
     removeOverlayLayer: removeOverlayLayer,

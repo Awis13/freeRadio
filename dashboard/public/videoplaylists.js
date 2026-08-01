@@ -323,11 +323,12 @@
   return {
     init: init,
     loadVideoPlaylists: loadVideoPlaylists,
+
+    // Surface used by the characterization tests to drive the module.
     renderVideoPlaylistsList: renderVideoPlaylistsList,
     selectVideoPlaylist: selectVideoPlaylist,
     renderVideoPlaylistDetail: renderVideoPlaylistDetail,
     saveVideoPlaylistVideos: saveVideoPlaylistVideos,
-    bindCreateButton: bindCreateButton,
     getSelectedVideoPlaylistId: function () { return selectedVideoPlaylistId; },
     setSelectedVideoPlaylistId: function (v) { selectedVideoPlaylistId = v; },
   };

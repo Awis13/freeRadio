@@ -228,11 +228,12 @@
   return {
     init: init,
     loadVisualProfiles: loadVisualProfiles,
+
+    // Surface used by the characterization tests to drive the module.
     selectVisualProfile: selectVisualProfile,
     renderVisualProfilesList: renderVisualProfilesList,
     renderVisualProfileDetail: renderVisualProfileDetail,
     saveVisualProfileVideos: saveVisualProfileVideos,
-    bindCreateButton: bindCreateButton,
     getSelectedVisualProfileId: function () { return selectedVisualProfileId; },
     setSelectedVisualProfileId: function (v) { selectedVisualProfileId = v; },
   };

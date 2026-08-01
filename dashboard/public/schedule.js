@@ -351,17 +351,15 @@
   return {
     init: init,
     loadSchedule: loadSchedule,
+    loadPlaylistsForSelect: loadPlaylistsForSelect,
+
+    // Surface used by the characterization tests to drive the module.
     loadScheduleCurrent: loadScheduleCurrent,
     renderScheduleGrid: renderScheduleGrid,
     renderEventsList: renderEventsList,
     renderScheduleSettings: renderScheduleSettings,
-    loadPlaylistsForSelect: loadPlaylistsForSelect,
     deleteWeeklySlot: deleteWeeklySlot,
     deleteEvent: deleteEvent,
-    bindSettingsSaveButton: bindSettingsSaveButton,
-    bindAddWeeklySlotButton: bindAddWeeklySlotButton,
-    bindAddEventButton: bindAddEventButton,
-    startCurrentSlotPolling: startCurrentSlotPolling,
     getScheduleData: function () { return scheduleData; },
     setScheduleData: function (d) { scheduleData = d; },
     getDAYS: function () { return DAYS; },

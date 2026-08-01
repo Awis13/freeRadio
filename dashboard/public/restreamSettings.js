@@ -106,7 +106,8 @@
   return {
     init: init,
     loadRestreamSettings: loadRestreamSettings,
-    bindAutoStart: bindAutoStart,
+
+    // Surface used by the characterization tests to drive the module.
     getAutoStart: function () { return restreamAutoStartCheckbox ? restreamAutoStartCheckbox.checked : undefined; },
     setAutoStart: function (v) { if (restreamAutoStartCheckbox) restreamAutoStartCheckbox.checked = v; },
   };

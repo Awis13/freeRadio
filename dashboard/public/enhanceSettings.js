@@ -154,8 +154,8 @@
     init: init,
     loadAudioSettings: loadAudioSettings,
     loadVideoSettings: loadVideoSettings,
-    bindAudioChange: bindAudioChange,
-    bindVideoChange: bindVideoChange,
+
+    // Surface used by the characterization tests to drive the module.
     getAudioEnhanceCheck: getAudioEnhanceCheck,
     getVideoEnhanceCheck: getVideoEnhanceCheck,
   };

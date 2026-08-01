@@ -252,11 +252,8 @@
     init: init,
     updateMode: updateMode,
     computeMixDur: computeMixDur,
-    positionCueMarker: positionCueMarker,
-    updateAudio: updateAudio,
     onAudioFrame: onAudioFrame,
     replayLastAudio: replayLastAudio,
-    updateTrackProgress: updateTrackProgress,
     updateIcecast: updateIcecast,
     updateFfmpeg: updateFfmpeg,
     getTrackStartedAt: getTrackStartedAt,
@@ -265,5 +262,9 @@
     getStartTime: function () { return startTime; },
     getListenerHistory: function () { return listenerHistory; },
     getPeakListeners: function () { return peakListeners; },
+
+    // Surface used by the characterization tests to drive the module.
+    updateAudio: updateAudio,
+    updateTrackProgress: updateTrackProgress,
   };
 });

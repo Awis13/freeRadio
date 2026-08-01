@@ -653,19 +653,13 @@
 
   return {
     init: init,
-    enumerateMicDevices: enumerateMicDevices,
-    startMic: startMic,
-    stopMic: stopMic,
-    toggleMicMonitor: toggleMicMonitor,
-    applyMonitorOutput: applyMonitorOutput,
-    startMonitorMeters: startMonitorMeters,
-    updateMonitorUI: updateMonitorUI,
-    startMicStreaming: startMicStreaming,
-    stopMicStreaming: stopMicStreaming,
-    checkMicStreaming: checkMicStreaming,
     // Live gain getters — FRAnalyzer.setPlayerMuted reads both.
     getMonitorMusicGain: function () { return monitorMusicGain; },
     getMasterGain: function () { return mmMasterGain; },
-    isMicActive: function () { return micActive; },
+
+    // Surface used by the characterization tests to drive the module.
+    enumerateMicDevices: enumerateMicDevices,
+    startMic: startMic,
+    updateMonitorUI: updateMonitorUI,
   };
 });

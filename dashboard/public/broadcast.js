@@ -1059,9 +1059,11 @@
     getMixMode: getMixMode,
     setMixMode: setMixMode,
     deriveUiMode: deriveUiMode,
+    loadBroadcastState: loadBroadcastState,
+
+    // Surface used by the characterization tests to drive the module.
     updateBroadcastUI: updateBroadcastUI,
     updateModeUI: updateModeUI,
     updateLiveModeUI: updateLiveModeUI,
-    loadBroadcastState: loadBroadcastState,
   };
 });

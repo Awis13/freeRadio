@@ -271,15 +271,17 @@
 
   return {
     init: init,
+    uniquePlatformName: uniquePlatformName,
+    setCurrentPlatformNames: function (a) { currentPlatformNames = a; },
+
+    // Surface used by the characterization tests to drive the module.
     loadPlatforms: loadPlatforms,
     renderPlatforms: renderPlatforms,
     deletePlatform: deletePlatform,
     togglePlatform: togglePlatform,
     syncPlatformHints: syncPlatformHints,
-    uniquePlatformName: uniquePlatformName,
     applyPreset: applyPreset,
     getCurrentPlatformNames: function () { return currentPlatformNames; },
-    setCurrentPlatformNames: function (a) { currentPlatformNames = a; },
     getMaxPlatforms: function () { return maxPlatforms; },
   };
 });

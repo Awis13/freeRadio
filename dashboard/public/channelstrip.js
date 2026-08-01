@@ -275,6 +275,8 @@
 
   return {
     init: init,
+
+    // Surface used by the characterization tests to drive the module.
     STRIP_PARAMS: STRIP_PARAMS,
     stripUpdateVal: stripUpdateVal,
     stripLoadConfig: stripLoadConfig,
