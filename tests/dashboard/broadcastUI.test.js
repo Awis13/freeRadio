@@ -2,44 +2,44 @@
  * tests/dashboard/broadcastUI.test.js
  *
  * Characterization pins for the BROADCAST REPAINT CONTRACT currently living
- * inside the app.js IIFE: the pair deriveUiMode() (app.js:1380-1384, delegating
+ * inside the app.js IIFE: the pair deriveUiMode() (broadcast.js, delegating
  * to FRUtils.deriveUiMode at utils.js:153-158) + updateBroadcastUI()
- * (app.js:1249-1314, reading the phase from getBroadcastPhase() at app.js:1210
+ * (broadcast.js, reading the phase from its getBroadcastPhase
  * -> FRUtils.getBroadcastPhase at utils.js:133-142, and the hint table
- * MODE_HINTS at app.js:1216-1247). These pin the AS-IS observable contract
+ * MODE_HINTS, also in broadcast.js). These pin the AS-IS observable contract
  * BEFORE the region is extracted into a module; they must stay green after the
  * extraction to prove zero behaviour change.
  *
  * CONSUMER-SHAPED. The pair is never called by a test directly. Both real
  * consumers do the same two calls back to back and are driven end to end here:
  *
- *   1. The WebSocket 'init' frame — handleMessage case 'init' (app.js:592-619,
+ *   1. The WebSocket 'init' frame — the hub's 'init' case (wsHub.js handleMessage,
  *      the pair at 609-610). Driven by boot-time socket.onmessage({ data }) with
  *      a real server-shaped JSON payload. onmessage is a plain instance property
- *      assigned in connectWs (app.js:577), and the appBoot WebSocket stub
+ *      assigned in connectWs (wsHub.js), and the appBoot WebSocket stub
  *      (appBoot.js:63-68) never fires anything on its own, so the test supplies
  *      the frame.
  *
- *   2. The /api/status poll — loadBroadcastState (app.js:1919-1948, the pair at
+ *   2. The /api/status poll — loadBroadcastState (broadcast.js, the pair at
  *      1934-1935). Reached WITHOUT any new app.js hook: FRAuth.init's onLogin
- *      callback (app.js:502-508) calls loadBroadcastState(), and onLogin fires
+ *      callback (app.js wiring) calls FRBroadcast.loadBroadcastState(), and onLogin fires
  *      from doLogin (auth.js:111-134). So the test types a token into the real
  *      #login-token input and clicks the real #login-btn; the fetch stub answers
  *      /api/auth/verify and then /api/status. Boot's own loadBroadcastState()
- *      call (app.js:1951) is left pending forever by appBoot's never-resolving
- *      default fetch, and the 15s setInterval (app.js:1952) is unreachable in a
+ *      call in broadcast.js's bindMachine is left pending forever by appBoot's never-resolving
+ *      default fetch, and its 15s setInterval is unreachable in a
  *      test, so the login flow is the only usable entry into this consumer.
  *
  * ASSERTIONS are observable effects only: transport button text/disabled/display,
  * the mode-tag element, the hint element, the queue chrome, the .studio-layout /
- * .mode-card class state written by updateModeUI (app.js:1387-1433), and which
+ * .mode-card class state written by updateModeUI (broadcast.js), and which
  * endpoint each swapped skip/clear onclick actually calls through the fetch stub.
  * window.__appDrift.getBroadcastState() is read only as a SECONDARY confirmation
  * next to a DOM assertion, never as the primary pin.
  *
  * REACHING THE 'arming' PHASE: `arming` is a client-only flag — no server payload
  * sets it (getBroadcastPhase checks state.arming first, utils.js:134). Its sole
- * writer on the way up is the real ARM button handler (app.js:1484-1489), so the
+ * writer on the way up is the real ARM button handler (broadcast.js), so the
  * arming pins click #btn-arm and then drive an 'init' frame through consumer 1.
  * The click has to happen on a freshly booted window: updateBroadcastUI disables
  * ARM in every phase but idle, and a disabled button runs no activation
@@ -61,7 +61,8 @@
  * on purpose. Do not "fix" one to make a pin greener; change it in a separate
  * behaviour-change commit and update the pin with it.
  *
- *   - PLAY vs the button-state table (app.js:1260-1265): the table's idle row
+ *   - PLAY vs the button-state table (the comment block above updateBroadcastUI in
+ *     broadcast.js): the table's idle row
  *     says PLAY:on but the code disables PLAY in idle, and its playing row says
  *     PLAY:off but the code enables PLAY while playing. Two rows, same button,
  *     opposite directions. The idle hint text also invites the user to press a
@@ -70,11 +71,11 @@
  *     .mode-card in Phase 1 markup, so updateModeUI's pill loop never runs and
  *     whichever pill was lit stays lit while no card is highlighted at all.
  *   - Live Mode Bar write is inert: #live-mode-bar sits inside a Phase 3 HTML
- *     comment, so the display write at app.js:1425 is swallowed by its null
+ *     comment, so updateModeUI's Live Mode Bar display write is swallowed by its null
  *     guard. Pinned as null so a Phase 3 markup change fails loudly here.
  *   - Handler-allocation asymmetry: the music branch builds a fresh skip/clear
  *     closure pair on EVERY repaint (duplicating bodies already bound at boot,
- *     app.js:837-860), while the video branch assigns stable named functions.
+ *     queue.js bindBootHandlers), while the video branch assigns stable named functions.
  *     Pinned both ways, plus an equivalence pin across the duplicate copies.
  *   - Synthetic 'browser-mic' payloads: a real uiSubMode that the server's
  *     visualMode can never be, used to reach the defensive fallback arms in
@@ -169,13 +170,13 @@ function queueChrome(doc) {
 }
 
 /**
- * Everything updateModeUI (app.js:1387-1433) writes, in one object: the layout
+ * Everything updateModeUI (broadcast.js) writes, in one object: the layout
  * mode/sub-mode classes, the card highlight, the sub-pill highlight, the
- * on-air card lock (app.js:1418-1421) and the Live Mode Bar (app.js:1425).
+ * on-air card lock and the Live Mode Bar, both in updateModeUI.
  *
  * liveModeBarDisplay is null whenever #live-mode-bar is absent from the DOM.
  * Phase 1 ships that element inside a Phase 3 HTML comment, so liveModeSettings
- * (app.js:1190) resolves to null and the `if (liveModeSettings)` guard makes the
+ * resolves to null and the `if (liveModeSettings)` guard makes the
  * write inert — pinning null is what locks the guard in place.
  */
 function modeClasses(doc) {
@@ -278,13 +279,13 @@ async function loginAndPoll(win, doc, statusPayload) {
 }
 
 describe('broadcast repaint via the WS init consumer', () => {
-  // handleMessage case 'init' (app.js:592-619) driving updateBroadcastUI (1249-1314).
+  // The hub's 'init' case (wsHub.js) driving updateBroadcastUI (broadcast.js).
 
   it('idle: ARM is the only enabled control and stays visible', () => {
     const { doc, sendInit } = bootWithInit();
     sendInit(payloadFor('idle', 'visual-radio'));
     // playDisabled: true here deliberately contradicts both the button-state
-    // table at app.js:1260-1265 (which documents the idle row as PLAY:on) and
+    // button-state table above updateBroadcastUI (which documents idle as PLAY:on) and
     // the idle hint text, which invites the user to press PLAY. Known doc/UX
     // divergence, pinned as-is and tracked in the Bug Register.
     expect(transportSnapshot(doc)).toEqual({
@@ -336,7 +337,7 @@ describe('broadcast repaint via the WS init consumer', () => {
     const { doc, sendInit } = bootWithInit();
     sendInit(payloadFor('playing', 'visual-radio'));
     // playDisabled: false is the second half of the PLAY divergence noted in the
-    // header — the table at app.js:1260-1265 documents this row as PLAY:off.
+    // header — the button-state table documents this row as PLAY:off.
     // Known doc/UX divergence, pinned as-is and tracked in the Bug Register.
     expect(transportSnapshot(doc)).toEqual({
       tagText: 'PREVIEW',
@@ -395,7 +396,7 @@ describe('broadcast repaint via the WS init consumer', () => {
 });
 
 describe('MODE_HINTS text per phase and visual mode', () => {
-  // The hint table lives at app.js:1216-1247; updateBroadcastUI renders it at 1312-1313.
+  // MODE_HINTS lives in broadcast.js; updateBroadcastUI renders from it.
 
   /** Walk every phase for one visual mode and collect the rendered hint. */
   function hintsFor(visualMode) {
@@ -462,7 +463,7 @@ describe('MODE_HINTS text per phase and visual mode', () => {
 });
 
 describe('queue chrome and the skip/clear handler swap', () => {
-  // updateBroadcastUI's mode-aware queue block: app.js:1283-1309.
+  // updateBroadcastUI's mode-aware queue block (broadcast.js).
 
   it('music mode labels the queue for tracks', () => {
     const { doc, sendInit } = bootWithInit();
@@ -522,7 +523,7 @@ describe('queue chrome and the skip/clear handler swap', () => {
 
     h.skipBtn.click();
     await flush(20);
-    // The success branch (app.js:1291-1295) schedules loadQueue at 1s and
+    // The repaint copy's success branch schedules loadQueue at 1s and
     // FRTrackHistory.loadTrackHistory at 2s. The capture spy swallows both, so
     // the reload requests are absent from the traffic — only the skip POST ran.
     expect(h.delays).toEqual([1000, 2000]);
@@ -536,7 +537,7 @@ describe('queue chrome and the skip/clear handler swap', () => {
 
     h.clearBtn.click();
     await flush(20);
-    // The success branch (app.js:1303-1306) calls loadQueue() directly, so the
+    // The repaint copy's success branch calls loadQueue() directly, so the
     // reload GET lands with no timer involved.
     expect(h.delays).toEqual([]);
     expect(queueTraffic(h.calls)).toEqual(['POST /api/queue/clear', 'GET /api/queue']);
@@ -603,7 +604,7 @@ describe('queue chrome and the skip/clear handler swap', () => {
 
     expect(videoTraffic).toEqual(['POST /api/video-queue/skip', 'POST /api/video-queue/clear']);
     expect(queueCalls(h.calls)).toEqual(['POST /api/queue/skip', 'POST /api/queue/clear']);
-    // The round trip is what pins the music-mode else arms (app.js:1284-1286):
+    // The round trip is what pins the music-mode else arms:
     // on a fresh boot these three strings equal the markup defaults, so only a
     // repaint that has already written the video labels can prove they are
     // written back.
@@ -616,7 +617,7 @@ describe('queue chrome and the skip/clear handler swap', () => {
 
   it('the boot-bound handlers and the music-mode copies behave identically', async () => {
     // updateBroadcastUI's non-video branch re-declares handler bodies already
-    // bound at boot (app.js:837-860). Both copies must stay interchangeable
+    // bound at boot (queue.js bindBootHandlers). Both copies must stay interchangeable
     // down to the deferred reload delays, not just the endpoint they POST to.
     const h = bootQueueHarness();
 
@@ -675,7 +676,7 @@ describe('queue chrome and the skip/clear handler swap', () => {
 });
 
 describe('deriveUiMode mapping and the mode-card class state it drives', () => {
-  // deriveUiMode (app.js:1380-1384 -> utils.js:153-158) feeding updateModeUI (app.js:1387-1433).
+  // deriveUiMode (broadcast.js -> FRUtils.deriveUiMode) feeding updateModeUI (broadcast.js).
 
   it("visualMode 'visual-radio' paints the radio card and its Visual Radio pill", () => {
     const { win, doc, sendInit } = bootWithInit();
@@ -749,7 +750,7 @@ describe('deriveUiMode mapping and the mode-card class state it drives', () => {
     expect([state.uiMode, state.uiSubMode]).toEqual(['radio', 'browser-mic']);
   });
 
-  // The lock rule is `locked && !card.classList.contains('active')` at app.js:1418-1421.
+  // The lock rule is `locked && !card.classList.contains('active')` in updateModeUI.
   it('going on air locks every mode card except the active one', () => {
     const { doc, sendInit } = bootWithInit();
     // Radio card active and on air: the active card is exempt from the lock.
@@ -780,7 +781,7 @@ describe('deriveUiMode mapping and the mode-card class state it drives', () => {
   });
 
   it('the Live Mode Bar write stays inert while its element is absent', () => {
-    // The guarded write is app.js:1425. Takeover is the mode that would reveal
+    // The guarded write is in updateModeUI. Takeover is the mode that would reveal
     // the bar, but Phase 1 comments the element out of index.html, so the null
     // guard swallows the write and nothing throws. Pinned as-is; a Phase 3
     // markup change should fail here.
@@ -801,7 +802,7 @@ describe('deriveUiMode mapping and the mode-card class state it drives', () => {
 });
 
 describe('broadcast repaint via the /api/status poll consumer', () => {
-  // loadBroadcastState (app.js:1919-1948), reached through the real login flow.
+  // loadBroadcastState (broadcast.js), reached through the real login flow.
 
   it('logging in repaints the transport row from the polled state', async () => {
     const { win, doc } = bootWithInit();
