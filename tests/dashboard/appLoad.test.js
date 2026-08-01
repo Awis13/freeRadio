@@ -30,8 +30,7 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { bootWindow, moduleManifest, closeAllWindows } from './appBoot.js';
 
-// Tear down every jsdom window this file booted: each one keeps ~13 real
-// timers alive for the rest of the process otherwise.
+// Close every jsdom window this file booted (rationale in appBoot.js).
 afterAll(closeAllWindows);
 
 describe('app.js jsdom load-smoke (C2 FRUtils cutover)', () => {

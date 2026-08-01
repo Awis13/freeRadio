@@ -233,9 +233,23 @@ function installStubs(win) {
  *
  * CALL close() WHEN THE SUITE IS DONE (afterAll). Boot leaves ~13 real Node
  * timers running per window — the 1s track-progress tick, the 2s mic-streaming
- * check, the module polls — and they keep firing for the rest of the process,
- * competing for the same event loop as every later suite. That is measurable:
- * a script that boots windows without closing them never exits at all.
+ * check, the module polls — and nothing stops them on its own: a script that
+ * boots windows and never closes them does not exit at all.
+ *
+ * They do NOT reach a later test file. Vitest runs each file in its own forked
+ * process (pool 'forks', isolate on, both defaults here), so the timers die with
+ * that process; measured directly — two files get different PIDs, and the second
+ * sees neither the first file's globals nor its timer handles. Cross-file
+ * interference is not the problem this teardown solves.
+ *
+ * What is real is accumulation WITHIN a file, which afterAll does not fix:
+ * broadcastUI reaches 41 open windows and 541 live timer handles by its last
+ * boot, wsHubUI 33/430, playerMixerAnalyzerUI 29/381 — all of them ticking while
+ * that same file's remaining tests run, which is the standing suspect for any
+ * wall-clock-sensitive pin. Closing per test would hold the count near one, but
+ * some files deliberately share a booted window across tests, so it needs
+ * per-file analysis and is left as follow-up. afterAll(closeAllWindows) is the
+ * hygiene floor and the prerequisite for that work.
  *
  * jsdom's own window.close() is enough (verified against jsdom 26.1.0): it stops
  * every pending timeout and interval in the window realm, so the stubs installed
