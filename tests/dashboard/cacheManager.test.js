@@ -3,9 +3,9 @@
  *
  * Characterization of dashboard/lib/cacheManager.js (P1-5).
  *
- * Strategy: cacheManager destructures execSync at require time (not
- * spy-able through the module), so eviction and size tests run against a
- * REAL tmpdir with fs.utimesSync staggering atimes. The s3 dependency is
+ * Strategy: eviction and size tests run against a REAL tmpdir with
+ * fs.utimesSync staggering atimes — the module walks the filesystem itself,
+ * so a real tree is both the simplest and the most honest fixture. The s3 dependency is
  * the shared CJS module instance (same require cache), and prefetch reads
  * s3.S3_ENABLED / s3.ensureCached as PROPERTIES at call time — so we flip
  * the flag and spy on the seam directly. Loaded via createRequire so both
@@ -17,9 +17,11 @@
  *     as soon as size fits, returns the eviction count;
  *   - dotfiles are invisible to eviction: never counted, never deleted;
  *   - missing dir -> 0; unlink failures are swallowed (count stays 0);
- *   - getCacheSize: missing dir -> 0; existing dir -> non-negative number
- *     (exact `du -sb` output NOT pinned — macOS du has no -b, the lib
- *     falls back to 0 there while Linux returns real bytes);
+ *   - getCacheSize: missing dir -> 0; otherwise the exact byte total,
+ *     counting dotfiles and walking subdirectories. It used to shell out to
+ *     `du -sb`, which neither busybox nor macOS supports, so the answer was 0
+ *     everywhere that mattered and the size pins could only assert
+ *     "non-negative";
  *   - prefetchTracks maps any extension to music/processed/<base>.wav
  *     (both S3 key and local path), prefetchVideos maps basename to
  *     visuals/processed/<name> -> <visualsDir>/.processed/<name>;

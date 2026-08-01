@@ -60,12 +60,11 @@ const PRESETS = {
 };
 
 function getQuality() {
-  try {
-    const data = readStore(QUALITY_FILE, null);
-    if (data) {
-      return { preset: data.preset, settings: { ...(PRESETS[data.preset] || PRESETS.high) } };
-    }
-  } catch (e) {}
+  // readStore never throws — no catch needed around it.
+  const data = readStore(QUALITY_FILE, null);
+  if (data) {
+    return { preset: data.preset, settings: { ...(PRESETS[data.preset] || PRESETS.high) } };
+  }
   // Copies, not the PRESETS entries themselves: callers used to receive the
   // shared objects, so anything mutating a returned `settings` edited the
   // preset table for the whole process.

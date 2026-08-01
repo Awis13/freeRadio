@@ -261,6 +261,38 @@ describe('auth gate (DASHBOARD_TOKEN set)', () => {
 // ─── Auth bypass with empty DASHBOARD_TOKEN ─────────────────────────────────
 
 describe('auth gate (DASHBOARD_TOKEN empty)', () => {
+  it('PUBLIC_PATHS membership is exactly this list', () => {
+    // SECURITY-RELEVANT LIST. Everything named here answers WITHOUT a token, in
+    // every auth posture including the closed one. Adding an entry is a
+    // deliberate decision to expose that surface to anyone who can reach the
+    // port — a scope probe added '/api/playlists' and the whole playlist CRUD
+    // became public with the suite still fully green. If this assertion fails,
+    // the fix is not to update the list here; it is to be sure the addition was
+    // meant.
+    const { PUBLIC_PATHS } = loadServer('secret');
+    expect(PUBLIC_PATHS).toEqual([
+      '/api/status',
+      '/api/health',
+      '/api/audio-stream',
+      '/api/rtmp-health',
+      '/api/live/on_publish',
+      '/api/live/on_done',
+      '/api/auth/verify',
+      '/api/tier',
+    ]);
+  });
+
+  it('sensitive routes are NOT reachable without a token', () => {
+    // The list above is only meaningful if it is the one the gate consults, and
+    // only safe while these stay off it.
+    const { PUBLIC_PATHS } = loadServer('secret');
+    for (const guarded of ['/api/playlists', '/api/tracks', '/api/queue',
+      '/api/stream-keys', '/api/settings', '/api/video-playlists', '/api/overlays']) {
+      expect(PUBLIC_PATHS).not.toContain(guarded);
+      expect(PUBLIC_PATHS.some(p => guarded === p || guarded.startsWith(p + '/'))).toBe(false);
+    }
+  });
+
   it('empty token DENIES protected routes when auth was not explicitly disabled', async () => {
     // CHANGED IN T11-C2. This used to be a full bypass — no token meant the
     // gate returned next() for everything, so a deployment that forgot to set

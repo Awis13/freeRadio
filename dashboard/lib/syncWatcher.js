@@ -1,3 +1,14 @@
+/**
+ * S3 backup and restore for the shared config files.
+ *
+ * The invariant that ties this to jsonStore: a file jsonStore could not parse
+ * is renamed to <file>.corrupt-*, which frees the original name. restoreConfigs
+ * pulls a fresh copy from S3 for anything missing, empty, unparseable, or still
+ * carrying an unhandled quarantine sibling, then marks that sibling .restored.
+ * pollConfigs refuses to upload while an unhandled sibling exists, so the
+ * defaults a caller wrote after a failed read cannot overwrite the good backup
+ * before the restore has a chance to run.
+ */
 const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
@@ -31,6 +42,14 @@ const QUARANTINE_MARK = '.corrupt-';
 
 /** Appended to a quarantine file once its config has been restored. */
 const HANDLED_MARK = '.restored';
+
+/**
+ * Matches a handled marker INCLUDING the -N suffix a name collision adds.
+ * A plain endsWith('.restored') misses '.restored-1', so a collided marker
+ * would read back as still-pending: uploads blocked forever and every boot
+ * re-downloading over a perfectly good local file.
+ */
+const HANDLED_RE = /\.restored(-\d+)?$/;
 
 // Large append-only files — stat-based detection instead of full hash
 const STAT_BASED_FILES = new Set(['play_history.jsonl']);
@@ -165,7 +184,7 @@ function quarantineIndex() {
     return index;
   }
   for (const entry of entries) {
-    if (entry.endsWith(HANDLED_MARK)) continue;
+    if (HANDLED_RE.test(entry)) continue;
     const at = entry.indexOf(QUARANTINE_MARK);
     if (at <= 0) continue;
     const config = entry.slice(0, at);
@@ -450,4 +469,6 @@ function stop() {
   console.log('[syncWatcher] stopped');
 }
 
-module.exports = { init, start, stop, restoreConfigs };
+// CONFIG_FILES is exported for the characterization tests: dropping an entry
+// silently removes that file from backup AND restore, so it is pinned literally.
+module.exports = { init, start, stop, restoreConfigs, CONFIG_FILES };

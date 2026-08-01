@@ -35,7 +35,7 @@ export function restoreSpies() {
  *
  * @param {Object} initialFiles - path -> content seed for the map
  * @returns {{files: Object, spies: import('vitest').MockInstance[]}}
- *   The live map and the three spies (for restoration via mockRestore,
+ *   The live map and every spy it installed (for restoration via mockRestore,
  *   vi.restoreAllMocks(), or the spy()/restoreSpies() convention).
  */
 export function mockFsMap(initialFiles = {}) {

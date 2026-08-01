@@ -593,6 +593,37 @@ describe('dashboard/lib/syncWatcher.js', () => {
     expect(restoreErrors).toEqual([]);
   });
 
+  it('CONFIG_FILES membership is exactly this list', () => {
+    // DURABILITY-RELEVANT LIST. A file not named here is never uploaded to S3
+    // and never restored from it, so dropping an entry silently removes that
+    // store from the whole backup/quarantine/restore chain with every test
+    // still green — a scope probe deleted video_playlists.json and nothing
+    // failed. Adding or removing an entry has to be a conscious decision.
+    sw = freshWatcher();
+    expect(sw.CONFIG_FILES).toEqual([
+      'playlists.json',
+      'schedule.json',
+      'track_metadata.json',
+      'play_history.jsonl',
+      'visual_profiles.json',
+      'active_visual_profile.json',
+      'overlays.json',
+      'stream_keys.enc',
+      'stream_quality.json',
+      'stream_audio.json',
+      'stream_video.json',
+      'stream_control.json',
+      'restream_settings.json',
+      'live_mode.json',
+      'visual_mode.json',
+      'channel_strip.json',
+      'video_playlists.json',
+      'tier.json',
+    ]);
+    // The suite mirrors the list to build fixtures; keep the two in step.
+    expect(sw.CONFIG_FILES).toEqual(CONFIG_FILES);
+  });
+
   // ─── Corrupt configs and the backup guard (T9-C3) ────────────
 
   it('restores a config that is present and non-empty but unparseable', async () => {
@@ -738,6 +769,26 @@ describe('dashboard/lib/syncWatcher.js', () => {
       .toBe('{"playlists": [truncated');
 
     // 4. and the backup is unblocked on the next tick
+    vi.useFakeTimers();
+    sw.start();
+    await vi.advanceTimersByTimeAsync(30000);
+    expect(stubs.uploadBuffer.mock.calls.map(([, key]) => key)).toContain('config/playlists.json');
+  });
+
+  it('a collided .restored-N marker counts as handled, not as pending', async () => {
+    // markQuarantinesHandled falls back to .restored-1, -2 ... when the plain
+    // name is taken. A plain endsWith('.restored') check misses those, so the
+    // config would look permanently quarantined: uploads blocked forever and
+    // every boot re-downloading over a healthy local file.
+    const { stubs } = loadS3();
+    sw = freshWatcher();
+    const files = allFilesPresent();
+    files['/shared/playlists.json.corrupt-1700000000000.restored-1'] = 'old damage';
+    mockFs(files);
+
+    await sw.restoreConfigs();
+    expect(stubs.download).not.toHaveBeenCalled();   // nothing looks broken
+
     vi.useFakeTimers();
     sw.start();
     await vi.advanceTimersByTimeAsync(30000);
