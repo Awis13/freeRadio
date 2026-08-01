@@ -4,20 +4,16 @@ const express = require('express');
 const multer = require('multer');
 const { loadMeta } = require('./trackMeta');
 const paths = require('./paths');
+const { readStore, writeStore } = require('./jsonStore');
 
 const PLAYLIST_FILE = paths.shared('playlists.json');
 
 function loadPlaylists() {
-  try {
-    if (fs.existsSync(PLAYLIST_FILE)) {
-      return JSON.parse(fs.readFileSync(PLAYLIST_FILE, 'utf8'));
-    }
-  } catch (e) {}
-  return { playlists: {} };
+  return readStore(PLAYLIST_FILE, { playlists: {} });
 }
 
 function savePlaylists(data) {
-  fs.writeFileSync(PLAYLIST_FILE, JSON.stringify(data, null, 2));
+  writeStore(PLAYLIST_FILE, data);
 }
 
 function getPlaylist(id) {

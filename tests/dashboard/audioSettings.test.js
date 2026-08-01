@@ -148,11 +148,17 @@ describe('setAudioSettings', () => {
   });
 
   it('writes to the hard-coded /shared/stream_audio.json path', () => {
-    // pinned as-is: target path is a module constant, not configurable
+    // pinned as-is: target path is a module constant, not configurable.
+    // The write is atomic now — bytes to <file>.tmp, rename into place — so the
+    // destination is pinned on the rename rather than on writeFileSync.
     setAudioSettings({ enhanced: true });
     expect(fs.writeFileSync).toHaveBeenCalledWith(
-      '/shared/stream_audio.json',
+      '/shared/stream_audio.json.tmp',
       expect.any(String)
+    );
+    expect(fs.renameSync).toHaveBeenCalledWith(
+      '/shared/stream_audio.json.tmp',
+      '/shared/stream_audio.json'
     );
   });
 

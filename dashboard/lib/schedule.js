@@ -6,6 +6,7 @@ const { resolvePlaylist, getPlaylist } = require('./playlist');
 const { resolveVideoPlaylist, getVideoPlaylist } = require('./videoPlaylist');
 const { appendEntry } = require('./history');
 const paths = require('./paths');
+const { readStore, writeStore } = require('./jsonStore');
 
 const SCHEDULE_FILE = paths.shared('schedule.json');
 const MUSIC_DIR = paths.MUSIC_DIR;
@@ -24,16 +25,11 @@ function toProcessedPath(filename) {
 }
 
 function loadSchedule() {
-  try {
-    if (fs.existsSync(SCHEDULE_FILE)) {
-      return JSON.parse(fs.readFileSync(SCHEDULE_FILE, 'utf8'));
-    }
-  } catch (e) {}
-  return { weekly: {}, events: {}, settings: { timezone: 'Europe/Moscow', defaultPlaylistId: null, defaultVideoPlaylistId: null, enabled: true } };
+  return readStore(SCHEDULE_FILE, { weekly: {}, events: {}, settings: { timezone: 'Europe/Moscow', defaultPlaylistId: null, defaultVideoPlaylistId: null, enabled: true } });
 }
 
 function saveSchedule(data) {
-  fs.writeFileSync(SCHEDULE_FILE, JSON.stringify(data, null, 2));
+  writeStore(SCHEDULE_FILE, data);
 }
 
 // Get current time in configured timezone (via Intl.DateTimeFormat)
@@ -318,13 +314,12 @@ async function executeScheduleTick() {
         const resolved = resolveVideoPlaylist(videoPlaylistId, visualsDir);
         if (resolved.length > 0) {
           const ACTIVE_FILE = paths.shared('active_visual_profile.json');
-          const payload = JSON.stringify({
+          writeStore(ACTIVE_FILE, {
             id: videoPlaylistId,
             name: 'schedule-' + slotId,
             videos: resolved,
             activatedAt: Date.now()
-          }, null, 2);
-          fs.writeFileSync(ACTIVE_FILE, payload);
+          });
           console.log(`[schedule] Activated video playlist ${videoPlaylistId} (${resolved.length} videos)`);
         }
       } catch (e) {

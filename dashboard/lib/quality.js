@@ -1,6 +1,6 @@
-const fs = require('fs');
 const tierLimits = require('./tierLimits');
 const paths = require('./paths');
+const { readStore, writeStore } = require('./jsonStore');
 
 const QUALITY_FILE = paths.shared('stream_quality.json');
 
@@ -61,12 +61,15 @@ const PRESETS = {
 
 function getQuality() {
   try {
-    if (fs.existsSync(QUALITY_FILE)) {
-      const data = JSON.parse(fs.readFileSync(QUALITY_FILE, 'utf8'));
-      return { preset: data.preset, settings: PRESETS[data.preset] || PRESETS.high };
+    const data = readStore(QUALITY_FILE, null);
+    if (data) {
+      return { preset: data.preset, settings: { ...(PRESETS[data.preset] || PRESETS.high) } };
     }
   } catch (e) {}
-  return { preset: 'high', settings: PRESETS.high };
+  // Copies, not the PRESETS entries themselves: callers used to receive the
+  // shared objects, so anything mutating a returned `settings` edited the
+  // preset table for the whole process.
+  return { preset: 'high', settings: { ...PRESETS.high } };
 }
 
 function setQuality(preset) {
@@ -78,7 +81,7 @@ function setQuality(preset) {
     const limits = tierLimits.getLimits(tier);
     return { error: 'Quality preset exceeds tier limit', maxAllowed: limits.maxQuality };
   }
-  fs.writeFileSync(QUALITY_FILE, JSON.stringify({ preset, timestamp: Date.now() }));
+  writeStore(QUALITY_FILE, { preset, timestamp: Date.now() }, { indent: 0 });
   return { preset, settings: PRESETS[preset] };
 }
 

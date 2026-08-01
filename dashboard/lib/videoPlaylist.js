@@ -3,6 +3,7 @@ const path = require('path');
 const express = require('express');
 const { loadMeta } = require('./trackMeta');
 const paths = require('./paths');
+const { readStore, writeStore } = require('./jsonStore');
 
 const PLAYLIST_FILE = paths.shared('video_playlists.json');
 const ACTIVE_FILE = paths.shared('active_visual_profile.json');
@@ -10,18 +11,11 @@ const QUEUE_FILE = paths.shared('video_queue.txt');
 const VIDEO_EXTENSIONS = /\.(mp4|mov|mkv)$/i;
 
 function loadVideoPlaylists() {
-  try {
-    if (fs.existsSync(PLAYLIST_FILE)) {
-      return JSON.parse(fs.readFileSync(PLAYLIST_FILE, 'utf8'));
-    }
-  } catch (e) {
-    console.error('[video-playlists] Failed to load playlists:', e.message);
-  }
-  return { playlists: {} };
+  return readStore(PLAYLIST_FILE, { playlists: {} });
 }
 
 function saveVideoPlaylists(data) {
-  fs.writeFileSync(PLAYLIST_FILE, JSON.stringify(data, null, 2));
+  writeStore(PLAYLIST_FILE, data);
 }
 
 function getVideoPlaylist(id) {

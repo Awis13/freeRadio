@@ -4,6 +4,7 @@ const express = require('express');
 const multer = require('multer');
 const tierLimits = require('./tierLimits');
 const paths = require('./paths');
+const { readStore, writeStore } = require('./jsonStore');
 
 const OVERLAY_CONFIG = paths.shared('overlays.json');
 const FILTER_STRING_FILE = paths.shared('overlay_filter_string.txt');
@@ -23,16 +24,11 @@ function escapeDrawtext(text) {
 }
 
 function loadOverlays() {
-  try {
-    if (fs.existsSync(OVERLAY_CONFIG)) {
-      return JSON.parse(fs.readFileSync(OVERLAY_CONFIG, 'utf8'));
-    }
-  } catch (e) {}
-  return { enabled: false, layers: [] };
+  return readStore(OVERLAY_CONFIG, { enabled: false, layers: [] });
 }
 
 function saveOverlays(data) {
-  fs.writeFileSync(OVERLAY_CONFIG, JSON.stringify(data, null, 2));
+  writeStore(OVERLAY_CONFIG, data);
   generateFilterString(data);
 }
 
@@ -80,7 +76,7 @@ function generateFilterString(config) {
 
   // Write both the simple filter string and the full config
   fs.writeFileSync(FILTER_STRING_FILE, filters.join(','));
-  fs.writeFileSync(paths.shared('overlay_compiled.json'), JSON.stringify(output, null, 2));
+  writeStore(paths.shared('overlay_compiled.json'), output);
 }
 
 function buildDrawtext(layer) {

@@ -242,13 +242,18 @@ describe('saveVideoPlaylists', () => {
 
   it('writes JSON to file', () => {
     const spy = vi.spyOn(fs, 'writeFileSync').mockImplementation(() => {});
-    spies.push(spy);
+    // Atomic write: same bytes, but they land in the tmp sibling and the rename
+    // publishes them under PLAYLIST_FILE.
+    const renameSpy = vi.spyOn(fs, 'renameSync').mockImplementation(() => {});
+    vi.spyOn(fs, 'mkdirSync').mockImplementation(() => {});
+    spies.push(spy, renameSpy);
     const data = { playlists: { vpl_1: { id: 'vpl_1', name: 'Test' } } };
     saveVideoPlaylists(data);
     expect(spy).toHaveBeenCalledWith(
-      PLAYLIST_FILE,
+      PLAYLIST_FILE + '.tmp',
       JSON.stringify(data, null, 2)
     );
+    expect(renameSpy).toHaveBeenCalledWith(PLAYLIST_FILE + '.tmp', PLAYLIST_FILE);
   });
 });
 
