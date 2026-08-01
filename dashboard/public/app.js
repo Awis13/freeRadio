@@ -38,22 +38,11 @@
   var studioPlayer = document.getElementById('studio-player');
   function getStudioPlayer() { return studioPlayer; }
   var uptimeEl = document.getElementById('uptime');
-  // music-list / music-count / visuals-list / visuals-count refs moved into
-  // filemgmt.js (window.FRFileMgmt), which resolves them via getElementById.
-  // #log / #dbg-clear / #dbg-pause refs moved into notify.js (window.FRNotify),
-  // which resolves them via getElementById.
 
   // --- Studio DOM refs ---
   var studioBpm = document.getElementById('studio-bpm');
 
-  // PTT DOM refs moved into ptt.js (window.FRPtt), which resolves them via
-  // getElementById inside FRPtt.init().
-
-
   // --- State ---
-  // logsPaused / logs (the #log ring buffer) moved into notify.js (window.FRNotify).
-  // musicFiles / visualFiles moved into filemgmt.js (window.FRFileMgmt); read via
-  // FRFileMgmt.getMusicFiles() / getVisualFiles().
 
   // --- Auth ---
   // The auth/login cluster (authFetch wrapper, login overlay, doLogin, checkAuth,
@@ -68,16 +57,9 @@
   var showLoginOverlay = window.FRAuth.showLoginOverlay;
 
   // --- Navigation (tab switching, collapsible panels, keyboard shortcuts) ---
-  // Lives in navigation.js (window.FRNavigation), wired up via FRNavigation.init
-  // below (which binds the three handlers and owns the activeTab state). The
-  // per-tab lazy loaders are window.FRX.* module methods read directly off
-  // window by the module.
 
   // --- Logging + error-toast ---
   // log() / showError() + the #log ring buffer, #dbg-clear/#dbg-pause handlers
-  // and showError's transient #error-banner toast moved into notify.js
-  // (window.FRNotify). The `log` / `showError` aliases at the top of this IIFE
-  // resolve to FRNotify; FRNotify.init() (wired below) binds the debug controls.
 
   // --- Uptime ---
   setInterval(function () {
@@ -177,15 +159,12 @@
   // start time and the listener history that updateIcecast feeds. Its init()
   // resolves the transport DOM and starts the 1s progress ticker.
   //
-  // bpmMap lives in broadcast.js with the WS frame handlers that write it; this
-  // module is one of its four injected readers.
   FRNowPlaying.init({
     log: log,
     getBroadcastState: FRBroadcast.getBroadcastState,
     getBpmMap: FRBroadcast.getBpmMap,
     getMixMode: FRBroadcast.getMixMode
   });
-
 
   // Wire the WebSocket hub and open the first connection, where connectWs()
   // used to be called. Passing FRNowPlaying/FRAnalyzer methods as bare
@@ -202,10 +181,6 @@
   // --- File Management ---
   // The file-management UI (refreshBpmInList, loadFileList, renderFileList,
   // deleteFile, the drop-zone upload system) plus the musicFiles/visualFiles
-  // state it owns were extracted into filemgmt.js (window.FRFileMgmt). app.js
-  // calls FRFileMgmt.init({...}) at boot (further down) and reaches the state via
-  // FRFileMgmt.getMusicFiles()/getVisualFiles(). bpmMap lives in broadcast.js
-  // and is injected as a getter.
 
   FRFileMgmt.initDropZones();
 
@@ -234,28 +209,6 @@
     loadTrackHistory: function () { return FRTrackHistory.loadTrackHistory(); }
   });
 
-  // ============================
-  // TRACK HISTORY (Studio sidebar)
-  // ============================
-  // The track-history sidebar (loadTrackHistory / renderTrackHistory) now lives
-  // in trackhistory.js (window.FRTrackHistory), wired via FRTrackHistory.init(...)
-  // below. init() runs the boot poll (loadTrackHistory() + 15s interval). The
-  // queue skip handlers re-source the post-skip refresh as
-  // FRTrackHistory.loadTrackHistory().
-
-  // ============================
-  // RESTREAM STATUS WIDGET
-  // ============================
-  // The WS-fed restream-STATUS widget (updateRestreamStatus /
-  // loadRestreamStatusFallback / lastRtmpHealth) now lives in restreamStatus.js
-  // (window.FRRestreamStatus), wired via FRRestreamStatus.init(...) below. The WS
-  // handler in broadcast.js calls
-  // FRRestreamStatus.updateRestreamStatus(...); the boot-time fallback load is
-  // re-sourced as FRRestreamStatus.loadRestreamStatusFallback() in that wiring.
-
-  // ============================
-  // GENERIC MODAL
-  // ============================
   // The generic-modal UI lives in genericModal.js (window.FRGenericModal). It is
   // pure DOM, so init() takes no host services — it just resolves the modal DOM
   // refs and binds #generic-modal-save + the backdrop. window.closeGenericModal
@@ -267,14 +220,6 @@
   var openGenericModal = window.FRGenericModal.openGenericModal;
   FRGenericModal.init({});
 
-  // ============================
-  // PLAYLISTS
-  // ============================
-  // The music-playlists UI lives in playlists.js (window.FRPlaylists). Wire it
-  // up with the host services + live getters for shared state. This binds the
-  // create / delete / load-queue / import handlers to their DOM elements.
-  // closeGenericModal is assigned to window further down the IIFE, so it is
-  // wrapped to defer the lookup to call time.
   FRPlaylists.init({
     authFetch: authFetch, log: log, showError: showError,
     openGenericModal: openGenericModal,
@@ -400,67 +345,8 @@
   // the activeTab state. No deps: the per-tab loaders are window.FRX.* methods.
   FRNavigation.init({});
 
-  // ============================
-  // SCHEDULE
-  // ============================
-  // The schedule UI lives in schedule.js (window.FRSchedule), wired up via
-  // FRSchedule.init(...) above (which also binds the save/add-slot/add-event
-  // buttons and starts the 30s current-slot poll). Callers use
-  // FRSchedule.loadSchedule() / FRSchedule.loadPlaylistsForSelect().
-
-  // ============================
-  // VISUAL PROFILES
-  // ============================
-  // The visual-profiles UI lives in visualprofiles.js (window.FRVisualProfiles),
-  // wired up via FRVisualProfiles.init(...) above (which also binds the
-  // create-visual-profile-btn). Callers use FRVisualProfiles.loadVisualProfiles().
-
-
-  // ============================
-  // VIDEO PLAYLISTS
-  // ============================
-  // The video-playlists UI lives in videoplaylists.js (window.FRVideoPlaylists),
-  // wired up via FRVideoPlaylists.init(...) above (which also binds the
-  // create-video-playlist-btn and the vpl-update-rules-btn). Callers use
-  // FRVideoPlaylists.loadVideoPlaylists().
-
-  // ============================
-  // OVERLAYS
-  // ============================
-  // The overlays config UI lives in overlays.js (window.FROverlays), wired up
-  // via FROverlays.init(...) near the other FRx.init calls (it also assigns the
-  // window.toggleOverlayLayer / updateOverlayLayer / removeOverlayLayer globals
-  // and binds the #overlays-enabled-check + #add-overlay-btn handlers). Callers
-  // use FROverlays.loadOverlays() / FROverlays.loadOverlayAssets().
-
-  // ============================
-  // ANALYTICS
-  // ============================
-  // Analytics UI (loadAnalytics / drawListenerChart / loadHistoryStats /
-  // drawTopTracksChart) lives in analytics.js (window.FRAnalytics), wired up via
-  // FRAnalytics.init near the FRPlaylists.init call. listenerHistory and
-  // peakListeners moved to nowplaying.js with the updateIcecast that feeds them;
-  // app.js passes FRNowPlaying's getters straight through, so the module still
-  // reads them live.
-
-  // ============================
-  // RESTREAM SETTINGS (Studio sidebar)
-  // ============================
-  // The stream-platforms / stream-keys domain lives in platforms.js
-  // (window.FRPlatforms), wired up via FRPlatforms.init(...) near the other
-  // FRx.init calls. The restream auto-start control now lives in
-  // restreamSettings.js (window.FRRestreamSettings), wired via
-  // FRRestreamSettings.init(...) below. The WS-fed restream-STATUS widget
-  // (updateRestreamStatus / lastRtmpHealth) now lives in restreamStatus.js
-  // (window.FRRestreamStatus), wired via FRRestreamStatus.init(...) below.
-
   // --- Broadcast Control ---
-  // The broadcast state machine - phase model, repaint, transport buttons, mode
-  // cards, Live Mode bar, status polling and mixing pills - now lives in
-  // broadcast.js (window.FRBroadcast), together with broadcastState, bpmMap,
-  // processedVisualFiles, the mix mode and the WS handler bodies. Its init()
-  // resolves the machine's DOM and runs the former module-scope statements in
-  // their original order.
+  // init() runs the former module-scope statements in their original order.
   FRBroadcast.init({
     authFetch: authFetch,
     log: log,
@@ -469,24 +355,6 @@
     setUserInteracted: setUserInteracted
   });
 
-  // ============================================================
-  // MONITOR MIXER — Talk Over mode + Live/AFK browser mic
-  // ============================================================
-  // The mixer, its meters, the auto-duck envelope and the browser-mic streaming
-  // loop now live in mixer.js (window.FRMixer). FRMixer.init() below injects the
-  // host services and runs the boot side-effects that used to be statements
-  // here: resolving the mm-* DOM refs, binding the control listeners under their
-  // `if (element)` guards, enumerating devices, and the 2s streaming check.
-  //
-  // Nothing foreign was declared in that region, so all of its state moved.
-  // monitorMusicGain/mmMasterGain are read by FRAnalyzer.setPlayerMuted through
-  // FRMixer live getters rather than being copied.
-  //
-  // The analyzer graph the faders and the duck envelope drive is injected as
-  // method references on FRAnalyzer; those are safe to pass here even though
-  // FRAnalyzer.init runs later, because the UMD factory has already built the
-  // module object and every getter returns null until azInit runs - exactly the
-  // pre-extraction behaviour.
   FRMixer.init({
     log: log,
     showError: showError,
@@ -499,19 +367,6 @@
     ensureAnalyzer: FRAnalyzer.ensureInited
   });
 
-  // ============================================================
-  // CRT ANALYZER — multi-mode audio visualizer
-  // ============================================================
-  // The analyzer, its WebAudio graph, the Safari server-FFT path and the player
-  // mute control now live in analyzer.js (window.FRAnalyzer). FRAnalyzer.init()
-  // injects the host services and runs the boot side-effects that used to be
-  // statements here: resolving the analyzer DOM refs, binding the mode /
-  // on-off / theme controls, applying the saved theme, wiring the Safari
-  // sync-offset UI, and registering the resize listener.
-  //
-  // setPlayerMuted moved with the graph it drives (azGainNode), so app.js and
-  // the player module both call FRAnalyzer.setPlayerMuted. isSafari stays here
-  // because it is UA detection shared with the player, and is injected.
   FRAnalyzer.init({
     log: log,
     authFetch: authFetch,
