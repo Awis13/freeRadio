@@ -30,8 +30,12 @@ function listFiles(dir, { recursive = false, skipDotfiles = false } = {}) {
       if (recursive) files.push(...listFiles(fp, { recursive, skipDotfiles }));
       continue;
     }
-    // Symlinks are skipped rather than followed: du -sb did not add the target
-    // twice, and following them could leave the cache directory entirely.
+    // Symlinks are skipped, not followed. This is a deliberate change: the old
+    // code used statSync, which resolves the link, so a symlink into the cache
+    // counted toward the total AND could be unlinked by eviction — deleting
+    // the link while the bytes it pointed at stayed. Sizing now follows du -sb,
+    // which does not bill a link's target, and eviction only removes files it
+    // actually owns.
     if (!entry.isFile()) continue;
     try {
       const stat = fs.statSync(fp);

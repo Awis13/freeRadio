@@ -47,7 +47,6 @@ const MUSIC_DIR = paths.MUSIC_DIR;
 const VISUALS_DIR = paths.VISUALS_DIR;
 const FFMPEG_PROGRESS_FILE = process.env.FFMPEG_PROGRESS_FILE || '';
 const OUTPUT_MODE = process.env.OUTPUT_MODE || 'hls';
-const DASHBOARD_TOKEN = process.env.DASHBOARD_TOKEN || '';
 const S3_CACHE_MAX_MB = parseInt(process.env.S3_CACHE_MAX_MB) || 4000;
 
 // --- App + Server ---
@@ -193,8 +192,9 @@ app.use('/api/', (req, res, next) => {
   if (authGate.isClosed()) {
     return res.status(401).json({ error: 'Auth is not configured' });
   }
-  const auth = req.headers.authorization;
-  if (auth === 'Bearer ' + DASHBOARD_TOKEN) return next();
+  const auth = req.headers.authorization || '';
+  const presented = auth.startsWith('Bearer ') ? auth.slice('Bearer '.length) : null;
+  if (authGate.accepts(presented)) return next();
   res.status(401).json({ error: 'Unauthorized' });
 });
 

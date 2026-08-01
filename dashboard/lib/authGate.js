@@ -11,7 +11,8 @@
  * Three modes:
  *   'token'  — DASHBOARD_TOKEN is set; callers must present it.
  *   'open'   — no token, AUTH_DISABLED=true. The old behaviour, now deliberate.
- *   'closed' — no token, no opt-out. Everything is denied until one is chosen.
+ *   'closed' — no token, no opt-out. Everything except the server's public
+ *              paths is denied until one is chosen.
  *
  * Env is read per call, not at require time: DASHBOARD_TOKEN is flipped between
  * cases by several suites, and a module-level snapshot would answer with
@@ -63,11 +64,11 @@ function accepts(presented) {
 function logStartupPosture(log = console) {
   const mode = authMode();
   if (mode === 'token') {
-    log.log('[auth] DASHBOARD_TOKEN is set — API, WebSocket and SSO require it');
+    log.log('[auth] DASHBOARD_TOKEN is set — non-public API paths, WebSocket and SSO require it');
   } else if (mode === 'open') {
     log.warn('[auth] AUTH_DISABLED=true — every API, WebSocket and SSO request is accepted without a token. Do not run this way where anyone else can reach it.');
   } else {
-    log.error('[auth] NO DASHBOARD_TOKEN SET — refusing every API, WebSocket and SSO request. Set DASHBOARD_TOKEN to a secret, or set AUTH_DISABLED=true if this instance is meant to be open.');
+    log.error('[auth] NO DASHBOARD_TOKEN SET — refusing every non-public API request, every WebSocket connection and every SSO login. PUBLIC_PATHS (health, status, rtmp-health and the live hooks) still answer, so probes keep working. Set DASHBOARD_TOKEN to a secret, or set AUTH_DISABLED=true if this instance is meant to be open.');
   }
   return mode;
 }
