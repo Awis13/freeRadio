@@ -4,8 +4,8 @@
  * Shared jsdom boot helper for the dashboard characterization tests.
  *
  * app.js is a browser IIFE (~580 LOC of boot substrate after the extraction
- * track, with 27 sibling FR* modules alongside it) that runs heavy init on
- * load (WebSocket connect, fetch, setInterval, canvas, HLS). What is left in the
+ * track, with the sibling FR* modules index.html lists alongside it) that runs
+ * heavy init on load (WebSocket connect, fetch, setInterval, canvas, HLS). What is left in the
  * IIFE is trapped in its closure, so app.js exposes test-only guarded hooks
  * (window.__appHelpers, __appDrift, __appPlaylists, __appWs, __appAudio,
  * __appStudio) under the window.__APP_TEST__ flag so tests can reach in and
@@ -54,11 +54,16 @@ const VENDOR_SRC = new Set(['/js/hls.min.js']);
  * Fails loudly rather than returning an empty/entry-less manifest: booting no
  * modules would make every characterization pin pass vacuously.
  */
-function parseModuleManifest(html) {
+export function parseModuleManifest(html) {
+  // Commented-out markup must not register a module. index.html escapes nested
+  // comments inside its PHASE 2/3 blocks (<!~~ ... ~~>), so no comment contains
+  // a literal "-->" and a non-greedy strip cannot swallow live markup.
+  const live = html.replace(/<!--[\s\S]*?-->/g, '');
+
   const files = [];
   const scriptTag = /<script\b[^>]*\bsrc\s*=\s*["']([^"']*)["']/gi;
   let match;
-  while ((match = scriptTag.exec(html)) !== null) {
+  while ((match = scriptTag.exec(live)) !== null) {
     const src = match[1].split('?')[0].split('#')[0];
     if (VENDOR_SRC.has(src)) continue;
     files.push(src.replace(/^\//, ''));
@@ -89,9 +94,59 @@ function parseModuleManifest(html) {
   return modules;
 }
 
+/**
+ * Read the global a module registers straight out of its own UMD prologue:
+ *
+ *     if (typeof window !== 'undefined') { window.FRUtils = api; }
+ *
+ * The file name is NOT a usable source for that name — filemgmt.js registers
+ * FRFileMgmt, visualprofiles.js registers FRVisualProfiles, and
+ * enhanceSettings.js registers FREnhance — so the module's own assignment is the
+ * only honest rule. Reads (window.FRUtils.pad) do not match; only assignments do.
+ */
+function registeredGlobal(file, src) {
+  const assignment = /window\.(FR[A-Za-z0-9_]*)\s*=[^=]/g;
+  const names = new Set();
+  let match;
+  while ((match = assignment.exec(src)) !== null) names.add(match[1]);
+
+  if (names.size === 0) {
+    throw new Error(
+      `appBoot: ${file} assigns no window.FR* global — it is listed in index.html ` +
+      'but registers nothing, so nothing that depends on it could work',
+    );
+  }
+  if (names.size > 1) {
+    throw new Error(
+      `appBoot: ${file} assigns more than one window.FR* global ` +
+      `(${[...names].join(', ')}) — cannot tell which one proves it loaded`,
+    );
+  }
+  return [...names][0];
+}
+
 const moduleFiles = parseModuleManifest(indexHtml);
 const moduleSources = moduleFiles.map((file) => readFileSync(path.join(publicDir, file), 'utf8'));
 const appSrc = readFileSync(path.join(publicDir, APP_ENTRY), 'utf8');
+
+/**
+ * The window.FR* global each manifest module is expected to publish, in the same
+ * order as moduleFiles. bootWindow asserts every one of them is on the window
+ * after the eval loop.
+ */
+const moduleGlobals = moduleFiles.map((file, i) => registeredGlobal(file, moduleSources[i]));
+
+/**
+ * The browser module manifest, exported for tests that pin the load contract
+ * itself (appLoad.test.js): `files` are the index.html script sources relative
+ * to dashboard/public, `globals` the window.FR* name each one registers, same
+ * order, entry point excluded.
+ */
+export const moduleManifest = Object.freeze({
+  files: Object.freeze([...moduleFiles]),
+  globals: Object.freeze([...moduleGlobals]),
+  entry: APP_ENTRY,
+});
 
 /**
  * Install the browser-global stubs app.js touches during its synchronous init,
@@ -157,12 +212,14 @@ function installStubs(win) {
 }
 
 /**
- * Boot one jsdom window with the real index.html + utils.js + app.js loaded in
- * order, with __APP_TEST__ = true. Returns { win, doc, loadError }.
+ * Boot one jsdom window with the real index.html, every manifest module and
+ * app.js evaluated in index.html order, with __APP_TEST__ = true. Returns
+ * { win, doc, loadError }.
  *
  * loadError is null on success; if app.js threw during its synchronous load it
  * is captured (so the load-smoke can still assert against it instead of the
- * whole suite blowing up).
+ * whole suite blowing up). A module that fails to load is NOT captured — it
+ * throws out of bootWindow, because every pin downstream would be meaningless.
  */
 export function bootWindow() {
   const virtualConsole = new VirtualConsole();
@@ -182,17 +239,21 @@ export function bootWindow() {
   // (utils.js -> window.FRUtils, playlists.js -> window.FRPlaylists, ...), then
   // app.js, which calls FRPlaylists.init / FRAnalytics.init / FRFileMgmt.init /
   // FRVisualProfiles.init on boot.
-  let evaluated = 0;
   for (const src of moduleSources) {
     dom.window.eval(src);
-    evaluated++;
   }
-  if (evaluated !== moduleFiles.length) {
+
+  // Every manifest module must have published its API before app.js runs: a file
+  // that evaluates but registers nothing would leave app.js reading undefined,
+  // and pins that never touch that module would still pass.
+  const missing = moduleGlobals.filter((name) => win[name] == null);
+  if (missing.length > 0) {
     throw new Error(
-      `appBoot: evaluated ${evaluated} modules but the index.html manifest lists ` +
-      `${moduleFiles.length} — the boot is not loading what the page ships`,
+      `appBoot: ${missing.length} of ${moduleGlobals.length} manifest modules did not ` +
+      `register their global after eval (missing: ${missing.join(', ')})`,
     );
   }
+
   let loadError = null;
   try {
     dom.window.eval(appSrc);

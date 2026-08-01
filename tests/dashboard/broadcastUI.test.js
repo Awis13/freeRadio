@@ -52,10 +52,10 @@
  * returning a promise.
  * This is a browser-API completion local to this file; appBoot.js is untouched.
  *
- * EXTRACTION DESTINATION: this region is slated to move out of the app.js IIFE
- * into a planned broadcast.js module (window.FRBroadcast), alongside the other
- * extracted domains. Every pin here is written against observable effects so it
- * survives that move untouched.
+ * EXTRACTION DONE: the region has since moved out of the app.js IIFE into
+ * broadcast.js (window.FRBroadcast), alongside the other extracted domains.
+ * Every pin here is written against observable effects, and they stayed green
+ * across that move untouched — which is what proved it behaviour-neutral.
  *
  * AS-IS QUIRKS PINNED HERE — each of these locks in behaviour that looks wrong
  * on purpose. Do not "fix" one to make a pin greener; change it in a separate
