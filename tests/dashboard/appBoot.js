@@ -56,6 +56,7 @@ const analyzerSrc = readFileSync(path.join(publicDir, 'analyzer.js'), 'utf8');
 const queueSrc = readFileSync(path.join(publicDir, 'queue.js'), 'utf8');
 const nowplayingSrc = readFileSync(path.join(publicDir, 'nowplaying.js'), 'utf8');
 const wsHubSrc = readFileSync(path.join(publicDir, 'wsHub.js'), 'utf8');
+const broadcastSrc = readFileSync(path.join(publicDir, 'broadcast.js'), 'utf8');
 const appSrc = readFileSync(path.join(publicDir, 'app.js'), 'utf8');
 
 /**
@@ -174,6 +175,7 @@ export function bootWindow() {
   dom.window.eval(queueSrc);
   dom.window.eval(nowplayingSrc);
   dom.window.eval(wsHubSrc);
+  dom.window.eval(broadcastSrc);
   let loadError = null;
   try {
     dom.window.eval(appSrc);

@@ -59,6 +59,7 @@ const analyzerSrc = readFileSync(path.join(publicDir, 'analyzer.js'), 'utf8');
 const queueSrc = readFileSync(path.join(publicDir, 'queue.js'), 'utf8');
 const nowplayingSrc = readFileSync(path.join(publicDir, 'nowplaying.js'), 'utf8');
 const wsHubSrc = readFileSync(path.join(publicDir, 'wsHub.js'), 'utf8');
+const broadcastSrc = readFileSync(path.join(publicDir, 'broadcast.js'), 'utf8');
 const appSrc = readFileSync(path.join(publicDir, 'app.js'), 'utf8');
 
 /**
@@ -178,6 +179,7 @@ describe('app.js jsdom load-smoke (C2 FRUtils cutover)', () => {
     runScript(dom, queueSrc, 'queue.js');
     runScript(dom, nowplayingSrc, 'nowplaying.js');
     runScript(dom, wsHubSrc, 'wsHub.js');
+    runScript(dom, broadcastSrc, 'broadcast.js');
     try {
       runScript(dom, appSrc, 'app.js');
     } catch (err) {
@@ -263,6 +265,7 @@ describe('app.js drift-gate (C3 FRUtils delegation of the 4 diverged helpers)', 
     runScript(dom, queueSrc, 'queue.js');
     runScript(dom, nowplayingSrc, 'nowplaying.js');
     runScript(dom, wsHubSrc, 'wsHub.js');
+    runScript(dom, broadcastSrc, 'broadcast.js');
     runScript(dom, appSrc, 'app.js');
     drift = win.__appDrift;
   });
