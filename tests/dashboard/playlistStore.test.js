@@ -1,15 +1,14 @@
 /**
  * tests/dashboard/playlistStore.test.js
  *
- * Proves dashboard/lib/playlistStore.js can reproduce BOTH shipped contracts —
- * lib/playlist.js (audio) and lib/videoPlaylist.js (video) — before C2 cuts
- * either of them over to it.
+ * Covers dashboard/lib/playlistStore.js, the store and CRUD router behind BOTH
+ * playlist domains — lib/playlist.js (audio) and lib/videoPlaylist.js (video)
+ * are thin wrappers around it.
  *
  * The suite is driven twice from one table: once with the audio parameter set,
- * once with the video one. Everything asserted in the shared block must hold
- * for both; the divergence block asserts, per domain, the things that are
- * deliberately NOT the same today. Those divergence tests are the written
- * record of what C2 will decide to align:
+ * once with the video one. Everything asserted in the shared block holds for
+ * both; the divergence block records what remains deliberately different
+ * between the two domains:
  *
  *   - track directory: audio reads the directory it is given, video reads
  *     <dir>/.processed;
@@ -45,7 +44,6 @@ const DOMAINS = {
     idPrefix: 'pl_',
     extensions: AUDIO_EXT,
     trackDir: (dir) => dir,
-    skipPrefixes: [],
     smartRules: { bpm: true, genre: true },
     present: ['keep.mp3', 'other.wav'],
     foreign: 'clip.mp4',
@@ -55,7 +53,6 @@ const DOMAINS = {
     idPrefix: 'vpl_',
     extensions: VIDEO_EXT,
     trackDir: (dir) => path.join(dir, '.processed'),
-    skipPrefixes: ['_standby_'],
     smartRules: {},
     present: ['keep.mp4', 'other.mov'],
     foreign: 'song.mp3',
@@ -89,7 +86,6 @@ function setup(domainName, { files = [], meta = null, bpmMap = {} } = {}) {
     idPrefix: d.idPrefix,
     extensions: d.extensions,
     trackDir: d.trackDir,
-    skipPrefixes: d.skipPrefixes,
     smartRules: d.smartRules,
   });
   return { store, baseDir, dir, d, bpmMap };
