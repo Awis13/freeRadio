@@ -15,14 +15,30 @@ const S3_ENABLED = process.env.S3_ENABLED === 'true';
 
 let client = null;
 
+function defaultClientFactory() {
+  return new S3Client({
+    endpoint: S3_ENDPOINT.startsWith('http') ? S3_ENDPOINT : `https://${S3_ENDPOINT}`,
+    region: S3_REGION,
+    credentials: { accessKeyId: S3_ACCESS_KEY, secretAccessKey: S3_SECRET_KEY },
+    forcePathStyle: true
+  });
+}
+
+let clientFactory = defaultClientFactory;
+
+// Test-only seam: swap what getClient() builds, so tests can hand this module
+// an object with a send() method instead of a real S3Client. Pass nothing to
+// restore the real one. The enable/config gate below is deliberately NOT
+// bypassed — an injected factory is still only called when the module would
+// have built a client anyway, so disabled mode keeps no-opping.
+function _setClientFactory(factory) {
+  clientFactory = factory || defaultClientFactory;
+  client = null;
+}
+
 function getClient() {
   if (!client && S3_ENABLED && S3_ENDPOINT && S3_ACCESS_KEY && S3_SECRET_KEY) {
-    client = new S3Client({
-      endpoint: S3_ENDPOINT.startsWith('http') ? S3_ENDPOINT : `https://${S3_ENDPOINT}`,
-      region: S3_REGION,
-      credentials: { accessKeyId: S3_ACCESS_KEY, secretAccessKey: S3_SECRET_KEY },
-      forcePathStyle: true
-    });
+    client = clientFactory();
   }
   return client;
 }
@@ -158,5 +174,6 @@ async function syncDir(s3Prefix, localDir) {
 module.exports = {
   upload, uploadBuffer, download, list, remove, exists,
   ensureCached, syncDir, tenantKey,
-  S3_ENABLED, TENANT_ID
+  S3_ENABLED, TENANT_ID,
+  _setClientFactory
 };
