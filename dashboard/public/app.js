@@ -57,16 +57,6 @@
   var transportDuration = document.getElementById('transport-duration');
   var transportBarFill = document.getElementById('transport-bar-fill');
   var transportCue = document.getElementById('transport-cue');
-  var trackStartedAt = 0;
-  // Read-only seam over the track clock. trackStartedAt is written by
-  // updateAudio (from the WS 'audio' frame) and read by updateTrackProgress here
-  // and by azUpdateGlow in analyzer.js. PURE indirection:
-  // returns the same live var, zero behaviour change, no setter (updateAudio and
-  // the STOP reset keep direct access).
-  function getTrackStartedAt() { return trackStartedAt; }
-  var trackDuration = 0;
-  var trackMixDur = 0;
-  var lastAudioMsg = null; // cached last audio message (for replay after ARM→PLAY)
   var skipBtn = document.getElementById('skip-btn');
   var clearQueueBtn = document.getElementById('clear-queue-btn');
   var queueSearch = document.getElementById('queue-search');
@@ -86,12 +76,9 @@
   // --- State ---
   var bpmMap = {};
   // logsPaused / logs (the #log ring buffer) moved into notify.js (window.FRNotify).
-  var startTime = Date.now();
   // musicFiles / visualFiles moved into filemgmt.js (window.FRFileMgmt); read via
   // FRFileMgmt.getMusicFiles() / getVisualFiles().
   var processedVisualFiles = [];
-  var listenerHistory = [];
-  var peakListeners = 0;
 
   // --- Auth ---
   // The auth/login cluster (authFetch wrapper, login overlay, doLogin, checkAuth,
@@ -119,7 +106,7 @@
 
   // --- Uptime ---
   setInterval(function () {
-    var s = Math.floor((Date.now() - startTime) / 1000);
+    var s = Math.floor((Date.now() - FRNowPlaying.getStartTime()) / 1000);
     var h = Math.floor(s / 3600); s %= 3600;
     var m = Math.floor(s / 60); s %= 60;
     uptimeEl.textContent = pad(h) + ':' + pad(m) + ':' + pad(s);
@@ -167,8 +154,8 @@
     setUserInteracted: setUserInteracted,
     ensureAnalyzer: FRAnalyzer.ensureInited,
     resyncAnalyzerStream: FRAnalyzer.resyncStreamDecode,
-    getWs: function () { return getWs(); },
-    reconnectWs: function () { wsReconnectDelay = 1000; connectWs(); },
+    getWs: FRWsHub.getWs,
+    reconnectWs: FRWsHub.reconnectNow,
     isIOS: isIOS,
     isSafari: isSafari
   });
@@ -189,8 +176,8 @@
   // stay app.js-resident. checkAuth() then runs the boot auth check (was an IIFE in
   // app.js): empty/invalid token -> showLoginOverlay, valid -> hideLoginOverlay.
   FRAuth.init({ onLogin: function () {
-    if (getWs()) { try { getWs().close(); } catch (e) {} }
-    connectWs();
+    if (FRWsHub.getWs()) { try { FRWsHub.getWs().close(); } catch (e) {} }
+    FRWsHub.connectWs();
     FRFileMgmt.loadFileList('music');
     FRFileMgmt.loadFileList('visuals');
     loadBroadcastState();
@@ -212,252 +199,116 @@
   FRFileMgmt.loadFileList('music');
   FRFileMgmt.loadFileList('visuals');
 
-  // --- WebSocket ---
-  var ws = null;
-  var wsReconnectDelay = 1000;
-  var wsReconnectTimer = null;
+  // --- Now Playing / Transport ---
+  // updateMode, computeMixDur, positionCueMarker, updateAudio,
+  // updateTrackProgress, updateIcecast and updateFfmpeg now live in
+  // nowplaying.js (window.FRNowPlaying), together with the track clock
+  // (trackStartedAt / trackDuration / trackMixDur / lastAudioMsg), the server
+  // start time and the listener history that updateIcecast feeds. Its init()
+  // resolves the transport DOM and starts the 1s progress ticker.
+  //
+  // bpmMap stays here: its writers are the WS init and bpm frames below, and it
+  // already has three injected readers (FRQueue, FRFileMgmt, FRPlaylists).
+  FRNowPlaying.init({
+    log: log,
+    getBroadcastState: getBroadcastState,
+    getBpmMap: function () { return bpmMap; },
+    getMixMode: getMixMode
+  });
 
-  // Facade seam over the shared-mutable `ws` socket handle (C2 of the core
-  // facade-foundation PR). All reads/writes of `ws` route through these so a
-  // future PR can inject the socket without touching every call site. PURE
-  // indirection — getWs() returns the same value, setWs() assigns the same
-  // value; zero behaviour change. wsReconnectDelay/wsReconnectTimer stay
-  // internal (not facaded).
-  function getWs() { return ws; }
-  function setWs(v) { ws = v; }
-
-  function connectWs() {
-    // Cancel any pending reconnect to avoid stacking (iOS resume can fire multiple times)
-    if (wsReconnectTimer) { clearTimeout(wsReconnectTimer); wsReconnectTimer = null; }
-    // Close stale socket if still lingering
-    if (getWs()) {
-      try { getWs().onclose = null; getWs().close(); } catch(e) {}
-      setWs(null);
-    }
-    var proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
-    var wsUrl = proto + '//' + location.host;
-    setWs(new WebSocket(wsUrl));
-
-    getWs().onopen = function () {
-      log('ws: connected');
-      wsReconnectDelay = 1000;
-      // Send auth token as first message (read live from FRAuth — it is mutable).
-      var token = window.FRAuth.getAuthToken();
-      if (token) {
-        getWs().send(JSON.stringify({type: 'auth', token: token}));
+  // Each handler body is the former handleMessage case, verbatim, with
+  // msg.data bound to the `data` parameter. They stay here because every one
+  // of them writes broadcastState or drives another module.
+  var wsHandlers = {
+    init: function (data) {
+      bpmMap = data.bpm || {};
+      // Set broadcast state BEFORE updateAudio (race condition fix)
+      if (data.streamControl) {
+        broadcastState.streaming = data.streamControl.streaming;
+        broadcastState.broadcast = !!data.streamControl.broadcast;
       }
-      // Subscribe to server-side FFT if Safari analyzer is active
-      if (FRAnalyzer.isServerFFT()) {
-        getWs().send(JSON.stringify({type: 'fft-subscribe'}));
+      if (data.streamMode) {
+        broadcastState.streamMode = data.streamMode.mode || 'standby';
+        broadcastState.standbyVisual = data.streamMode.standbyVisual;
       }
-    };
-
-    getWs().onclose = function () {
-      log('ws: disconnected, reconnecting in ' + (wsReconnectDelay / 1000) + 's');
-      wsReconnectTimer = setTimeout(connectWs, wsReconnectDelay);
-      wsReconnectDelay = Math.min(wsReconnectDelay * 2, 10000);
-    };
-
-    getWs().onerror = function () {
-      log('ws: error');
-    };
-
-    getWs().binaryType = 'arraybuffer';
-    getWs().onmessage = function (evt) {
-      if (typeof evt.data !== 'string') {
-        // Binary FFT frame from server
-        FRAnalyzer.handleFftFrame(new Uint8Array(evt.data));
-        return;
+      if (data.visualMode) {
+        broadcastState.visualMode = data.visualMode.mode || 'visual-radio';
       }
-      try {
-        var msg = JSON.parse(evt.data);
-        handleMessage(msg);
-      } catch (e) {
-        log('ws: parse error ' + e);
+      if (data.liveMode) broadcastState.liveMode = data.liveMode;
+      deriveUiMode();
+      updateBroadcastUI();
+      FRNowPlaying.updateMode(data.outputMode);
+      FRNowPlaying.onAudioFrame(data.audio);
+      FRNowPlaying.updateIcecast(data.icecast);
+      FRNowPlaying.updateFfmpeg(data.ffmpeg);
+      if (data.rtmpHealth) FRRestreamStatus.updateRestreamStatus(data.rtmpHealth);
+      FRFileMgmt.loadFileList('music');
+      FRFileMgmt.loadFileList('visuals');
+    },
+    audio: function (data) {
+      FRNowPlaying.onAudioFrame(data);
+    },
+    video: function (data) {
+      if (FRPlayer.getPendingModeSwitch()) {
+        // New clip started in feed_fifo, but HLS player still has ~2s of buffered
+        // old content (hls_time=1 × liveSyncDurationCount=1 + segment pipeline).
+        // Wait for buffer to flush before hiding overlay.
+        log('MODE new clip detected: ' + (data && data.filename || '?') + ', waiting for HLS buffer...');
+        setTimeout(function() {
+          FRPlayer.setPendingModeSwitch(false);
+          FRPlayer.hideLoading('mode-applied');
+          log('MODE switch applied');
+        }, 2500);
       }
-    };
-  }
-
-  function handleMessage(msg) {
-    switch (msg.type) {
-      case 'init':
-        bpmMap = msg.data.bpm || {};
-        // Set broadcast state BEFORE updateAudio (race condition fix)
-        if (msg.data.streamControl) {
-          broadcastState.streaming = msg.data.streamControl.streaming;
-          broadcastState.broadcast = !!msg.data.streamControl.broadcast;
-        }
-        if (msg.data.streamMode) {
-          broadcastState.streamMode = msg.data.streamMode.mode || 'standby';
-          broadcastState.standbyVisual = msg.data.streamMode.standbyVisual;
-        }
-        if (msg.data.visualMode) {
-          broadcastState.visualMode = msg.data.visualMode.mode || 'visual-radio';
-        }
-        if (msg.data.liveMode) broadcastState.liveMode = msg.data.liveMode;
-        deriveUiMode();
-        updateBroadcastUI();
-        updateMode(msg.data.outputMode);
-        lastAudioMsg = msg.data.audio;
-        updateAudio(msg.data.audio);
-        updateIcecast(msg.data.icecast);
-        updateFfmpeg(msg.data.ffmpeg);
-        if (msg.data.rtmpHealth) FRRestreamStatus.updateRestreamStatus(msg.data.rtmpHealth);
-        FRFileMgmt.loadFileList('music');
-        FRFileMgmt.loadFileList('visuals');
-        break;
-      case 'audio':
-        lastAudioMsg = msg.data;
-        updateAudio(msg.data);
-        break;
-      case 'video':
-        if (FRPlayer.getPendingModeSwitch()) {
-          // New clip started in feed_fifo, but HLS player still has ~2s of buffered
-          // old content (hls_time=1 × liveSyncDurationCount=1 + segment pipeline).
-          // Wait for buffer to flush before hiding overlay.
-          log('MODE new clip detected: ' + (msg.data && msg.data.filename || '?') + ', waiting for HLS buffer...');
-          setTimeout(function() {
-            FRPlayer.setPendingModeSwitch(false);
-            FRPlayer.hideLoading('mode-applied');
-            log('MODE switch applied');
-          }, 2500);
-        }
-        break;
-      case 'icecast':
-        updateIcecast(msg.data);
-        break;
-      case 'ffmpeg':
-        updateFfmpeg(msg.data);
-        break;
-      case 'bpm':
-        bpmMap = msg.data || {};
-        FRFileMgmt.refreshBpmInList();
-        break;
-      case 'rtmp-health':
-        FRRestreamStatus.updateRestreamStatus(msg.data);
-        break;
-      case 'voice-status':
-        if (msg.data && msg.data.status === 'on-air') {
-          log('PTT: voice message on air');
-        }
-        break;
-      case 'mixing-config':
-        if (msg.data && msg.data.mode) {
-          setMixMode(msg.data.mode);
-          updateMixModeUI();
-          var wsB = studioBpm.textContent ? parseInt(studioBpm.textContent) : 0;
-          trackMixDur = computeMixDur(wsB);
-          positionCueMarker();
-        }
-        break;
-      case 'live-mode':
-        if (msg.data) {
-          broadcastState.liveMode = msg.data;
-          updateLiveModeUI();
-          updateModeUI();
-          log('live: ' + msg.data.obsStatus);
-        }
-        break;
-    }
-  }
-
-  function updateMode(mode) {
-    modeTag.textContent = (mode || 'hls').toUpperCase();
-    if (mode === 'rtmp') {
-      modeTag.classList.add('rtmp');
-    }
-  }
-
-  // Compute crossfade duration matching Liquidsoap logic.
-  // Delegates to FRUtils (single source of truth), passing the current mix mode.
-  function computeMixDur(bpm) {
-    return FRU.computeMixDur(bpm, getMixMode());
-  }
-
-  function positionCueMarker() {
-    if (!trackDuration || !trackMixDur || trackMixDur >= trackDuration) {
-      transportCue.style.display = 'none';
-      return;
-    }
-    var cuePct = ((trackDuration - trackMixDur) / trackDuration) * 100;
-    transportCue.style.left = cuePct + '%';
-    transportCue.style.display = 'block';
-    transportCue.classList.remove('active');
-  }
-
-  function updateAudio(data) {
-    if (!data) return;
-    if (broadcastState.streamMode === 'standby' || broadcastState.streamMode === 'armed' || broadcastState.arming) return;
-    var name = data.title || cleanTrackName(data.filename) || '--';
-    studioAudioTrack.textContent = name;
-
-    var filename = (data.filename || '').split('/').pop();
-    // BPM lookup: try both original filename and extensionless match
-    var bpm = bpmMap[filename];
-    if (!bpm) {
-      var stem = filename.replace(/\.[^.]+$/, '');
-      for (var k in bpmMap) {
-        if (k.replace(/\.[^.]+$/, '') === stem) { bpm = bpmMap[k]; break; }
+    },
+    icecast: function (data) {
+      FRNowPlaying.updateIcecast(data);
+    },
+    ffmpeg: function (data) {
+      FRNowPlaying.updateFfmpeg(data);
+    },
+    bpm: function (data) {
+      bpmMap = data || {};
+      FRFileMgmt.refreshBpmInList();
+    },
+    rtmpHealth: function (data) {
+      FRRestreamStatus.updateRestreamStatus(data);
+    },
+    voiceStatus: function (data) {
+      if (data && data.status === 'on-air') {
+        log('PTT: voice message on air');
+      }
+    },
+    mixingConfig: function (data) {
+      if (data && data.mode) {
+        setMixMode(data.mode);
+        updateMixModeUI();
+        var wsB = studioBpm.textContent ? parseInt(studioBpm.textContent) : 0;
+        trackMixDur = FRNowPlaying.computeMixDur(wsB);
+        FRNowPlaying.positionCueMarker();
+      }
+    },
+    liveMode: function (data) {
+      if (data) {
+        broadcastState.liveMode = data;
+        updateLiveModeUI();
+        updateModeUI();
+        log('live: ' + data.obsStatus);
       }
     }
-    studioBpm.textContent = bpm ? Math.round(bpm) + ' BPM' : '';
+  };
 
-    if (data.startedAt) trackStartedAt = data.startedAt;
-    if (data.duration) trackDuration = data.duration;
-    transportDuration.textContent = formatTime(trackDuration);
-
-    trackMixDur = computeMixDur(bpm);
-    positionCueMarker();
-    updateTrackProgress();
-  }
-
-  function updateTrackProgress() {
-    if (broadcastState.streamMode === 'standby' || broadcastState.streamMode === 'armed' || broadcastState.arming) return;
-    if (!trackStartedAt || !trackDuration) {
-      transportBarFill.style.width = '0%';
-      transportElapsed.textContent = '0:00';
-      return;
-    }
-    var elapsed = (Date.now() - trackStartedAt) / 1000;
-    var pct = Math.min(100, (elapsed / trackDuration) * 100);
-    transportBarFill.style.width = pct + '%';
-    transportElapsed.textContent = formatTime(elapsed);
-
-    // Blink cue marker when in transition zone
-    if (trackMixDur > 0) {
-      var transitionAt = trackDuration - trackMixDur;
-      if (transitionAt > 0 && elapsed >= transitionAt) {
-        transportCue.classList.add('active');
-      } else {
-        transportCue.classList.remove('active');
-      }
-    }
-  }
-
-  setInterval(updateTrackProgress, 1000);
-
-  function updateIcecast(data) {
-    if (!data) return;
-    statListeners.textContent = data.listeners || '0';
-    statAudioBr.textContent = data.bitrate ? data.bitrate + ' kbps' : '--';
-    if (data.serverStart) {
-      startTime = new Date(data.serverStart).getTime() || Date.now();
-    }
-    var count = parseInt(data.listeners) || 0;
-    listenerHistory.push({ ts: Date.now(), count: count });
-    if (listenerHistory.length > 720) listenerHistory.shift();
-    if (count > peakListeners) peakListeners = count;
-  }
-
-  function updateFfmpeg(data) {
-    if (!data) return;
-    statFps.textContent = data.fps || '--';
-    statSpeed.textContent = data.speed || '--';
-    statVideoBr.textContent = data.bitrate || '--';
-    statTime.textContent = data.time || '--';
-  }
-
-  connectWs();
+  // Wire the WebSocket hub and open the first connection, where connectWs()
+  // used to be called. Passing FRNowPlaying/FRAnalyzer methods as bare
+  // references is safe: the UMD factories run at script load, so every module
+  // object and its closures exist before app.js evaluates.
+  FRWsHub.init({
+    log: log,
+    getAuthToken: function () { return window.FRAuth.getAuthToken(); },
+    isServerFFT: FRAnalyzer.isServerFFT,
+    handleFftFrame: FRAnalyzer.handleFftFrame,
+    handlers: wsHandlers
+  });
 
   // --- File Management ---
   // The file-management UI (refreshBpmInList, loadFileList, renderFileList,
@@ -646,13 +497,13 @@
   FRPtt.init({ authFetch: authFetch, log: log, showError: showError });
 
   // Wire the analytics UI module (analytics.js / window.FRAnalytics) with
-  // authFetch plus live getters for the read-only listener state. The getters are
-  // read at call time so the module always sees the latest listenerHistory /
-  // peakListeners written by the WS updateIcecast handler.
+  // authFetch plus live getters for the read-only listener state. The listener
+  // history and peak now live in nowplaying.js, fed by its updateIcecast; the
+  // getters are passed straight through so the module still reads them live.
   FRAnalytics.init({
     authFetch: authFetch,
-    getListenerHistory: function () { return listenerHistory; },
-    getPeakListeners: function () { return peakListeners; }
+    getListenerHistory: FRNowPlaying.getListenerHistory,
+    getPeakListeners: FRNowPlaying.getPeakListeners
   });
 
   // Wire the navigation UI module (navigation.js / window.FRNavigation). init()
@@ -1177,7 +1028,7 @@
           playerMuteBtn.classList.add('unmuted');
           log('PLAY: gate open, track from beginning');
           // Replay cached audio — updateAudio skipped it during armed
-          if (lastAudioMsg) updateAudio(lastAudioMsg);
+          FRNowPlaying.replayLastAudio();
         })
         .catch(function(e) {
           log('PLAY: cue/resume FAILED: ' + e);
@@ -1226,7 +1077,7 @@
         FRPlayer.stopStaticNoise();
         log('PLAY: pipeline live, waiting for content...');
         // Replay cached audio — may have arrived while streamMode was standby
-        if (lastAudioMsg) updateAudio(lastAudioMsg);
+        FRNowPlaying.replayLastAudio();
         // Give pipeline 3s: gate already open, Liquidsoap playing track from 0:00,
         // FFmpeg writing first HLS segments with music. After player restart
         // it picks up fresh segments and starts from track beginning.
@@ -1321,12 +1172,9 @@
       .then(function() {
         broadcastState.streamMode = 'standby';
         broadcastState.broadcast = false;
-        lastAudioMsg = null;
+        FRNowPlaying.resetTrackState();
         studioAudioTrack.textContent = '--';
         studioBpm.textContent = '';
-        trackStartedAt = 0;
-        trackDuration = 0;
-        trackMixDur = 0;
         transportBarFill.style.width = '0%';
         transportElapsed.textContent = '0:00';
         transportDuration.textContent = '0:00';
@@ -1513,8 +1361,7 @@
           // Recalculate cue marker for new mode
           var filename = (studioAudioTrack.textContent || '').split('/').pop();
           var bpm = studioBpm.textContent ? parseInt(studioBpm.textContent) : 0;
-          trackMixDur = computeMixDur(bpm);
-          positionCueMarker();
+          FRNowPlaying.setMixDuration(bpm);
           log('mixing: changed to ' + mode);
         }
       })
@@ -1591,7 +1438,7 @@
     getStudioPlayer: getStudioPlayer,
     getUserInteracted: getUserInteracted,
     getBroadcastState: getBroadcastState,
-    getTrackStartedAt: getTrackStartedAt,
+    getTrackStartedAt: FRNowPlaying.getTrackStartedAt,
     getStudioBpmEl: function () { return studioBpm; },
     getMonitorMusicGain: FRMixer.getMonitorMusicGain,
     getMasterGain: FRMixer.getMasterGain,
@@ -1606,7 +1453,7 @@
   // production (flag unset).
   if (typeof window !== 'undefined' && window.__APP_TEST__) {
     window.__appDrift = {
-      computeMixDur: computeMixDur,
+      computeMixDur: FRNowPlaying.computeMixDur,
       getBroadcastPhase: getBroadcastPhase,
       uniquePlatformName: function (b) { return window.FRPlatforms.uniquePlatformName(b); },
       deriveUiMode: deriveUiMode,
@@ -1622,10 +1469,10 @@
     // doubling (cap 10000) + reset-to-1000 sequence. Additive only; no
     // production code path reads these — inert when __APP_TEST__ is unset.
     window.__appWs = {
-      connectWs: connectWs,
-      getWs: getWs,
-      setWs: setWs,
-      getWsReconnectDelay: function () { return wsReconnectDelay; }
+      connectWs: FRWsHub.connectWs,
+      getWs: FRWsHub.getWs,
+      setWs: FRWsHub.setWs,
+      getWsReconnectDelay: FRWsHub.getWsReconnectDelay
     };
     // Test-only WebAudio facade handle: exposes the five read-only graph
     // getters so the analyzer-audio identity pins can assert getX() === the
@@ -1645,7 +1492,7 @@
     window.__appStudio = {
       getStudioPlayer: getStudioPlayer,
       getUserInteracted: getUserInteracted,
-      getTrackStartedAt: getTrackStartedAt
+      getTrackStartedAt: FRNowPlaying.getTrackStartedAt
     };
   }
 
