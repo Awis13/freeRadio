@@ -67,10 +67,8 @@
   var trackDuration = 0;
   var trackMixDur = 0;
   var lastAudioMsg = null; // cached last audio message (for replay after ARM→PLAY)
-  var queueList = document.getElementById('queue-list');
   var skipBtn = document.getElementById('skip-btn');
   var clearQueueBtn = document.getElementById('clear-queue-btn');
-  var trackSelector = document.getElementById('track-selector');
   var queueSearch = document.getElementById('queue-search');
   var queuePanelTitle = document.getElementById('queue-panel-title');
   var queueSelectorTitle = document.getElementById('queue-selector-title');
@@ -178,9 +176,9 @@
   // Wire the file-management UI module (filemgmt.js / window.FRFileMgmt) BEFORE the
   // initial loads below. It owns musicFiles/visualFiles; app.js injects the host
   // services plus live getters for the WS-owned bpmMap and the mutable auth token
-  // (both read at call time, never cached). renderTrackSelector / loadOverlayAssets
-  // are app.js functions (hoisted declarations) called back into after a music load
-  // / overlay-asset upload.
+  // (both read at call time, never cached). renderTrackSelector and
+  // loadOverlayAssets are now sibling-module methods (FRQueue / FROverlays),
+  // called back into after a music load / overlay-asset upload.
   // Wire the notify UI module (notify.js / window.FRNotify). It takes no host
   // services (pure DOM); init() binds the #dbg-clear / #dbg-pause controls.
   // log()/showError() already work pre-init (resolved via the aliases above),
@@ -204,7 +202,7 @@
   FRFileMgmt.init({
     authFetch: authFetch, log: log, showError: showError,
     showLoginOverlay: showLoginOverlay,
-    renderTrackSelector: renderTrackSelector,
+    renderTrackSelector: FRQueue.renderTrackSelector,
     loadOverlayAssets: function () { return FROverlays.loadOverlayAssets(); },
     getBpmMap: function () { return bpmMap; },
     getAuthToken: function () { return window.FRAuth.getAuthToken(); }
@@ -475,182 +473,26 @@
   setInterval(function () { FRFileMgmt.loadFileList('visuals'); }, 30000);
 
   // --- Queue Control ---
-  function loadQueue() {
-    authFetch('/api/queue')
-      .then(function(r) { return r.json(); })
-      .then(function(items) { renderQueue(items); })
-      .catch(function() { renderQueue([]); });
-  }
-
-  function renderQueue(items) {
-    queueList.innerHTML = '';
-    if (!items || items.length === 0) {
-      var empty = document.createElement('div');
-      empty.className = 'queue-empty';
-      empty.textContent = 'Queue empty \u2014 random mode';
-      queueList.appendChild(empty);
-      return;
-    }
-    items.forEach(function(path, i) {
-      var div = document.createElement('div');
-      div.className = 'queue-item';
-      var num = document.createElement('span');
-      num.className = 'queue-num';
-      num.textContent = (i + 1) + '.';
-      div.appendChild(num);
-      var name = document.createElement('span');
-      name.className = 'queue-name';
-      name.textContent = cleanTrackName(path);
-      name.title = path;
-      div.appendChild(name);
-      queueList.appendChild(div);
-    });
-  }
-
-  function addToQueue(filename) {
-    authFetch('/api/queue/push', {
-      method: 'POST',
-      headers: { 'Content-Type': 'text/plain' },
-      body: filename
-    })
-      .then(function(r) { return r.json(); })
-      .then(function(data) {
-        if (data.ok) {
-          log('queue: added ' + filename);
-          loadQueue();
-        } else {
-          showError('Queue push failed: ' + (data.error || 'unknown'));
-        }
-      })
-      .catch(function(e) { showError('Queue push failed: ' + e); });
-  }
-
-  skipBtn.onclick = function() {
-    authFetch('/api/queue/skip', { method: 'POST' })
-      .then(function(r) { return r.json(); })
-      .then(function(data) {
-        if (data.ok) {
-          log('queue: skipped track');
-          setTimeout(loadQueue, 1000);
-          setTimeout(FRTrackHistory.loadTrackHistory, 2000);
-        }
-      })
-      .catch(function(e) { showError('Skip failed: ' + e); });
-  };
-
-  clearQueueBtn.onclick = function() {
-    authFetch('/api/queue/clear', { method: 'POST' })
-      .then(function(r) { return r.json(); })
-      .then(function(data) {
-        if (data.ok) {
-          log('queue: cleared');
-          loadQueue();
-        }
-      })
-      .catch(function(e) { showError('Clear queue failed: ' + e); });
-  };
-
-  // --- Video Queue Control ---
-  function loadVideoQueue() {
-    authFetch('/api/video-queue')
-      .then(function(r) { return r.json(); })
-      .then(function(items) { renderQueue(items); })
-      .catch(function() { renderQueue([]); });
-  }
-
-  function addToVideoQueue(filename) {
-    authFetch('/api/video-queue/push', {
-      method: 'POST',
-      headers: { 'Content-Type': 'text/plain' },
-      body: filename
-    })
-      .then(function(r) { return r.json(); })
-      .then(function(data) {
-        if (data.ok) {
-          log('video queue: added ' + filename);
-          loadVideoQueue();
-        }
-      })
-      .catch(function(e) { showError('Video queue push failed: ' + e); });
-  }
-
-  function skipVideo() {
-    authFetch('/api/video-queue/skip', { method: 'POST' })
-      .then(function(r) { return r.json(); })
-      .then(function(data) {
-        if (data.ok) {
-          log('video: skipped');
-          setTimeout(loadVideoQueue, 1000);
-        }
-      })
-      .catch(function(e) { showError('Video skip failed: ' + e); });
-  }
-
-  function clearVideoQueue() {
-    authFetch('/api/video-queue/clear', { method: 'POST' })
-      .then(function(r) { return r.json(); })
-      .then(function(data) {
-        if (data.ok) {
-          log('video queue: cleared');
-          loadVideoQueue();
-        }
-      })
-      .catch(function(e) { showError('Clear video queue failed: ' + e); });
-  }
-
-  function loadActiveQueue() {
-    if (broadcastState.visualMode === 'video-playlist') loadVideoQueue();
-    else loadQueue();
-  }
-
-  // --- Track Selector ---
-  function renderTrackSelector(filter) {
-    trackSelector.innerHTML = '';
-    var isVideoMode = broadcastState.visualMode === 'video-playlist';
-    var sourceFiles = isVideoMode ? processedVisualFiles : FRFileMgmt.getMusicFiles();
-    var search = (filter || '').toLowerCase();
-    var filtered = sourceFiles.filter(function(f) {
-      return !search || f.name.toLowerCase().indexOf(search) !== -1;
-    });
-    filtered.forEach(function(f) {
-      var div = document.createElement('div');
-      div.className = 'selector-item';
-
-      var name = document.createElement('span');
-      name.className = 'selector-name';
-      name.textContent = f.name;
-      name.title = f.name;
-      div.appendChild(name);
-
-      if (!isVideoMode) {
-        var bpm = bpmMap[f.name];
-        if (bpm) {
-          var bpmEl = document.createElement('span');
-          bpmEl.className = 'selector-bpm';
-          bpmEl.textContent = Math.round(bpm) + ' BPM';
-          div.appendChild(bpmEl);
-        }
-      }
-
-      var addBtn = document.createElement('button');
-      addBtn.className = 'btn-add-queue';
-      addBtn.textContent = '+';
-      addBtn.title = isVideoMode ? 'Add to video queue' : 'Add to queue';
-      addBtn.onclick = isVideoMode
-        ? (function(n) { return function() { addToVideoQueue(n); }; })(f.name)
-        : (function(n) { return function() { addToQueue(n); }; })(f.name);
-      div.appendChild(addBtn);
-
-      trackSelector.appendChild(div);
-    });
-  }
-
-  queueSearch.oninput = function() {
-    renderTrackSelector(queueSearch.value);
-  };
-
-  loadQueue();
-  setInterval(loadActiveQueue, 5000);
+  // The track queue, the video queue and the track selector now live in
+  // queue.js (window.FRQueue). FRQueue.init() below injects the host services
+  // and runs the boot side-effects that used to be statements here: binding the
+  // skip/clear buttons and the search input, the first queue load, and the 5s
+  // active-queue poll.
+  //
+  // NOTE: updateBroadcastUI further down RE-ASSIGNS skipBtn.onclick and
+  // clearQueueBtn.onclick on every repaint, with duplicates of the bodies that
+  // moved into queue.js. Both copies are kept deliberately — collapsing them is
+  // a behaviour change, not part of this extraction.
+  FRQueue.init({
+    authFetch: authFetch,
+    log: log,
+    showError: showError,
+    getBroadcastState: getBroadcastState,
+    getBpmMap: function () { return bpmMap; },
+    getMusicFiles: function () { return FRFileMgmt.getMusicFiles(); },
+    getProcessedVisualFiles: function () { return processedVisualFiles; },
+    loadTrackHistory: function () { return FRTrackHistory.loadTrackHistory(); }
+  });
 
   // ============================
   // TRACK HISTORY (Studio sidebar)
@@ -697,7 +539,7 @@
     authFetch: authFetch, log: log, showError: showError,
     openGenericModal: openGenericModal,
     closeGenericModal: function () { return window.closeGenericModal(); },
-    loadQueue: loadQueue,
+    loadQueue: FRQueue.loadQueue,
     getMusicFiles: function () { return FRFileMgmt.getMusicFiles(); },
     getBpmMap: function () { return bpmMap; }
   });
@@ -975,25 +817,25 @@
     queuePanelTitle.textContent = isVideoMode ? 'Video Queue' : 'Queue';
     queueSelectorTitle.textContent = isVideoMode ? 'Add Video' : 'Add to Queue';
     queueSearch.placeholder = isVideoMode ? 'Search videos...' : 'Search tracks...';
-    skipBtn.onclick = isVideoMode ? skipVideo : function() {
+    skipBtn.onclick = isVideoMode ? FRQueue.skipVideo : function() {
       authFetch('/api/queue/skip', { method: 'POST' })
         .then(function(r) { return r.json(); })
         .then(function(data) {
           if (data.ok) {
             log('queue: skipped track');
-            setTimeout(loadQueue, 1000);
+            setTimeout(FRQueue.loadQueue, 1000);
             setTimeout(FRTrackHistory.loadTrackHistory, 2000);
           }
         })
         .catch(function(e) { showError('Skip failed: ' + e); });
     };
-    clearQueueBtn.onclick = isVideoMode ? clearVideoQueue : function() {
+    clearQueueBtn.onclick = isVideoMode ? FRQueue.clearVideoQueue : function() {
       authFetch('/api/queue/clear', { method: 'POST' })
         .then(function(r) { return r.json(); })
         .then(function(data) {
           if (data.ok) {
             log('queue: cleared');
-            loadQueue();
+            FRQueue.loadQueue();
           }
         })
         .catch(function(e) { showError('Clear queue failed: ' + e); });
@@ -1053,8 +895,8 @@
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ mode: apiMode })
       }).then(function() {
-        loadActiveQueue();
-        if (queueSearch) renderTrackSelector(queueSearch.value);
+        FRQueue.loadActiveQueue();
+        if (queueSearch) FRQueue.renderTrackSelector(queueSearch.value);
       }).catch(function(e) {
         showError('Mode change failed: ' + e);
       });
