@@ -165,14 +165,12 @@ function createVideoPlaylistRouter(visualsDir) {
     }
 
     // Clean up active profile if this playlist was activated
-    try {
-      if (fs.existsSync(ACTIVE_FILE)) {
-        const active = JSON.parse(fs.readFileSync(ACTIVE_FILE, 'utf8'));
-        if (active.id === req.params.id) {
-          fs.unlinkSync(ACTIVE_FILE);
-        }
-      }
-    } catch (e) { /* ignore corrupt active file */ }
+    const active = readStore(ACTIVE_FILE, null);
+    if (active && active.id === req.params.id) {
+      try {
+        fs.unlinkSync(ACTIVE_FILE);
+      } catch (e) { /* already gone */ }
+    }
 
     delete data.playlists[req.params.id];
     saveVideoPlaylists(data);
@@ -251,7 +249,7 @@ function createVideoPlaylistRouter(visualsDir) {
       videos: sanitized,
       activatedAt: Date.now()
     };
-    fs.writeFileSync(ACTIVE_FILE, JSON.stringify(payload, null, 2));
+    writeStore(ACTIVE_FILE, payload);
 
     visualMode.setVisualMode('visual-radio');
 
