@@ -99,6 +99,66 @@ describe('readStore', () => {
     expect(contents).toEqual(['first-corruption', 'second-corruption']);
   });
 
+  it('treats a file containing null as corrupt — it is what makes callers throw', () => {
+    // JSON.parse('null') succeeds, so this file is "valid JSON" — but every
+    // store dereferences the result, and null.tier is a TypeError that would
+    // escape as a 500 now that the stores' own try/catch is gone.
+    const file = path.join(dir, 'tier.json');
+    fs.writeFileSync(file, 'null');
+
+    const defaults = { tier: 'free' };
+    expect(readStore(file, defaults)).toBe(defaults);
+    expect(listDir()).toEqual([expect.stringMatching(/^tier\.json\.corrupt-\d+$/)]);
+    expect(errors[0]).toContain('parsed as null');
+  });
+
+  it('quarantines a top-level type that contradicts the defaults', () => {
+    // "abc".playlists is undefined, and playlist.js then indexes it —
+    // data.playlists[id] is a TypeError one level deeper than null.
+    const file = path.join(dir, 'playlists.json');
+    fs.writeFileSync(file, '"just a string"');
+    expect(readStore(file, { playlists: {} })).toEqual({ playlists: {} });
+    expect(errors[0]).toContain('parsed as a string');
+
+    // An array where an object is expected breaks the same dereference.
+    const arrayFile = path.join(dir, 'schedule.json');
+    fs.writeFileSync(arrayFile, '[]');
+    expect(readStore(arrayFile, { weekly: {} })).toEqual({ weekly: {} });
+  });
+
+  it('accepts a scalar when the caller declares no shape', () => {
+    // Stores that pass null defaults check truthiness before dereferencing, so
+    // a scalar is handed back exactly as it was before this module existed.
+    const file = path.join(dir, 'loose.json');
+    fs.writeFileSync(file, '"a string"');
+    expect(readStore(file, null)).toBe('a string');
+    expect(listDir()).toEqual(['loose.json']);
+    expect(errors).toEqual([]);
+  });
+
+  it('accepts an array when the defaults are an array', () => {
+    const file = path.join(dir, 'list.json');
+    fs.writeFileSync(file, '[1,2,3]');
+    expect(readStore(file, [])).toEqual([1, 2, 3]);
+    expect(errors).toEqual([]);
+  });
+
+  it('gives up on the quarantine name instead of looping when every name is taken', () => {
+    // Regression: the collision search used to loop until existsSync said no,
+    // so an existsSync that always says yes spun until the process died of an
+    // out-of-memory abort. It must terminate and fall back to "not quarantined".
+    const file = path.join(dir, 'stuck.json');
+    fs.writeFileSync(file, 'not json');
+    let existsCalls = 0;
+    vi.spyOn(fs, 'existsSync').mockImplementation(() => { existsCalls++; return true; });
+
+    const defaults = { ok: true };
+    expect(readStore(file, defaults)).toBe(defaults);
+
+    expect(existsCalls).toBeLessThan(100);
+    expect(errors.some(e => e.includes('could not find a free quarantine name'))).toBe(true);
+  });
+
   it('still returns defaults when the corrupt file cannot be moved aside', () => {
     // Read-only mount, no permission on the directory: quarantine fails, but a
     // caller asking for its config must still get one rather than an exception.
@@ -200,6 +260,10 @@ describe('writeStore', () => {
 
     expect(seen).toHaveLength(1);
     expect(path.dirname(seen[0])).toBe(path.dirname(file));
+    // The write must go to the tmp file, never straight at the target —
+    // without this the test passes even if the atomic step is removed.
+    expect(seen[0]).not.toBe(file);
+    expect(seen[0]).toBe(`${file}.tmp`);
     expect(readStore(file, {})).toEqual({ a: 1 });
   });
 });
