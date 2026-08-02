@@ -18,6 +18,81 @@ let getBpmMapFn = () => ({});
 let visualsDir = paths.VISUALS_DIR;
 let broadcastFn = null;
 
+// ---------------------------------------------------------------------------
+// Read-side guards.
+//
+// The write edge (further down) refuses to persist a malformed slot or event,
+// but it cannot vouch for what is already on disk: files predating that
+// validation, a hand-edit, or a restore from an older backup. Every reader here
+// indexes into `startTime.split(':')`, so one such record used to take down the
+// whole request — GET /api/schedule/current returning a 500, and a POST of a
+// perfectly valid slot failing too because the overlap check walked the bad one.
+// A stored record nobody can parse is not a reason to stop serving the ones
+// everybody can, so the readers skip it.
+//
+// GET /api/schedule is deliberately NOT filtered: it is a verbatim listing, and
+// hiding a broken record there would leave an operator unable to see the thing
+// they need to fix.
+const SLOT_TIME_RE = /^([01]\d|2[0-3]):[0-5]\d$/;
+const EVENT_DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
+
+// Calendar-valid, not merely well-shaped: Date rolls 2026-02-30 forward to
+// March 1, so an impossible date would quietly mean a different day.
+function isCalendarDate(value) {
+  if (typeof value !== 'string' || !EVENT_DATE_RE.test(value)) return false;
+  const parsed = new Date(value + 'T00:00:00Z');
+  return !Number.isNaN(parsed.getTime()) && parsed.toISOString().slice(0, 10) === value;
+}
+
+/** A stored weekly slot every reader can parse. */
+function isUsableSlot(ws) {
+  return !!ws
+    && typeof ws.day === 'number' && Number.isInteger(ws.day) && ws.day >= 0 && ws.day <= 6
+    && SLOT_TIME_RE.test(ws.startTime)
+    && SLOT_TIME_RE.test(ws.endTime);
+}
+
+/** A stored one-time event every reader can parse. */
+function isUsableEvent(ev) {
+  return !!ev
+    && isCalendarDate(ev.date)
+    && SLOT_TIME_RE.test(ev.startTime)
+    && SLOT_TIME_RE.test(ev.endTime);
+}
+
+// One line per pass rather than one per record, and only when the situation
+// changes. getCurrentSlot runs on a 30s executor tick, so an unconditional
+// per-pass line would reprint the same complaint twice a minute forever.
+let lastSkipReport = '';
+
+function reportSkipped(kind, ids) {
+  if (ids.length === 0) return;
+  const message = `[schedule] skipping ${ids.length} unparseable ${kind}: ${ids.join(', ')}`;
+  if (message === lastSkipReport) return;
+  lastSkipReport = message;
+  console.warn(message);
+}
+
+/** Stored weekly slots the readers can use, with the rest reported once. */
+function usableWeekly(data) {
+  const all = Object.values(data.weekly || {});
+  const usable = all.filter(isUsableSlot);
+  if (usable.length !== all.length) {
+    reportSkipped('weekly slots', all.filter((ws) => !isUsableSlot(ws)).map((ws) => (ws && ws.id) || '?'));
+  }
+  return usable;
+}
+
+/** Stored events the readers can use, with the rest reported once. */
+function usableEvents(data) {
+  const all = Object.values(data.events || {});
+  const usable = all.filter(isUsableEvent);
+  if (usable.length !== all.length) {
+    reportSkipped('events', all.filter((ev) => !isUsableEvent(ev)).map((ev) => (ev && ev.id) || '?'));
+  }
+  return usable;
+}
+
 // Convert filename to processed .wav path (same as queue.js)
 function toProcessedPath(filename) {
   const base = path.basename(filename, path.extname(filename));
@@ -95,7 +170,7 @@ function getCurrentSlot() {
   // One-time events first (higher priority), sorted by priority (lower = higher)
   // For overnight events (end <= start) also check yesterday's date
   const yesterday = prevDate(dateStr);
-  const events = Object.values(data.events || {})
+  const events = usableEvents(data)
     .filter(ev => {
       if (ev.date === dateStr && isTimeInRange(timeStr, ev.startTime, ev.endTime)) return true;
       // Overnight event started yesterday: end <= start, current time < end
@@ -116,7 +191,7 @@ function getCurrentSlot() {
   }
 
   // Weekly slots (with overnight support: slot day=1 22:00-06:00 active at day=2 03:00)
-  for (const ws of Object.values(data.weekly || {})) {
+  for (const ws of usableWeekly(data)) {
     const isOvernight = ws.endTime <= ws.startTime;
     const matchSameDay = ws.day === weekday && isTimeInRange(timeStr, ws.startTime, ws.endTime);
     const matchNextDay = isOvernight && (ws.day + 1) % 7 === weekday && timeStr < ws.endTime;
@@ -151,7 +226,7 @@ function getNextSlot() {
   let nearestMinutes = Infinity;
 
   // Check weekly slots
-  for (const ws of Object.values(data.weekly || {})) {
+  for (const ws of usableWeekly(data)) {
     const startParts = ws.startTime.split(':');
     const startMins = parseInt(startParts[0]) * 60 + parseInt(startParts[1]);
     let dayDiff = ws.day - weekday;
@@ -167,7 +242,7 @@ function getNextSlot() {
 
   // Check one-time events (future ones)
   const DAYS = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
-  for (const ev of Object.values(data.events || {})) {
+  for (const ev of usableEvents(data)) {
     // Future or today but not started yet
     if (ev.date < dateStr) continue;
     if (ev.date === dateStr) {
@@ -218,6 +293,12 @@ function isTimeInRange(current, start, end) {
 
 // Check slot overlap (with overnight cross-day support)
 function slotsOverlap(a, b) {
+  // An unparseable stored slot cannot be shown to overlap anything, so it must
+  // not block a valid write either. Returning false here is what lets a POST of
+  // a good slot succeed while a broken record sits in the same file; without it
+  // toMinutes threw and the request 500'd.
+  if (!isUsableSlot(a) || !isUsableSlot(b)) return false;
+
   function toMinutes(t) {
     const p = t.split(':');
     return parseInt(p[0]) * 60 + parseInt(p[1]);
@@ -410,7 +491,8 @@ function onTrackChange(filename) {
 //
 // day is 0=Mon..6=Sun — getNowInTimezone normalises with (getDay() + 6) % 7 and
 // the client's DAYS array starts at Mon. It is NOT the JS Date convention.
-const SLOT_TIME_RE = /^([01]\d|2[0-3]):[0-5]\d$/;
+// SLOT_TIME_RE and isCalendarDate are shared with the read-side guards above,
+// so a record the writer accepts is by construction one the readers keep.
 
 // Accepts 0-6 as a number or as a numeric string (the client sends a parsed
 // number; the handlers historically ran the value through parseInt, so string
@@ -440,15 +522,6 @@ function slotFieldError(slot) {
 // yields NaN minutes; `NaN < nearestMinutes` is false, so the event is skipped
 // on every pass forever. It sits in the events list looking scheduled and never
 // fires, which is harder to notice than a blank grid.
-const EVENT_DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
-
-// Calendar-valid, not merely well-shaped: Date rolls 2026-02-30 forward to
-// March 1, so an impossible date would quietly schedule a different day.
-function isCalendarDate(value) {
-  if (typeof value !== 'string' || !EVENT_DATE_RE.test(value)) return false;
-  const parsed = new Date(value + 'T00:00:00Z');
-  return !Number.isNaN(parsed.getTime()) && parsed.toISOString().slice(0, 10) === value;
-}
 
 function eventFieldError(ev) {
   if (!isCalendarDate(ev.date)) return 'date must be YYYY-MM-DD';
