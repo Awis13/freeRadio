@@ -27,7 +27,8 @@
  *     yet authenticated — a pre-auth socket must never see state updates;
  *   - broadcast wire shape is exactly JSON.stringify({type, data});
  *   - broadcast skips sockets with readyState !== 1 without crashing;
- *   - setupTlsWs patches the shared broadcast fn to fan out to BOTH servers.
+ *   - broadcast fans out to the clients of BOTH servers, whichever order the
+ *     two were attached in.
  *
  * Fake timers decision: the 5s auth timeout is a plain global setTimeout
  * called at connection time, so vi.useFakeTimers({toFake:['setTimeout',
@@ -75,7 +76,7 @@ async function startHarness(token, initState = { hello: 'init' }, opts = {}) {
   const wsMod = freshWsServer(token, opts);
   const server = http.createServer();
   const getInitState = vi.fn(() => initState);
-  const wss = wsMod.setupWs(server, null, getInitState);
+  const wss = wsMod.setupWs(server, getInitState);
   await new Promise((r) => server.listen(0, '127.0.0.1', r));
   const h = {
     wsMod, server, wss, getInitState,
@@ -90,7 +91,7 @@ async function startHarness(token, initState = { hello: 'init' }, opts = {}) {
 /** Attach a second server via setupTlsWs (plain http works — it only needs a server). */
 async function attachSecondServer(h) {
   const server = http.createServer();
-  const wssTls = h.wsMod.setupTlsWs(server, null, h.getInitState, h.wss);
+  const wssTls = h.wsMod.setupTlsWs(server, h.getInitState);
   await new Promise((r) => server.listen(0, '127.0.0.1', r));
   h.extraServers.push({ server, wssTls });
   return { port: server.address().port, wssTls };
@@ -335,10 +336,10 @@ describe('setupWs with DASHBOARD_TOKEN', () => {
 });
 
 // ---------------------------------------------------------------------------
-// setupTlsWs — dual-server broadcast patch
+// setupTlsWs — dual-server broadcast fan-out
 // ---------------------------------------------------------------------------
 describe('setupTlsWs', () => {
-  it('patches broadcast to fan out to clients of BOTH servers', async () => {
+  it('broadcast reaches clients of BOTH servers', async () => {
     const h = await startHarness(undefined, { hello: 'init' }, { authDisabled: true });
     const second = await attachSecondServer(h);
 
@@ -354,6 +355,47 @@ describe('setupTlsWs', () => {
     h.wsMod.broadcast('tick', { n: 3 });
     expect(await pa).toEqual({ type: 'tick', data: { n: 3 } });
     expect(await pb).toEqual({ type: 'tick', data: { n: 3 } });
+  });
+
+  it('fans out to both servers whichever order they were attached in', async () => {
+    // CHANGED IN T16-C3. broadcast used to be a closure that each setup
+    // function overwrote — setupWs installed a one-server version, setupTlsWs a
+    // two-server one built from the wss it was handed. Whoever ran last decided
+    // who received. server.js always called them in the one order that worked,
+    // so this was latent rather than a live bug, but it is the reason setupTlsWs
+    // needed the plain server passed back into it. Attaching in the reverse
+    // order is the cheapest way to hold the new fan-out to its promise.
+    const wsMod = freshWsServer(undefined, { authDisabled: true });
+    const getInitState = vi.fn(() => ({ hello: 'init' }));
+
+    const tlsServer = http.createServer();
+    const wssTls = wsMod.setupTlsWs(tlsServer, getInitState);
+    const server = http.createServer();
+    const wss = wsMod.setupWs(server, getInitState);
+    await new Promise((r) => tlsServer.listen(0, '127.0.0.1', r));
+    await new Promise((r) => server.listen(0, '127.0.0.1', r));
+
+    const h = {
+      wsMod, server, wss, getInitState,
+      port: server.address().port,
+      clients: [],
+      extraServers: [{ server: tlsServer, wssTls }],
+    };
+    harnesses.push(h);
+
+    const a = connect(h);
+    await a.opened;
+    await messageAt(a, 0);
+    const b = connect(h, tlsServer.address().port);
+    await b.opened;
+    await messageAt(b, 0);
+
+    const pa = messageAt(a, 1);
+    const pb = messageAt(b, 1);
+    wsMod.broadcast('tick', { n: 5 });
+
+    expect(await pa).toEqual({ type: 'tick', data: { n: 5 } });
+    expect(await pb).toEqual({ type: 'tick', data: { n: 5 } });
   });
 
   it('second-server clients go through the same auth state machine', async () => {
@@ -376,7 +418,7 @@ describe('setupTlsWs', () => {
     good.client.send(JSON.stringify({ type: 'auth', token: 's3cret' }));
     await initPromise;
 
-    // Patched broadcast still delivers to the authed second-server client.
+    // broadcast still delivers to the authed second-server client.
     const tick = messageAt(good, 1);
     h.wsMod.broadcast('tick', { n: 4 });
     expect(await tick).toEqual({ type: 'tick', data: { n: 4 } });
