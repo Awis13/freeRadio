@@ -3,10 +3,11 @@
  *
  * Characterization pins for the navigation cluster of the dashboard app.js IIFE:
  * top-level tab switching, collapsible panels, and the Space keyboard shortcut.
- * Authored in C1 against the UNMODIFIED app.js (cluster at app.js:189-221 plus the
- * state var `var activeTab = 'studio'` at app.js:76). In C2 these same pins are
- * re-pointed from window.__appNavigation to window.FRNavigation with assertions
- * UNCHANGED, proving the extraction is behaviour-preserving.
+ * Authored against the UNMODIFIED app.js, where the cluster and its
+ * `var activeTab = 'studio'` state lived inline. These same pins were then
+ * re-pointed from window.__appNavigation to window.FRNavigation (now
+ * dashboard/public/navigation.js) with assertions UNCHANGED, proving the
+ * extraction is behaviour-preserving.
  *
  * The three handlers are bound to REAL DOM at boot, so the pins drive them via
  * real interactions:

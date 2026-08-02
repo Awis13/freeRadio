@@ -1,12 +1,13 @@
 /**
  * tests/dashboard/platformsUI.test.js
  *
- * Characterization pins for the STREAM PLATFORMS / stream-keys UI domain, while it
- * still lives inside the app.js IIFE (app.js:1518-1689). These tests pin the AS-IS
- * observable contract BEFORE the C2 extraction into dashboard/public/platforms.js.
+ * Characterization pins for the STREAM PLATFORMS / stream-keys UI domain, which now
+ * lives in dashboard/public/platforms.js (window.FRPlatforms). These tests pinned
+ * the AS-IS contract before that extraction and were re-pointed to the module
+ * unchanged.
  *
  * The domain is reached two ways:
- *   - window.__appPlatforms  — the C1 test-only hook (sibling of __appDrift), holding
+ *   - the module surface (historically window.__appPlatforms, a test-only hook), holding
  *     the REAL closure fns (loadPlatforms/renderPlatforms/deletePlatform/togglePlatform/
  *     syncPlatformHints/uniquePlatformName/applyPreset) + getters/setters for the closure
  *     state (currentPlatformNames, maxPlatforms).

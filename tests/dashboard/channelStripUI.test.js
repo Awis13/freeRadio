@@ -1,13 +1,12 @@
 /**
  * tests/dashboard/channelStripUI.test.js
  *
- * Characterization pins for the channel-strip DSP UI cluster, currently living
- * inside the app.js IIFE (dashboard/public/app.js:2204-2407). These tests pin
- * the AS-IS observable contract of the cluster so it can be extracted verbatim
- * into dashboard/public/channelstrip.js (window.FRChannelStrip) in C2 with the
- * assertions unchanged.
+ * Characterization pins for the channel-strip DSP UI cluster, which now lives in
+ * dashboard/public/channelstrip.js (window.FRChannelStrip). These tests pinned
+ * the AS-IS observable contract while the cluster was inline in the app.js IIFE,
+ * and were carried onto the extracted module with the assertions unchanged.
  *
- * The cluster has NO init/dependency-injection surface in app.js: the test hook
+ * The cluster has NO init/dependency-injection surface: the test hook
  * window.__appChannelStrip holds the REAL closure functions, which use the REAL
  * deps (authFetch -> win.fetch, log, showError). So the only backend control is
  * replacing the boot's never-resolving win.fetch with a recording makeFetchStub

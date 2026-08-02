@@ -4,15 +4,15 @@
  * Characterization pins for the restream-settings autostart control (the single
  * #restream-autostart-checkbox in the Stream Platforms panel; NOT the WS-fed
  * restream-status widget). These pin the AS-IS observable contract of the
- * cluster currently living in the app.js IIFE (app.js:1361-1392):
+ * cluster, which now lives in dashboard/public/restreamSettings.js:
  *   - var restreamAutoStartCheckbox = getElementById('restream-autostart-checkbox')
  *   - loadRestreamSettings()  GET /api/restream/settings -> .checked = !!data.autoStart
  *   - restreamAutoStartCheckbox.onchange  POST {autoStart: checkbox.checked}
  *
- * Authored in C1 against the unmodified app.js via the window.__appRestreamSettings
- * hook + REAL DOM (the onchange is bound at module-scope load). In C2 they will be
- * re-pointed to window.FRRestreamSettings with assertions UNCHANGED, proving the
- * extraction is behaviour-preserving.
+ * Authored against the unmodified app.js via the window.__appRestreamSettings
+ * hook + REAL DOM (the onchange is bound at module-scope load), then re-pointed to
+ * window.FRRestreamSettings with assertions UNCHANGED — the extraction's
+ * behaviour-preservation proof.
  *
  * AS-IS quirks pinned here:
  *   - no `checked` HTML attribute -> initial unchecked (false).

@@ -1,13 +1,12 @@
 /**
  * tests/dashboard/authUI.test.js
  *
- * Characterization pins for the auth/login cluster currently living inside the
- * app.js IIFE (dashboard/public/app.js:89-196): the authFetch wrapper, the login
+ * Characterization pins for the auth/login cluster, which now lives in
+ * dashboard/public/auth.js (window.FRAuth): the authFetch wrapper, the login
  * overlay (showLoginOverlay / hideLoginOverlay), doLogin, and the authToken
- * state. These pins capture the AS-IS observable contract so the C2 extraction
- * into dashboard/public/auth.js (window.FRAuth) can be proven behaviourally
- * equivalent — at which point these same assertions are re-pointed from
- * window.__appAuth to window.FRAuth, UNCHANGED.
+ * state. These pins captured the AS-IS contract while the cluster was inline in
+ * the app.js IIFE and were re-pointed from window.__appAuth to window.FRAuth
+ * UNCHANGED, which is what proves the extraction behaviourally equivalent.
  *
  * In C1 the cluster is reached via the window.__appAuth test hook (guarded by
  * window.__APP_TEST__, added immediately after the checkAuth IIFE). The hook

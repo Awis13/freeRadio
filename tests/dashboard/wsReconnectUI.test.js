@@ -1,24 +1,24 @@
 /**
  * tests/dashboard/wsReconnectUI.test.js
  *
- * Characterization pins for the WebSocket reconnect BACKOFF, currently living
- * inside the app.js IIFE (app.js ~522-556). These tests pin the AS-IS observable
- * contract of the reconnect timer BEFORE any seam is re-sourced (this is C1 of
- * the core facade-foundation PR). They must stay green after the getter/setter
- * seam lands to prove zero behaviour change.
+ * Characterization pins for the WebSocket reconnect BACKOFF. The socket and its
+ * backoff now live in dashboard/public/wsHub.js; these pins were authored while
+ * both were inline in the app.js IIFE and have stayed green across the move,
+ * which is what proves it changed no behaviour.
  *
- * The connection factory is connectWs() (app.js:526): it clears the pending
+ * The connection factory is connectWs(): it clears the pending
  * reconnect timer, closes/nulls any stale socket, then constructs a new
  * WebSocket and assigns onopen/onclose/onerror/onmessage as plain INSTANCE
- * properties. onclose (552) schedules the next reconnect via
+ * properties. onclose schedules the next reconnect via
  * `wsReconnectTimer = setTimeout(connectWs, wsReconnectDelay)` and then doubles
- * the delay: `wsReconnectDelay = Math.min(wsReconnectDelay * 2, 10000)` (555).
- * onopen (538) resets `wsReconnectDelay = 1000` (540).
+ * the delay: `wsReconnectDelay = Math.min(wsReconnectDelay * 2, 10000)`.
+ * onopen resets `wsReconnectDelay = 1000`.
  *
  * The three closure handles needed to drive this — connectWs, the live `ws`
  * instance, and the `wsReconnectDelay` closure var — are unreachable from a
- * test, so they are exposed via the guarded window.__appWs hook (app.js:3471,
- * inside the existing `if (window.__APP_TEST__)` block; inert in production).
+ * test, so they are exposed via the guarded window.__appWs hook, which app.js
+ * still publishes (now re-pointed at wsHub) inside its `if (window.__APP_TEST__)`
+ * block; inert in production.
  *
  * REALM CAVEAT (timers): app.js's setTimeout resolves to win.setTimeout (jsdom's
  * own timer realm), a DIFFERENT realm than node globalThis, so a bare
