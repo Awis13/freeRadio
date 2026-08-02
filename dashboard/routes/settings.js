@@ -7,6 +7,7 @@ const streamControl = require('../lib/streamControl');
 const visualMode = require('../lib/visualMode');
 const liveMode = require('../lib/liveMode');
 const restreamSettings = require('../lib/restreamSettings');
+const { upstreamError } = require('../lib/httpErrors');
 const { broadcast } = require('../lib/wsServer');
 
 function createSettingsRouter() {
@@ -54,7 +55,10 @@ function createSettingsRouter() {
       const config = await channelStrip.getConfig();
       res.json(config);
     } catch (e) {
-      res.status(500).json({ error: e.message });
+      // Every channelStrip entry point delegates to liqClient and nothing else;
+      // its own file writes swallow their errors, so anything arriving here
+      // came from the DJ.
+      upstreamError(res, e, 'DJ');
     }
   });
 
@@ -63,7 +67,10 @@ function createSettingsRouter() {
       const result = await channelStrip.setConfig(req.body);
       res.json(result);
     } catch (e) {
-      res.status(500).json({ error: e.message });
+      // Every channelStrip entry point delegates to liqClient and nothing else;
+      // its own file writes swallow their errors, so anything arriving here
+      // came from the DJ.
+      upstreamError(res, e, 'DJ');
     }
   });
 
@@ -75,7 +82,10 @@ function createSettingsRouter() {
       if (!result.ok) return res.status(400).json(result);
       res.json(result);
     } catch (e) {
-      res.status(500).json({ error: e.message });
+      // Every channelStrip entry point delegates to liqClient and nothing else;
+      // its own file writes swallow their errors, so anything arriving here
+      // came from the DJ.
+      upstreamError(res, e, 'DJ');
     }
   });
 
@@ -84,7 +94,10 @@ function createSettingsRouter() {
       const data = await channelStrip.getMetering();
       res.json(data);
     } catch (e) {
-      res.status(500).json({ error: e.message });
+      // Every channelStrip entry point delegates to liqClient and nothing else;
+      // its own file writes swallow their errors, so anything arriving here
+      // came from the DJ.
+      upstreamError(res, e, 'DJ');
     }
   });
 
