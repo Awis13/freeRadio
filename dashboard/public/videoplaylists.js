@@ -169,10 +169,17 @@
     var grid = document.getElementById('vpl-video-grid');
 
     if (playlist.type === 'manual') {
-      // A failed load must not leave the previous playlist's tiles on screen:
-      // each tile's onclick closes over the id it was rendered for, so a
-      // surviving tile would PUT into the OLD playlist while the panel shows
-      // the new one. Any failure replaces the grid with a failure state.
+      // Cleared SYNCHRONOUSLY, before the request goes out — same reasoning as
+      // the visual-profile grid. Each tile's onclick closes over the playlist id
+      // it was rendered for, and the title above already shows the new
+      // playlist, so old tiles left up during the fetch would save into the
+      // playlist the user just navigated away from. Clearing in the .then()
+      // only narrows that window instead of closing it.
+      //
+      // Safe to blank early because no path leaves it blank: success renders
+      // tiles, failure renders a non-clickable failure state.
+      grid.innerHTML = '';
+
       authFetch('/api/visuals-processed')
         .then(function(r) { return r.json(); })
         .then(function(allVideos) {

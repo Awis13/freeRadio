@@ -148,11 +148,18 @@
     document.getElementById('vp-detail-title').textContent = profile.name;
     var grid = document.getElementById('vp-video-grid');
 
-    // A failed load must not leave the previous profile's tiles on screen: each
-    // tile's onclick closes over the id it was rendered for, so a surviving
-    // tile would PUT into the OLD profile while the panel shows the new one.
-    // Any failure — rejected request, non-2xx body, anything that is not the
-    // expected array — replaces the grid with a non-clickable failure state.
+    // Cleared SYNCHRONOUSLY, before the request goes out. Each tile's onclick
+    // closes over the profile id it was rendered for, so any tile that outlives
+    // its panel writes into the WRONG profile. The title above is already
+    // showing the new profile, so leaving the old tiles up for the duration of
+    // a fetch offers the user a grid that lies about what it will save. That
+    // window is the whole bug: clearing in the .then() only shrinks it.
+    //
+    // Blanking early is safe because no path leaves it blank: success renders
+    // tiles, and every failure — rejected request, non-2xx body, anything that
+    // is not the expected array — renders a non-clickable failure state.
+    grid.innerHTML = '';
+
     authFetch('/api/visuals')
       .then(function(r) { return r.json(); })
       .then(function(allVideos) {
