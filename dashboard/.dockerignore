@@ -1,0 +1,24 @@
+# Build context for `build: ./dashboard` (docker-compose.yml).
+#
+# node_modules is the load-bearing entry. The Dockerfile does:
+#
+#   COPY package.json package-lock.json ./
+#   RUN npm ci --omit=dev
+#   COPY . .
+#
+# That last COPY lands on top of the tree npm ci just built, so a node_modules
+# directory sitting in dashboard/ on the build host would overwrite the strict,
+# production-only install with whatever the host happened to have — dev
+# dependencies included, and compiled for the host's architecture rather than
+# the image's. The lockfile guarantee is only worth as much as this file.
+node_modules
+npm-debug.log*
+
+# Never part of the runtime image.
+coverage
+.git
+.gitignore
+*.md
+.env
+.env.*
+.DS_Store

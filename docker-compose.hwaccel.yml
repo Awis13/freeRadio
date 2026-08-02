@@ -1,0 +1,25 @@
+# Intel QuickSync hardware encoding for the streamer.
+#
+#   docker compose -f docker-compose.yml -f docker-compose.hwaccel.yml up -d
+#
+# The base compose file encodes in software, which runs anywhere. This overlay
+# opts into QSV, and it is an overlay rather than a variable because the two
+# things it needs cannot be expressed as one: a device bind-mount and a
+# supplementary group. Compose interpolates values, not the presence or absence
+# of a mapping, so a variable-driven version would have to mount SOMETHING at
+# /dev/dri even when there is no GPU. The repo already uses this pattern for the
+# RTMP topology (docker-compose.rtmp.yml), so it is the least surprising
+# mechanism available here.
+#
+# Requirements on the host:
+#   - /dev/dri exists (an Intel GPU with the i915 driver and QSV support)
+#   - RENDER_GID matches `getent group render | cut -d: -f3`. It is 105 on
+#     Debian/Ubuntu, but 104 and 44 both occur elsewhere — check, do not assume.
+services:
+  streamer:
+    group_add:
+      - "${RENDER_GID:-105}"
+    environment:
+      - HW_ACCEL=qsv
+    volumes:
+      - /dev/dri:/dev/dri

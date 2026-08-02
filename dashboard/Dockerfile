@@ -22,4 +22,14 @@ COPY . .
 RUN addgroup -S app && adduser -S app -G app
 
 EXPOSE 9090
+
+# /api/health is mounted ahead of the auth gate (it is in server.js's
+# PUBLIC_PATHS), so this works with or without DASHBOARD_TOKEN set. wget is
+# busybox's, present in every alpine image and verified in node:24-alpine
+# specifically; it exits non-zero on a non-200, so a process that is up but not
+# serving still fails. Declared here rather than in compose because this is our
+# image: the check travels with it wherever it is deployed.
+HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
+    CMD wget -q -O /dev/null http://127.0.0.1:9090/api/health || exit 1
+
 ENTRYPOINT ["/app/entrypoint.sh"]

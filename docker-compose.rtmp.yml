@@ -1,11 +1,22 @@
 services:
   rtmp-server:
-    image: alfg/nginx-rtmp
+    # Pinned 2026-08-02, same image and reasoning as rtmp-ingest in
+    # docker-compose.yml: v1.6.0 carries latest's digest.
+    image: alfg/nginx-rtmp:v1.6.0
     container_name: s23-rtmp
     ports:
       - "8080:80"
     volumes:
       - ./configs/nginx/rtmp.conf:/etc/nginx/nginx.conf
+    # Unlike the ingest container this config DOES declare an http server on 80
+    # (rtmp.conf), so an HTTP probe is meaningful here. busybox wget verified
+    # present in the image.
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:80/"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
     restart: unless-stopped
     networks:
       - rave-net
