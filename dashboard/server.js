@@ -39,6 +39,7 @@ const ssoHandler = require('./routes/sso');
 const tierLimits = require('./lib/tierLimits');
 const paths = require('./lib/paths');
 const authGate = require('./lib/authGate');
+const { uploadErrorHandler } = require('./lib/httpErrors');
 
 // --- Config ---
 const PORT = process.env.PORT || 9090;
@@ -218,6 +219,10 @@ app.use('/api/stream-keys', createStreamKeysRouter());
 app.use('/api', createSettingsRouter());
 app.use('/api/live', createLiveRouter());
 app.use('/overlay-assets', express.static(paths.shared('overlay_assets')));
+
+// Last in the stack, so it sees what the routers above threw: multer and
+// body-parser rejections answered as 400s instead of Express's default 500.
+app.use(uploadErrorHandler);
 
 // --- Start ---
 const restreamCfg = restreamSettings.getSettings();

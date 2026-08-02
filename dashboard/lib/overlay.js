@@ -160,7 +160,11 @@ function createOverlayRouter() {
       if (/\.(png|jpg|jpeg|gif|svg|webp|bmp)$/i.test(file.originalname)) {
         cb(null, true);
       } else {
-        cb(new Error('Only image files allowed'));
+        // Tagged so the app-level handler can tell a refused upload (the
+        // caller's fault, 400) from a bug thrown mid-request (still a 500).
+        const err = new Error('Only image files allowed');
+        err.status = 400;
+        cb(err);
       }
     }
   });
@@ -171,7 +175,7 @@ function createOverlayRouter() {
   });
 
   // PUT /api/overlays — update full config
-  router.put('/', express.json(), (req, res) => {
+  router.put('/', (req, res) => {
     const config = req.body;
     // Check tier for custom overlays (system watermark is always allowed)
     const limits = tierLimits.getLimits(tierLimits.getTier());
@@ -223,7 +227,12 @@ function createOverlayRouter() {
   // DELETE /api/overlays/assets/:name
   router.delete('/assets/:name', (req, res) => {
     const filePath = path.join(ASSETS_DIR, req.params.name);
-    if (filePath.indexOf(ASSETS_DIR) !== 0) {
+    // Same separator-anchored check the upload path uses. A bare prefix test
+    // accepts any sibling whose name merely starts with the assets dir —
+    // '../overlay_assets_backup/x' passed indexOf() === 0 and got unlinked.
+    // Unlike the upload path this does not also admit ASSETS_DIR itself:
+    // there is nothing to delete there but the directory.
+    if (!filePath.startsWith(ASSETS_DIR + path.sep)) {
       return res.status(400).json({ error: 'invalid path' });
     }
     if (fs.existsSync(filePath)) {

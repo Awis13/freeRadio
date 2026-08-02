@@ -272,6 +272,9 @@ describe('createTrackRouter', () => {
   function makeApp() {
     bpmMap = bpmMap || {};
     const app = express();
+    // Mirrors server.js: body parsing is app-level there, so the router does
+    // not carry its own express.json().
+    app.use(express.json());
     app.use('/api/tracks', createTrackRouter(MUSIC_DIR, () => bpmMap));
     return app;
   }

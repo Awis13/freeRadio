@@ -108,6 +108,9 @@ export function installVideoPlaylistFsHarness({ delegateToRealFs = true } = {}) 
 
   function makeApp() {
     const app = express();
+    // Mirrors server.js: body parsing is app-level there, so the router does
+    // not carry its own express.json().
+    app.use(express.json());
     app.use('/api/video-playlists', createVideoPlaylistRouter(VISUALS_DIR));
     return app;
   }

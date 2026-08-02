@@ -380,6 +380,55 @@ describe('mount order (token set, no Authorization header)', () => {
   });
 });
 
+// ─── app-level body parsing and error handling ──────────────────────────────
+//
+// The routers no longer carry a per-route express.json() (T16-C2 removed 18 of
+// them). That is only safe because the app mounts one before every router, so
+// these pin the app-level middleware directly: without them the dedup could be
+// undone by a single deletion in server.js with nothing going red.
+
+describe('app-level body middleware', () => {
+  let app;
+  let client;
+  let closeServer;
+
+  beforeAll(async () => {
+    ({ app } = loadServer(TOKEN));
+    ({ client, close: closeServer } = await serverAgent(app));
+  });
+
+  afterAll(async () => {
+    await closeServer();
+  });
+
+  it('parses a JSON body for a router that has no express.json() of its own', async () => {
+    // POST /api/mixing/config destructures req.body before it does anything
+    // else. Parsed, an empty object reaches the mode check and gets the 400;
+    // unparsed, req.body is undefined and the destructure throws a 500. The
+    // route is chosen because the validation arm touches neither liquidsoap
+    // nor the filesystem.
+    const res = await client
+      .post('/api/mixing/config')
+      .set('Authorization', 'Bearer ' + TOKEN)
+      .set('Content-Type', 'application/json')
+      .send('{}');
+
+    expect(res.status).toBe(400);
+    expect(res.body.error).toContain('Invalid mode');
+  });
+
+  it('answers malformed JSON with a 400, not Express default 500', async () => {
+    const res = await client
+      .post('/api/mixing/config')
+      .set('Authorization', 'Bearer ' + TOKEN)
+      .set('Content-Type', 'application/json')
+      .send('{"mode": ');
+
+    expect(res.status).toBe(400);
+    expect(res.body.error).toBeTruthy();
+  });
+});
+
 // ─── /api/health contract ───────────────────────────────────────────────────
 
 describe('/api/health contract', () => {

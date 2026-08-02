@@ -33,6 +33,7 @@ import { Writable } from 'stream';
 import express from 'express';
 
 import { createOverlayRouter } from '../../dashboard/lib/overlay.js';
+import { uploadErrorHandler } from '../../dashboard/lib/httpErrors.js';
 
 export const OVERLAY_CONFIG = '/shared/overlays.json';
 export const FILTER_STRING_FILE = '/shared/overlay_filter_string.txt';
@@ -140,7 +141,14 @@ export function installOverlayFsHarness({ assetsDirExists = true, delegateToReal
 
   function makeApp() {
     const app = express();
+    // Mirrors server.js: body parsing is app-level there, so the router does
+    // not carry its own express.json() and a bare app would leave req.body
+    // undefined.
+    app.use(express.json());
     app.use('/api/overlays', createOverlayRouter());
+    // Mirrors server.js again: the upload error handler is app-level and last,
+    // so multer rejections reach it rather than Express's default handler.
+    app.use(uploadErrorHandler);
     return app;
   }
 

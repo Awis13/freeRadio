@@ -88,6 +88,9 @@ export function installPlaylistFsHarness({ delegateToRealFs = true } = {}) {
   // resolution; default to an empty BPM map.
   function makeApp(getBpmMap = () => ({})) {
     const app = express();
+    // Mirrors server.js: body parsing is app-level there, so the router does
+    // not carry its own express.json().
+    app.use(express.json());
     app.use('/api/playlists', createPlaylistRouter(MUSIC_DIR, getBpmMap));
     return app;
   }
