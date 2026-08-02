@@ -417,6 +417,21 @@ describe('app-level body middleware', () => {
     expect(res.body.error).toContain('Invalid mode');
   });
 
+  it('mounts the upload error handler LAST, after every router', () => {
+    // Position, not just presence: an Express error handler only sees errors
+    // thrown by middleware registered BEFORE it, so moving this above the
+    // routers makes it silently inert while every test that only checks "a 400
+    // comes back for malformed JSON" keeps passing (body parsing sits above the
+    // routers too). Arity 4 is how Express itself identifies an error handler.
+    const stack = (app._router && app._router.stack) || (app.router && app.router.stack) || [];
+    const errorLayers = stack
+      .map((layer, index) => ({ index, arity: layer.handle.length }))
+      .filter((entry) => entry.arity === 4);
+
+    expect(errorLayers).toHaveLength(1);
+    expect(errorLayers[0].index).toBe(stack.length - 1);
+  });
+
   it('answers malformed JSON with a 400, not Express default 500', async () => {
     const res = await client
       .post('/api/mixing/config')

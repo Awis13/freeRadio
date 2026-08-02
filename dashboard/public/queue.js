@@ -181,6 +181,8 @@
         if (data.ok) {
           log('video: skipped');
           setTimeout(loadVideoQueue, 1000);
+        } else {
+          showError('Video skip failed: ' + (data.error || 'unknown'));
         }
       })
       .catch(function(e) { showError('Video skip failed: ' + e); });
@@ -193,6 +195,8 @@
         if (data.ok) {
           log('video queue: cleared');
           loadVideoQueue();
+        } else {
+          showError('Clear video queue failed: ' + (data.error || 'unknown'));
         }
       })
       .catch(function(e) { showError('Clear video queue failed: ' + e); });
@@ -259,6 +263,8 @@
           log('queue: skipped track');
           setTimeout(loadQueue, 1000);
           setTimeout(loadTrackHistory, 2000);
+        } else {
+          showError('Skip failed: ' + (data.error || 'unknown'));
         }
       })
       .catch(function(e) { showError('Skip failed: ' + e); });
@@ -271,6 +277,8 @@
         if (data.ok) {
           log('queue: cleared');
           loadQueue();
+        } else {
+          showError('Clear queue failed: ' + (data.error || 'unknown'));
         }
       })
       .catch(function(e) { showError('Clear queue failed: ' + e); });

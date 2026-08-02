@@ -568,21 +568,62 @@ describe('queue chrome and the skip/clear handler swap', () => {
     ]);
   });
 
-  it('a failed skip or clear leaves both the reloads and the timers alone', async () => {
-    // The reload work sits behind `if (data.ok)`, so a rejected action must
-    // produce the POST and nothing else.
+  it('a failed skip or clear reloads nothing and reports the reason', async () => {
+    // CHANGED IN THE TRACK-CLOSE HOTFIX. This used to assert that a rejected
+    // action produced "the POST and nothing else" — including no timers, which
+    // was true only because the failure was swallowed in silence. The reload
+    // contract is unchanged and still pinned: no GET, and none of the 1000ms /
+    // 2000ms reload timers. What is new is the 5000ms error-banner auto-hide,
+    // one per failed action, which is the only reason a user learns the skip
+    // did not happen.
     const h = bootQueueHarness([
-      routeExact('POST', '/api/queue/skip', { ok: false }),
+      routeExact('POST', '/api/queue/skip', { ok: false, error: 'liquidsoap unavailable' }),
       routeExact('POST', '/api/queue/clear', { ok: false }),
     ]);
     h.sendInit(payloadFor('playing', 'visual-radio'));
     h.reset();
 
     h.skipBtn.click();
+    await flush(20);
+    const banner = h.doc.getElementById('error-banner');
+    expect(banner.classList.contains('visible')).toBe(true);
+    expect(banner.textContent).toBe('Skip failed: liquidsoap unavailable');
+
     h.clearBtn.click();
     await flush(20);
-    expect(h.delays).toEqual([]);
+    // No error field on the clear response — same 'unknown' fallback the add
+    // twins use.
+    expect(banner.textContent).toBe('Clear queue failed: unknown');
+
+    // Banner auto-hides only; no reload timers, no reload requests.
+    expect(h.delays).toEqual([5000, 5000]);
     expect(queueTraffic(h.calls)).toEqual(['POST /api/queue/skip', 'POST /api/queue/clear']);
+  });
+
+  it('a failed VIDEO skip or clear reports too', async () => {
+    // ADDED IN THE TRACK-CLOSE HOTFIX. The video twins were silent on !ok in
+    // exactly the same way; both modes now surface it.
+    const h = bootQueueHarness([
+      routeExact('POST', '/api/video-queue/skip', { ok: false, error: 'no clip' }),
+      routeExact('POST', '/api/video-queue/clear', { ok: false }),
+    ]);
+    h.sendInit(payloadFor('playing', 'video-playlist'));
+    h.reset();
+
+    h.skipBtn.click();
+    await flush(20);
+    const banner = h.doc.getElementById('error-banner');
+    expect(banner.textContent).toBe('Video skip failed: no clip');
+
+    h.clearBtn.click();
+    await flush(20);
+    expect(banner.textContent).toBe('Clear video queue failed: unknown');
+
+    expect(h.delays).toEqual([5000, 5000]);
+    expect(queueTraffic(h.calls)).toEqual([
+      'POST /api/video-queue/skip',
+      'POST /api/video-queue/clear',
+    ]);
   });
 
   it('switching video mode back to music restores the track queue endpoints and chrome', async () => {

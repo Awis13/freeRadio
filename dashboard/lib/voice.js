@@ -53,8 +53,10 @@ function createVoiceRouter(broadcast) {
       console.log(`[voice] pushed to liquidsoap: ${filePath}`);
       res.json({ ok: true, filename: req.file.filename });
     } catch (e) {
-      console.error(`[voice] push failed: ${e.message}`);
-      res.status(502).json({ error: 'Failed to push to DJ: ' + e.message });
+      // The message used to be echoed to the client, and a connection error
+      // carries the upstream's host and port ("connect ECONNREFUSED dj:7000").
+      // The cause still reaches the log, where it belongs.
+      upstreamError(res, e, 'DJ');
     }
 
     // Cleanup in background
