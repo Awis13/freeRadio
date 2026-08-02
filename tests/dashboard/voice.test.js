@@ -13,7 +13,7 @@
  *   - factory init calls fs.mkdirSync(VOICE_DIR, { recursive: true });
  *   - POST /send: no req.file -> 400; success -> pushVoice(path), then
  *     broadcast('voice-status', {status:'on-air', filename}), then
- *     json({ok:true, filename}); pushVoice failure -> 502 with the message
+ *     json({ok:true, filename}); pushVoice failure -> 502 naming the upstream
  *     embedded; cleanup() runs AFTER the response either way;
  *   - cleanup(): deletes files whose mtime is older than 1h, leaves fresh
  *     ones, and swallows all errors silently;
@@ -82,15 +82,23 @@ describe('dashboard/lib/voice.js POST /send', () => {
     expect(res.body).toEqual({ ok: true, filename: 'ptt_1.webm' });
   });
 
-  it('pushVoice failure -> 502 with the error message embedded', async () => {
-    spy(vi.spyOn(liqClient, 'pushVoice').mockRejectedValue(new Error('harbor closed')));
+  it('pushVoice failure -> 502 that names the upstream without echoing it', async () => {
+    // CHANGED IN THE TRACK-CLOSE HOTFIX. The upstream error message used to be
+    // concatenated into the response, and a connection failure carries the
+    // upstream's host and port ("connect ECONNREFUSED dj:7000"). It now goes
+    // through upstreamError: the client is told which service failed, the cause
+    // goes to the log.
+    spy(vi.spyOn(liqClient, 'pushVoice').mockRejectedValue(new Error('connect ECONNREFUSED dj:7000')));
     spy(vi.spyOn(fs, 'readdirSync').mockReturnValue([]));
+    const errSpy = spy(vi.spyOn(console, 'error').mockImplementation(() => {}));
     const router = createVoiceRouter(broadcast);
     const handler = getRouteHandler(router, 'post', '/send');
     const res = mockRes();
     await handler({ file: { path: '/p', filename: 'f.webm', size: 1 } }, res);
     expect(res.statusCode).toBe(502);
-    expect(res.body).toEqual({ error: 'Failed to push to DJ: harbor closed' });
+    expect(res.body).toEqual({ error: 'DJ unavailable' });
+    expect(JSON.stringify(res.body)).not.toContain('dj:7000');
+    expect(errSpy).toHaveBeenCalledWith('[DJ] request failed: connect ECONNREFUSED dj:7000');
     expect(broadcast).not.toHaveBeenCalled();
   });
 

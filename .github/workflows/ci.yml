@@ -22,8 +22,13 @@ jobs:
           # >1 on an error such as this git being built without PCRE. Treating
           # "not 0" as clean would turn a broken gate into a passing one, so
           # the three cases are separated. -I skips binary blobs.
+          #
+          # The class covers Cyrillic proper (0400-04FF), Supplement (0500-052F),
+          # Extended-A (2DE0-2DFF), Extended-B (A640-A69F) and Extended-C
+          # (1C80-1C8F) — not just the base block, so CLAUDE.md's "no Cyrillic"
+          # means what it says.
           set +e
-          matches=$(git grep -I -l -P '[\x{0400}-\x{04FF}]')
+          matches=$(git grep -I -l -P '[\x{0400}-\x{052F}\x{2DE0}-\x{2DFF}\x{A640}-\x{A69F}\x{1C80}-\x{1C8F}]')
           rc=$?
           set -e
           if [ "$rc" -gt 1 ]; then

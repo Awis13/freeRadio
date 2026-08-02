@@ -47,7 +47,13 @@ function uploadErrorHandler(err, req, res, next) {
 
   // MulterError carries no status of its own. body-parser sets status/
   // statusCode 400 itself, and so does overlay's fileFilter rejection.
-  const status = err instanceof multer.MulterError
+  //
+  // Matched by name as well as by instanceof: a second copy of multer anywhere
+  // in the tree (a transitive dependency resolving its own) produces errors
+  // whose prototype chain does not lead to THIS module's MulterError, and an
+  // instanceof-only test would quietly hand those to the 500 path.
+  const isMulterError = err instanceof multer.MulterError || err.name === 'MulterError';
+  const status = isMulterError
     ? 400
     : (err.status || err.statusCode || 500);
   if (status >= 500) return next(err);
