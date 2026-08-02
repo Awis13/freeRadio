@@ -4,6 +4,22 @@
  * Shared test utilities for dashboard route and module tests.
  * Eliminates duplication of mockRes(), getRouteHandler(), and spy management
  * across all route test files.
+ *
+ * WHICH STYLE TO USE FOR A NEW ROUTER SUITE
+ *
+ * Default to the real thing: mount the router on an express app and drive it
+ * over HTTP with supertest via helpers/serverAgent.js. That exercises the
+ * middleware stack the router actually runs behind — body parsing, error
+ * handling, multipart — so the test fails when the composition breaks and not
+ * only when the handler does. overlayHarness.js and playlistStore.test.js are
+ * the worked examples.
+ *
+ * mockRes() + getRouteHandler() is the older style and is kept because a large
+ * body of tests uses it. It reaches past Express to call the handler function
+ * directly, which makes it fast and precise for branch-level assertions but
+ * blind to everything Express would have done first: a route whose middleware
+ * is missing still passes. Reach for it when you are pinning handler branches
+ * on a router that is already covered end-to-end elsewhere.
  */
 
 import { vi } from 'vitest';
@@ -69,11 +85,13 @@ export function mockFsMap(initialFiles = {}) {
  * After calling a handler, inspect res.statusCode and res.body.
  */
 export function mockRes() {
-  const res = { statusCode: 200, body: null, ended: false };
+  const res = { statusCode: 200, body: null, ended: false, redirectUrl: null, headers: {} };
   res.json = vi.fn((data) => { res.body = data; return res; });
   res.status = vi.fn((code) => { res.statusCode = code; return res; });
-  res.set = vi.fn(() => res);
+  res.set = vi.fn((k, v) => { if (typeof k === 'string') res.headers[k] = v; return res; });
+  res.setHeader = vi.fn((k, v) => { res.headers[k] = v; return res; });
   res.send = vi.fn((data) => { res.body = data; return res; });
+  res.redirect = vi.fn((url) => { res.redirectUrl = url; return res; });
   res.end = vi.fn(() => { res.ended = true; });
   return res;
 }

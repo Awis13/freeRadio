@@ -499,3 +499,60 @@ describe('dashboard/lib/s3.js', () => {
     });
   });
 });
+
+// ---------------------------------------------------------------------------
+// clientConfig / defaultClientFactory
+// ---------------------------------------------------------------------------
+//
+// The real factory is the one block these tests never reached: every other case
+// injects a stub through _setClientFactory, so the config the module would hand
+// a live S3Client was unasserted. clientConfig() was split out of
+// defaultClientFactory for exactly this (T18-C1) — same composition, callable
+// without constructing a client.
+
+describe('clientConfig', () => {
+  it('leaves an endpoint that already carries a scheme alone', () => {
+    const s3 = freshS3({ ...ENABLED_ENV, S3_ENDPOINT: 'http://minio.internal:9000' });
+    expect(s3.clientConfig().endpoint).toBe('http://minio.internal:9000');
+  });
+
+  it('prefixes https:// onto a bare host', () => {
+    // .env.example documents S3_ENDPOINT as a bare host, and the SDK rejects
+    // one — this conditional is the only thing making the documented form work.
+    const s3 = freshS3({ ...ENABLED_ENV, S3_ENDPOINT: 's3.eu-central-1.amazonaws.com' });
+    expect(s3.clientConfig().endpoint).toBe('https://s3.eu-central-1.amazonaws.com');
+  });
+
+  it('treats https:// as already-schemed too', () => {
+    const s3 = freshS3({ ...ENABLED_ENV, S3_ENDPOINT: 'https://minio.internal:9000' });
+    expect(s3.clientConfig().endpoint).toBe('https://minio.internal:9000');
+  });
+
+  it('carries the credentials, region and path-style flag the module was configured with', () => {
+    const s3 = freshS3({ ...ENABLED_ENV, S3_REGION: 'eu-west-1' });
+    expect(s3.clientConfig()).toEqual({
+      endpoint: 'http://127.0.0.1:9',
+      region: 'eu-west-1',
+      credentials: { accessKeyId: 'test-access', secretAccessKey: 'test-secret' },
+      // Path style is required by MinIO and every other S3-compatible endpoint
+      // that does not do virtual-host buckets; flipping it breaks them all.
+      forcePathStyle: true,
+    });
+  });
+
+  it('defaults the region when the env does not set one', () => {
+    const env = { ...ENABLED_ENV };
+    delete env.S3_REGION;
+    const s3 = freshS3(env);
+    expect(s3.clientConfig().region).toBe('eu-central-1');
+  });
+
+  it('defaultClientFactory builds a client from exactly that config', () => {
+    // Constructing an S3Client performs no IO, so this stays hermetic. It
+    // proves the factory and the asserted config are not two separate truths.
+    const s3 = freshS3();
+    const client = s3.defaultClientFactory();
+    expect(typeof client.send).toBe('function');
+    expect(client.config.forcePathStyle).toBe(true);
+  });
+});
