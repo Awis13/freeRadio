@@ -17,7 +17,8 @@
  *   - GET / / POST /skip / POST /clear: success -> json(result.data);
  *     liq failure -> 502 'liquidsoap unavailable';
  *   - POST /push: trims body, empty -> 400; s3 ensureCached when enabled;
- *     pushTrack failure -> 502;
+ *     pushTrack failure -> 502 'liquidsoap unavailable', ensureCached failure
+ *     -> 502 's3 unavailable' (CHANGED IN T16-C2, was misattributed);
  *   - POST /load-playlist: missing playlistId -> 400; empty playlist ->
  *     404; clear quirk — clears whenever clear !== false (so null / 'false'
  *     / undefined / 0 all still clear; only the boolean false skips);
@@ -160,6 +161,25 @@ describe('dashboard/lib/queue.js POST /push', () => {
     const handler = getRouteHandler(router, 'post', '/push');
     await handler({ body: 'song.mp3' }, mockRes());
     expect(ensureSpy).toHaveBeenCalledWith('music/processed/song.wav', '/music/processed/song.wav');
+  });
+
+  it('an S3 failure is reported as S3, not as liquidsoap', async () => {
+    // CHANGED IN T16-C2. ensureCached shared the handler's single catch, so a
+    // failed object fetch came back as 'liquidsoap unavailable' — naming a
+    // service the request had not reached yet and sending anyone reading the
+    // response to the wrong container.
+    s3.S3_ENABLED = true;
+    vi.spyOn(s3, 'ensureCached').mockRejectedValue(new Error('NoSuchKey'));
+    const pushSpy = vi.spyOn(liqClient, 'pushTrack').mockResolvedValue({ status: 200, data: {} });
+    const handler = getRouteHandler(router, 'post', '/push');
+    const res = mockRes();
+
+    await handler({ body: 'song.mp3' }, res);
+
+    expect(res.statusCode).toBe(502);
+    expect(res.body).toEqual({ error: 's3 unavailable' });
+    // and it stops there rather than pushing a track that was never cached.
+    expect(pushSpy).not.toHaveBeenCalled();
   });
 
   it('pushTrack failure -> 502', async () => {

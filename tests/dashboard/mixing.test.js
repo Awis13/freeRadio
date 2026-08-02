@@ -10,8 +10,8 @@
  *
  * Pinned here (current behavior):
  *   - GET /config success -> json(result.data);
- *   - GET /config FAILURE -> HTTP 200 with the hard-coded fallback
- *     { mode: 'smart' } (KEY pin: errors degrade to a default, NOT a 502);
+ *   - GET /config FAILURE -> 502 { error: 'DJ unavailable' } (CHANGED IN
+ *     T16-C2; it used to answer HTTP 200 with a hard-coded { mode: 'smart' });
  *   - POST /config validation: missing/invalid mode -> 400 with the
  *     VALID_MODES list; valid mode -> setMixingConfig({mode}), broadcast
  *     receives ONLY { mode } (not result.data), responds json(result.data);
@@ -51,13 +51,17 @@ describe('dashboard/lib/mixing.js GET /config', () => {
     expect(res.body).toEqual({ mode: 'crossfade' });
   });
 
-  it('FAILURE: degrades to HTTP 200 { mode: "smart" } (not a 502)', async () => {
+  it('FAILURE: reports 502 instead of inventing a reading', async () => {
+    // CHANGED IN T16-C2. This used to answer 200 { mode: 'smart' }, which made
+    // an unreachable DJ indistinguishable from one actually set to smart: the
+    // UI displayed a config it had never received, and a failed write followed
+    // by a re-read looked like it had succeeded.
     spy(vi.spyOn(liqClient, 'getMixingConfig').mockRejectedValue(new Error('DJ down')));
     const handler = getRouteHandler(router, 'get', '/config');
     const res = mockRes();
     await handler({}, res);
-    expect(res.statusCode).toBe(200);
-    expect(res.body).toEqual({ mode: 'smart' });
+    expect(res.statusCode).toBe(502);
+    expect(res.body).toEqual({ error: 'DJ unavailable' });
   });
 });
 

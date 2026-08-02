@@ -49,7 +49,6 @@ function createTrackPoller(onUpdate) {
     try {
       if (fs.existsSync(TRACK_FILE)) {
         const filename = fs.readFileSync(TRACK_FILE, 'utf8').trim();
-        console.log('[track] poll:', filename, 'last:', lastTrack, 'changed:', filename !== lastTrack);
         if (filename && filename !== lastTrack) {
           lastTrack = filename;
           const basename = path.basename(filename);
@@ -70,9 +69,9 @@ function createTrackPoller(onUpdate) {
             startedAt: Date.now()
           });
         }
-      } else {
-        console.log('[track] file not exists:', TRACK_FILE);
       }
+      // A missing track file is the normal idle state, not an event: logging
+      // it here fired every 2s forever.
     } catch (e) {
       console.log('[track] ERROR:', e.message);
     }

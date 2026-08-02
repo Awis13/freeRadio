@@ -4,6 +4,7 @@ const path = require('path');
 const fs = require('fs');
 const liqClient = require('./liqClient');
 const paths = require('./paths');
+const { upstreamError } = require('./httpErrors');
 
 const VOICE_DIR = paths.shared('voice');
 const MAX_AGE_MS = 60 * 60 * 1000; // 1 hour
@@ -66,12 +67,12 @@ function createVoiceRouter(broadcast) {
       const result = await liqClient.getVoiceConfig();
       res.json(result.data);
     } catch (e) {
-      res.status(502).json({ error: 'DJ unavailable' });
+      upstreamError(res, e, 'DJ');
     }
   });
 
   // Voice config: set duck/gain
-  router.post('/config', express.json(), async (req, res) => {
+  router.post('/config', async (req, res) => {
     const { duck, gain } = req.body;
     const config = {};
     if (duck !== undefined) config.duck = parseFloat(duck);
@@ -83,7 +84,7 @@ function createVoiceRouter(broadcast) {
       broadcast('voice-config', result.data);
       res.json(result.data);
     } catch (e) {
-      res.status(502).json({ error: 'DJ unavailable' });
+      upstreamError(res, e, 'DJ');
     }
   });
 

@@ -57,7 +57,7 @@ function createVisualProfileRouter(visualsDir) {
   });
 
   // POST /api/visual-profiles — create
-  router.post('/', express.json(), (req, res) => {
+  router.post('/', (req, res) => {
     const { name, videos } = req.body;
     if (!name) return res.status(400).json({ error: 'name required' });
 
@@ -98,7 +98,7 @@ function createVisualProfileRouter(visualsDir) {
   });
 
   // PUT /api/visual-profiles/:id
-  router.put('/:id', express.json(), (req, res) => {
+  router.put('/:id', (req, res) => {
     const data = loadProfiles();
     const existing = data.profiles[req.params.id];
     if (!existing) return res.status(404).json({ error: 'not found' });

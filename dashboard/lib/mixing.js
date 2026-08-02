@@ -1,5 +1,6 @@
 const express = require('express');
 const liqClient = require('./liqClient');
+const { upstreamError } = require('./httpErrors');
 
 const VALID_MODES = ['smart', 'cut', 'crossfade'];
 
@@ -11,11 +12,14 @@ function createMixingRouter(broadcast) {
       const result = await liqClient.getMixingConfig();
       res.json(result.data);
     } catch (e) {
-      res.json({ mode: 'smart' });
+      // Was a 200 { mode: 'smart' }: an unreachable DJ was indistinguishable
+      // from one genuinely set to smart, so the UI showed a confident reading
+      // of a config it had never received.
+      upstreamError(res, e, 'DJ');
     }
   });
 
-  router.post('/config', express.json(), async (req, res) => {
+  router.post('/config', async (req, res) => {
     const { mode } = req.body;
     if (!mode || !VALID_MODES.includes(mode)) {
       return res.status(400).json({ error: 'Invalid mode. Valid: ' + VALID_MODES.join(', ') });
@@ -27,7 +31,7 @@ function createMixingRouter(broadcast) {
       broadcast('mixing-config', { mode });
       res.json(result.data);
     } catch (e) {
-      res.status(502).json({ error: 'DJ unavailable' });
+      upstreamError(res, e, 'DJ');
     }
   });
 

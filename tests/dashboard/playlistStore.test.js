@@ -93,6 +93,9 @@ function setup(domainName, { files = [], meta = null, bpmMap = {} } = {}) {
 
 async function mount(store, baseDir, opts) {
   const app = express();
+  // Mirrors server.js: body parsing is app-level there, so the router does not
+  // carry its own express.json().
+  app.use(express.json());
   app.use('/api/pl', store.createRouter(baseDir, opts));
   return serverAgent(app);
 }

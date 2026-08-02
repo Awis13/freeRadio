@@ -467,7 +467,7 @@ function createScheduleRouter() {
   });
 
   // PUT /api/schedule — update settings (whitelist)
-  router.put('/', express.json(), (req, res) => {
+  router.put('/', (req, res) => {
     const body = req.body || {};
     if (body.settings !== undefined) {
       const err = settingsFieldError(body.settings);
@@ -507,7 +507,7 @@ function createScheduleRouter() {
   });
 
   // POST /api/schedule/weekly — add weekly slot
-  router.post('/weekly', express.json(), (req, res) => {
+  router.post('/weekly', (req, res) => {
     const { day, startTime, endTime, playlistId, videoPlaylistId, label } = req.body || {};
     if (day === undefined || !startTime || !endTime) {
       return res.status(400).json({ error: 'day, startTime, endTime required' });
@@ -534,7 +534,7 @@ function createScheduleRouter() {
   });
 
   // PUT /api/schedule/weekly/:id — update weekly slot
-  router.put('/weekly/:id', express.json(), (req, res) => {
+  router.put('/weekly/:id', (req, res) => {
     const data = loadSchedule();
     const ws = data.weekly[req.params.id];
     if (!ws) return res.status(404).json({ error: 'not found' });
@@ -577,7 +577,7 @@ function createScheduleRouter() {
   });
 
   // POST /api/schedule/events — add one-time event
-  router.post('/events', express.json(), (req, res) => {
+  router.post('/events', (req, res) => {
     const { date, startTime, endTime, playlistId, videoPlaylistId, label, priority } = req.body;
     if (!date || !startTime || !endTime) {
       return res.status(400).json({ error: 'date, startTime, endTime required' });
@@ -590,7 +590,7 @@ function createScheduleRouter() {
   });
 
   // PUT /api/schedule/events/:id
-  router.put('/events/:id', express.json(), (req, res) => {
+  router.put('/events/:id', (req, res) => {
     const data = loadSchedule();
     const ev = data.events[req.params.id];
     if (!ev) return res.status(404).json({ error: 'not found' });

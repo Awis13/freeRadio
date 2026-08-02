@@ -173,7 +173,7 @@ function createPlaylistStore({
     });
 
     // POST / — create
-    router.post('/', express.json(), (req, res) => {
+    router.post('/', (req, res) => {
       const { name, type, tracks, rules } = req.body;
       if (!name) return res.status(400).json({ error: 'name required' });
 
@@ -210,7 +210,7 @@ function createPlaylistStore({
     });
 
     // PUT /:id — update
-    router.put('/:id', express.json(), (req, res) => {
+    router.put('/:id', (req, res) => {
       const data = load();
       const existing = data.playlists[req.params.id];
       if (!existing) return res.status(404).json({ error: 'not found' });
@@ -245,7 +245,7 @@ function createPlaylistStore({
     });
 
     // POST /:id/reorder — reorder tracks { from, to }
-    router.post('/:id/reorder', express.json(), (req, res) => {
+    router.post('/:id/reorder', (req, res) => {
       const data = load();
       const pl = data.playlists[req.params.id];
       if (!pl) return res.status(404).json({ error: 'not found' });

@@ -97,7 +97,7 @@ function createTrackRouter(musicDir, getBpmMap) {
   });
 
   // PUT /api/tracks/:filename/meta — update track metadata
-  router.put('/:filename/meta', express.json(), (req, res) => {
+  router.put('/:filename/meta', (req, res) => {
     const { filename } = req.params;
     const filePath = path.join(musicDir, filename);
     if (!fs.existsSync(filePath)) {
@@ -108,7 +108,7 @@ function createTrackRouter(musicDir, getBpmMap) {
   });
 
   // POST /api/tracks/bulk-tag — mass tagging
-  router.post('/bulk-tag', express.json(), (req, res) => {
+  router.post('/bulk-tag', (req, res) => {
     const { filenames, tags, action } = req.body;
     if (!Array.isArray(filenames) || !Array.isArray(tags)) {
       return res.status(400).json({ error: 'filenames and tags must be arrays' });

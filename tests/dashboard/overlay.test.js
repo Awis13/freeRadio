@@ -534,15 +534,15 @@ describe('POST /api/overlays/assets', () => {
     expect(h.renamed).toEqual([]);
   });
 
-  it('non-image extension errors out of multer -> 500 (no error handler) AS-IS', async () => {
-    // fileFilter calls cb(new Error('Only image files allowed')) for .txt. multer
-    // surfaces that as a request error; the router defines NO error-handling
-    // middleware, so Express's default handler returns 500 (NOT the 400 "no file"
-    // path). Pinned as-is — this is a rough edge, not the intended 400.
+  it('a non-image extension is refused with a 400 and the filter message', async () => {
+    // CHANGED IN T16-C2. fileFilter calls cb() with a 400-tagged Error for a
+    // .txt. There used to be no error middleware anywhere, so Express's default
+    // handler answered picking the wrong file with a 500 and an HTML stack.
     const res = await client
       .post('/api/overlays/assets')
       .attach('file', Buffer.from('x'), 'notes.txt');
-    expect(res.status).toBe(500);
+    expect(res.status).toBe(400);
+    expect(res.body).toEqual({ error: 'Only image files allowed' });
   });
 });
 
@@ -595,10 +595,31 @@ describe('DELETE /api/overlays/assets/:name', () => {
   });
 
   it('returns 400 invalid path when name resolves outside ASSETS_DIR via traversal', async () => {
-    // path.join(ASSETS_DIR, '../../etc/passwd') escapes ASSETS_DIR, so
-    // indexOf(ASSETS_DIR) !== 0 -> 400. Express decodes %2e%2e to '..'.
+    // path.join(ASSETS_DIR, '../../etc/passwd') escapes ASSETS_DIR entirely.
+    // Express decodes %2e%2e to '..'.
     const res = await client.delete('/api/overlays/assets/%2e%2e%2f%2e%2e%2fetc%2fpasswd');
     expect(res.status).toBe(400);
     expect(res.body).toEqual({ error: 'invalid path' });
+  });
+
+  it('returns 400 for a sibling directory that merely starts with the assets path', async () => {
+    // CHANGED IN T16-C2. The guard was a bare indexOf(ASSETS_DIR) !== 0, which
+    // this target satisfies: '/shared/overlay_assets_backup/logo.png' does
+    // start with '/shared/overlay_assets'. It was unlinked. The upload path
+    // already anchored on path.sep; this one now does too.
+    const res = await client.delete('/api/overlays/assets/%2e%2e%2foverlay_assets_backup%2flogo.png');
+    expect(res.status).toBe(400);
+    expect(res.body).toEqual({ error: 'invalid path' });
+    expect(h.unlinked).toEqual([]);
+  });
+
+  it('refuses a name that collapses back onto the assets directory itself', async () => {
+    // 'x/..' rejoins to exactly ASSETS_DIR. The upload guard tolerates that
+    // form (it has a filename to append afterwards); here there would be
+    // nothing to unlink but the directory, so the separator is required.
+    const res = await client.delete('/api/overlays/assets/x%2f%2e%2e');
+    expect(res.status).toBe(400);
+    expect(res.body).toEqual({ error: 'invalid path' });
+    expect(h.unlinked).toEqual([]);
   });
 });

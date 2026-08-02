@@ -5,6 +5,7 @@ const { resolvePlaylist } = require('./playlist');
 const s3 = require('./s3');
 const { prefetchTracks } = require('./cacheManager');
 const paths = require('./paths');
+const { upstreamError } = require('./httpErrors');
 
 // Map original filename to processed WAV path (transcoder outputs all audio as .wav)
 function toProcessedPath(filename) {
@@ -21,7 +22,7 @@ function createQueueRouter(musicDir, getBpmMap) {
       const result = await liq.getQueue();
       res.json(result.data);
     } catch (e) {
-      res.status(502).json({ error: 'liquidsoap unavailable' });
+      upstreamError(res, e, 'liquidsoap');
     }
   });
 
@@ -32,16 +33,22 @@ function createQueueRouter(musicDir, getBpmMap) {
       if (!filename) return res.status(400).json({ error: 'no filename' });
       const filePath = toProcessedPath(filename);
 
-      // S3: download if not available locally
+      // S3: download if not available locally. Its own catch — sharing the
+      // outer one reported a failed object fetch as 'liquidsoap unavailable',
+      // pointing at a service that had not been contacted yet.
       if (s3.S3_ENABLED) {
         const base = path.basename(filename, path.extname(filename));
-        await s3.ensureCached(`music/processed/${base}.wav`, filePath);
+        try {
+          await s3.ensureCached(`music/processed/${base}.wav`, filePath);
+        } catch (e) {
+          return upstreamError(res, e, 's3');
+        }
       }
 
       const result = await liq.pushTrack(filePath);
       res.json(result.data);
     } catch (e) {
-      res.status(502).json({ error: 'liquidsoap unavailable' });
+      upstreamError(res, e, 'liquidsoap');
     }
   });
 
@@ -51,7 +58,7 @@ function createQueueRouter(musicDir, getBpmMap) {
       const result = await liq.skip();
       res.json(result.data);
     } catch (e) {
-      res.status(502).json({ error: 'liquidsoap unavailable' });
+      upstreamError(res, e, 'liquidsoap');
     }
   });
 
@@ -61,12 +68,12 @@ function createQueueRouter(musicDir, getBpmMap) {
       const result = await liq.clearQueue();
       res.json(result.data);
     } catch (e) {
-      res.status(502).json({ error: 'liquidsoap unavailable' });
+      upstreamError(res, e, 'liquidsoap');
     }
   });
 
   // POST /api/queue/load-playlist — load playlist into queue
-  router.post('/load-playlist', express.json(), async (req, res) => {
+  router.post('/load-playlist', async (req, res) => {
     try {
       const { playlistId, clear } = req.body;
       if (!playlistId) return res.status(400).json({ error: 'playlistId required' });

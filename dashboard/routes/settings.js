@@ -58,7 +58,7 @@ function createSettingsRouter() {
     }
   });
 
-  router.post('/channel-strip', express.json(), async (req, res) => {
+  router.post('/channel-strip', async (req, res) => {
     try {
       const result = await channelStrip.setConfig(req.body);
       res.json(result);
@@ -67,7 +67,7 @@ function createSettingsRouter() {
     }
   });
 
-  router.post('/channel-strip/preset', express.json(), async (req, res) => {
+  router.post('/channel-strip/preset', async (req, res) => {
     try {
       const { name } = req.body;
       if (!name) return res.status(400).json({ error: 'missing preset name' });
