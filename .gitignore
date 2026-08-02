@@ -28,5 +28,6 @@ coverage/
 s23-dashboard
 
 # Internal docs
-CLAUDE.md
+# TODO.md only — the kanban genuinely lives outside the repo. CLAUDE.md used to
+# be listed here too, from before the repo had one to track.
 TODO.md
