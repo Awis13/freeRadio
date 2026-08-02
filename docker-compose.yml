@@ -1,7 +1,12 @@
 services:
   # 0. Audio Analyzer (Essentia) - beat detection, structure analysis, mix points
   audio-analyzer:
-    image: mtgupf/essentia:latest
+    # Pinned 2026-08-02. mtgupf/essentia has NO versioned tag equal to latest:
+    # its version tags (bullseye-v2.1_beta5 and friends) are older builds, and
+    # latest carries a digest of its own, last pushed 2021-09-02. A digest is
+    # therefore the only honest pin available. Resolved with the Docker Hub API
+    # and cross-checked with `docker manifest inspect --verbose`.
+    image: mtgupf/essentia@sha256:9dd13650cb5fd3aac96d10c152ba1b440a1778705cca017df5c5f651e4765953
     container_name: s23-audio-analyzer
     entrypoint: python3
     command: /scripts/audio_analyzer_simple.py
@@ -12,7 +17,11 @@ services:
 
   # 1. Audio server
   icecast:
-    image: infiniteproject/icecast
+    # Pinned 2026-08-02. This repository publishes exactly ONE tag — 'latest',
+    # last pushed 2020-04-18 — so there is no version to pin to and the digest
+    # is the only thing that identifies the image. It was previously untagged,
+    # i.e. implicitly :latest.
+    image: infiniteproject/icecast@sha256:cd506cf3dfe31ce05fd37d7e672dbd1213e7255cc93d28ecf5a3b547af4e162c
     container_name: s23-icecast
     ports:
       - "8000:8000"
@@ -21,6 +30,16 @@ services:
       - ICECAST_ADMIN_PASSWORD=${ICECAST_ADMIN_PASSWORD}
       - ICECAST_PASSWORD=${ICECAST_PASSWORD}
       - ICECAST_RELAY_PASSWORD=${ICECAST_RELAY_PASSWORD}
+    # The status page the dashboard already polls (lib/icecast.js). Verified
+    # against the image: it is Alpine-based and ships busybox wget at
+    # /usr/bin/wget (it has NO curl), and busybox wget exits non-zero on a
+    # non-200, so this fails when icecast is up but not serving.
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:8000/status-json.xsl"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
     networks:
       - rave-net
     restart: unless-stopped
@@ -47,7 +66,10 @@ services:
 
   # 2.5 RTMP Ingest (nginx-rtmp) — accepts OBS/external RTMP for Live mode
   rtmp-ingest:
-    image: alfg/nginx-rtmp
+    # Pinned 2026-08-02: v1.6.0 is byte-identical to latest (same digest, both
+    # pushed 2022-09-04), so this is the same image under a name that cannot
+    # move. Was untagged, i.e. implicitly :latest.
+    image: alfg/nginx-rtmp:v1.6.0
     container_name: s23-rtmp-ingest
     entrypoint: ["nginx"]
     command: ["-c", "/config/ingest.conf"]
@@ -55,6 +77,18 @@ services:
       - "1935:1935"
     volumes:
       - ./configs/nginx/ingest.conf:/config/ingest.conf:ro
+    # ingest.conf declares an rtmp block ONLY — no http listener exists here, so
+    # there is nothing to GET. A TCP probe of the actual RTMP port is the real
+    # check; `nginx -t` would merely re-read the config file and pass whether or
+    # not anything was listening. Verified in the image: busybox nc is at
+    # /usr/bin/nc and its -z discriminates (tested against a live listener and a
+    # closed port).
+    healthcheck:
+      test: ["CMD", "nc", "-z", "127.0.0.1", "1935"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
     networks:
       - rave-net
     restart: unless-stopped
@@ -67,8 +101,6 @@ services:
     image: s23-streamer
     container_name: s23-streamer
     entrypoint: /scripts/stream_entry.sh
-    group_add:
-      - "105"
     environment:
       - OUTPUT_MODE=${OUTPUT_MODE:-hls}
       - RTMP_URL=${RTMP_URL:-}
@@ -82,9 +114,15 @@ services:
       - STABLE_LOOP=1
       - FFMPEG_PROGRESS_FILE=/shared/ffmpeg_progress.txt
       - DASHBOARD_API=http://dashboard:9090
-      - HW_ACCEL=qsv
+      # Software encode by default. stream_entry.sh already branches on this:
+      # 'qsv' selects h264_qsv, anything else (including empty) falls through to
+      # libx264. The QSV path additionally needs /dev/dri and the host's render
+      # group, which are host-specific and used to be hard-wired here — a host
+      # without /dev/dri could not start the service at all, and GID 105 is only
+      # the render group on some distributions. Both now live in
+      # docker-compose.hwaccel.yml; see .env.example.
+      - HW_ACCEL=${HW_ACCEL:-}
     volumes:
-      - /dev/dri:/dev/dri
       - ./content/visuals:/visuals:ro
       - ./scripts:/scripts:ro
       - hls-data:/hls
@@ -136,7 +174,10 @@ services:
 
   # 5. TLS proxy (nginx) — HTTP + HTTPS -> dashboard
   proxy:
-    image: nginx:alpine
+    # Pinned 2026-08-02: 'alpine' is a moving tag that today resolves to the
+    # same image as 1.31.3-alpine3.24 (identical layer set, pushed 2026-07-18).
+    # Not on the ticket's list of four, but it floats exactly like the rest.
+    image: nginx:1.31.3-alpine3.24
     container_name: s23-proxy
     ports:
       - "80:80"

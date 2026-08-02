@@ -1,2 +1,6 @@
-FROM linuxserver/ffmpeg:latest
+# Pinned 2026-08-02. linuxserver/ffmpeg:latest resolved to this build (the tags
+# 8.1.2, version-8.1.2-cli and 8.1.2-cli-ls75 all share latest's layer set,
+# pushed 2026-07-31). The -ls75 form is the most specific of the three: the bare
+# 8.1.2 tag moves when LinuxServer rebuilds the same ffmpeg release.
+FROM linuxserver/ffmpeg:8.1.2-cli-ls75
 RUN apt-get update && apt-get install -y --no-install-recommends mbuffer && rm -rf /var/lib/apt/lists/*

@@ -1,0 +1,31 @@
+# Build context for `build: { context: ., dockerfile: Dockerfile.streamer }`.
+#
+# That Dockerfile COPYs nothing, so nothing here can be shadowed the way it can
+# in dashboard/ — but the whole context is still handed to the daemon on every
+# build, and this repo's root holds node_modules, coverage and content/ (the
+# music and visuals libraries). Excluding them is the difference between
+# sending a few kilobytes and sending the media library.
+#
+# The paths listed here are still available to the containers at runtime:
+# compose bind-mounts ./scripts, ./content and ./configs directly, and
+# .dockerignore has no effect on bind mounts.
+node_modules
+coverage
+.git
+.gitignore
+.github
+
+# Media libraries and generated state — large, and never needed at build time.
+content
+certs
+
+# Test material.
+tests
+vitest.config.js
+
+# Local secrets and editor noise.
+.env
+.env.*
+!.env.example
+.DS_Store
+*.log
