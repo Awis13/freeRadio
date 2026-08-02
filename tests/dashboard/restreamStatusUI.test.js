@@ -1,14 +1,14 @@
 /**
  * tests/dashboard/restreamStatusUI.test.js
  *
- * Characterization pins for the restream-STATUS widget cluster, currently inline
- * in the app.js IIFE (updateRestreamStatus + loadRestreamStatusFallback, plus the
- * owned var lastRtmpHealth). These tests pin the AS-IS observable contract before
- * extraction into dashboard/public/restreamStatus.js (window.FRRestreamStatus).
+ * Characterization pins for the restream-STATUS widget cluster — updateRestreamStatus
+ * and loadRestreamStatusFallback, plus the owned var lastRtmpHealth — which now
+ * lives in dashboard/public/restreamStatus.js (window.FRRestreamStatus).
  *
- * They were authored in C1 against app.js via the test-only window.__appRestreamStatus
- * hook, and will be re-pointed in C2 to the extracted module (hook-object rename only,
- * assertions unchanged) to prove behavioural equivalence.
+ * They were authored against app.js while the cluster was inline there, via the
+ * test-only window.__appRestreamStatus hook, then re-pointed to the module (a
+ * hook-object rename only, assertions unchanged) to prove behavioural
+ * equivalence.
  *
  * This is the restream-STATUS widget — per-platform LED status rendered from
  * rtmp-health WebSocket data, with a /api/stream-keys fallback. It is DISTINCT from

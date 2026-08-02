@@ -1,15 +1,14 @@
 /**
  * tests/dashboard/qualityUI.test.js
  *
- * Characterization pins for the quality-settings UI cluster in the app.js IIFE.
- * These pin the AS-IS observable contract of the quality domain before it is
- * extracted (C2) into dashboard/public/quality.js (window.FRQuality). They are
- * authored (C1) against the code in app.js via the window.__appQuality hook and
- * the REAL #quality-select DOM element, and will be re-pointed in C2 to the
- * extracted module with assertions UNCHANGED to prove behavioural equivalence.
+ * Characterization pins for the quality-settings UI cluster, which now lives in
+ * dashboard/public/quality.js (window.FRQuality). They were authored against the
+ * code while it was inline in the app.js IIFE, via the window.__appQuality hook
+ * and the REAL #quality-select DOM element, and re-pointed to the module with
+ * assertions UNCHANGED — the extraction's equivalence proof.
  *
- * This domain has NO init/dependency-injection surface at C1: window.__appQuality
- * holds the REAL loadQuality fn, which uses the REAL deps (authFetch -> win.fetch,
+ * This domain has NO init/dependency-injection surface: the hook held the
+ * REAL loadQuality fn, which uses the REAL deps (authFetch -> win.fetch,
  * log, showError). The onchange handler is bound on the REAL #quality-select
  * element during boot, so it is driven via doc.getElementById('quality-select')
  * .onchange(). The only "state" is qualitySelect.value, DOM-observable via doc.

@@ -16,6 +16,26 @@ jobs:
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@v6
+      - name: No Cyrillic in tracked text files
+        run: |
+          # git grep exits 0 when it finds something, 1 when it does not, and
+          # >1 on an error such as this git being built without PCRE. Treating
+          # "not 0" as clean would turn a broken gate into a passing one, so
+          # the three cases are separated. -I skips binary blobs.
+          set +e
+          matches=$(git grep -I -l -P '[\x{0400}-\x{04FF}]')
+          rc=$?
+          set -e
+          if [ "$rc" -gt 1 ]; then
+            echo "::error::the Cyrillic check could not run (git grep exit $rc)"
+            exit 1
+          fi
+          if [ -n "$matches" ]; then
+            echo "::error::Cyrillic characters found in tracked files"
+            echo "$matches"
+            exit 1
+          fi
+          echo "clean"
       - uses: actions/setup-node@v6
         with:
           node-version: 24
