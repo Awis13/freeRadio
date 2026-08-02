@@ -120,7 +120,13 @@ describe('Channel Strip endpoints', () => {
     expect(res.body).toEqual({ bypass: false, comp_threshold: -10, output_gain: 1 });
   });
 
-  it('GET /channel-strip returns 500 on error', async () => {
+  it('GET /channel-strip reports a DJ failure as 502', async () => {
+    // CHANGED IN THE TRACK-CLOSE HOTFIX, and the same for the three
+    // channel-strip cases below. Every channelStrip entry point delegates to
+    // liqClient and nothing else — its own config writes swallow their errors —
+    // so a rejection here is always the DJ being unreachable, not this process
+    // failing. It used to answer 500 with the raw message.
+    spy(vi.spyOn(console, 'error').mockImplementation(() => {}));
     spy(vi.spyOn(channelStrip, 'getConfig').mockRejectedValue(new Error('connection refused')));
 
     const router = createSettingsRouter();
@@ -128,8 +134,8 @@ describe('Channel Strip endpoints', () => {
     const res = mockRes();
     await handler({}, res);
 
-    expect(res.status).toHaveBeenCalledWith(500);
-    expect(res.body.error).toBe('connection refused');
+    expect(res.status).toHaveBeenCalledWith(502);
+    expect(res.body).toEqual({ error: 'DJ unavailable' });
   });
 
   it('POST /channel-strip sets config parameters', async () => {
@@ -144,7 +150,8 @@ describe('Channel Strip endpoints', () => {
     expect(res.body.ok).toBe(true);
   });
 
-  it('POST /channel-strip returns 500 on error', async () => {
+  it('POST /channel-strip reports a DJ failure as 502', async () => {
+    spy(vi.spyOn(console, 'error').mockImplementation(() => {}));
     spy(vi.spyOn(channelStrip, 'setConfig').mockRejectedValue(new Error('liq timeout')));
 
     const router = createSettingsRouter();
@@ -152,8 +159,8 @@ describe('Channel Strip endpoints', () => {
     const res = mockRes();
     await handler({ body: { bypass: true } }, res);
 
-    expect(res.status).toHaveBeenCalledWith(500);
-    expect(res.body.error).toBe('liq timeout');
+    expect(res.status).toHaveBeenCalledWith(502);
+    expect(res.body).toEqual({ error: 'DJ unavailable' });
   });
 
   it('POST /channel-strip/preset applies a named preset', async () => {
@@ -190,7 +197,8 @@ describe('Channel Strip endpoints', () => {
     expect(res.body.ok).toBe(false);
   });
 
-  it('POST /channel-strip/preset returns 500 on Liquidsoap error', async () => {
+  it('POST /channel-strip/preset reports a DJ failure as 502', async () => {
+    spy(vi.spyOn(console, 'error').mockImplementation(() => {}));
     spy(vi.spyOn(channelStrip, 'setPreset').mockRejectedValue(new Error('connection lost')));
 
     const router = createSettingsRouter();
@@ -198,8 +206,8 @@ describe('Channel Strip endpoints', () => {
     const res = mockRes();
     await handler({ body: { name: 'warm_radio' } }, res);
 
-    expect(res.status).toHaveBeenCalledWith(500);
-    expect(res.body.error).toBe('connection lost');
+    expect(res.status).toHaveBeenCalledWith(502);
+    expect(res.body).toEqual({ error: 'DJ unavailable' });
   });
 
   it('GET /channel-strip/metering returns metering data', async () => {
@@ -216,7 +224,8 @@ describe('Channel Strip endpoints', () => {
     expect(res.body.input_peak).toBe(-3.2);
   });
 
-  it('GET /channel-strip/metering returns 500 on error', async () => {
+  it('GET /channel-strip/metering reports a DJ failure as 502', async () => {
+    spy(vi.spyOn(console, 'error').mockImplementation(() => {}));
     spy(vi.spyOn(channelStrip, 'getMetering').mockRejectedValue(new Error('not available')));
 
     const router = createSettingsRouter();
@@ -224,8 +233,8 @@ describe('Channel Strip endpoints', () => {
     const res = mockRes();
     await handler({}, res);
 
-    expect(res.status).toHaveBeenCalledWith(500);
-    expect(res.body.error).toBe('not available');
+    expect(res.status).toHaveBeenCalledWith(502);
+    expect(res.body).toEqual({ error: 'DJ unavailable' });
   });
 });
 

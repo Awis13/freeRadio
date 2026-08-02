@@ -36,8 +36,12 @@ describe('POST /start', () => {
     expect(res.body).toEqual({ ok: true, data: { status: 'playing' } });
   });
 
-  it('returns 500 on liqClient error', async () => {
-    spy(vi.spyOn(liqClient, 'startPlayback').mockRejectedValue(new Error('connection refused')));
+  it('reports a DJ failure as 502, without echoing the raw error', async () => {
+    // CHANGED IN THE TRACK-CLOSE HOTFIX. This answered 500 with e.message, so a
+    // dead DJ produced 'getaddrinfo ENOTFOUND dj' in the response body while
+    // queue.js answered 502 'liquidsoap unavailable' for the very same outage.
+    spy(vi.spyOn(console, 'error').mockImplementation(() => {}));
+    spy(vi.spyOn(liqClient, 'startPlayback').mockRejectedValue(new Error('getaddrinfo ENOTFOUND dj')));
 
     const router = createDjRouter('/music');
     const handler = getRouteHandler(router, 'post', '/start');
@@ -45,8 +49,9 @@ describe('POST /start', () => {
 
     await handler({}, res);
 
-    expect(res.status).toHaveBeenCalledWith(500);
-    expect(res.body.error).toBe('connection refused');
+    expect(res.status).toHaveBeenCalledWith(502);
+    expect(res.body).toEqual({ error: 'DJ unavailable' });
+    expect(JSON.stringify(res.body)).not.toContain('ENOTFOUND');
   });
 });
 
@@ -119,7 +124,11 @@ describe('POST /cue', () => {
     expect(cuedPath).toMatch(/\.(flac|ogg|aac|m4a)$/);
   });
 
-  it('returns 500 when readdir of the processed dir fails', async () => {
+  it('returns 500 when readdir of the processed dir fails — a LOCAL fault', async () => {
+    // Deliberately still a 500. /cue touches three separate things (the local
+    // directory, S3, the DJ) and the hotfix split them so each reports its own
+    // fault; reading a local directory failing is not an upstream outage and
+    // must not be dressed up as one.
     spy(vi.spyOn(fs.promises, 'readdir').mockRejectedValue(new Error('EACCES')));
 
     const router = createDjRouter('/music');
@@ -169,8 +178,10 @@ describe('POST /stop', () => {
     expect(res.body.ok).toBe(true);
   });
 
-  it('returns 500 on stopPlayback error', async () => {
+  it('reports a stopPlayback failure as a DJ 502', async () => {
+    // CHANGED IN THE TRACK-CLOSE HOTFIX, same reason as /start.
     boot.setBootAborted(false);
+    spy(vi.spyOn(console, 'error').mockImplementation(() => {}));
     spy(vi.spyOn(liqClient, 'stopPlayback').mockRejectedValue(new Error('timeout')));
 
     const router = createDjRouter('/music');
@@ -179,7 +190,7 @@ describe('POST /stop', () => {
 
     await handler({}, res);
 
-    expect(res.status).toHaveBeenCalledWith(500);
-    expect(res.body.error).toBe('timeout');
+    expect(res.status).toHaveBeenCalledWith(502);
+    expect(res.body).toEqual({ error: 'DJ unavailable' });
   });
 });
