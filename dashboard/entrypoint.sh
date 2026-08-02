@@ -9,10 +9,15 @@
 # inode.
 #
 # The guard reads the ownership of the directory itself and skips the recursion
-# when it already matches. Being honest about the trade: it checks the mount
-# point, not its contents, so a file placed inside with foreign ownership after
-# the first boot is no longer corrected here. Re-walking every library on every
-# boot to catch that case was the wrong price.
+# when it already matches. Being honest about the trade, with the case that
+# actually bites: an operator copies tracks straight onto the host bind mount as
+# root. The mount point is already app-owned, so this skips, and those files
+# stay root-owned — the dashboard runs as app and cannot rename or delete them
+# (uploads and transcodes into that directory still work, since the directory
+# itself is writable). Restarting the container no longer heals it, which the
+# old unconditional chown did by accident. Recover by chowning on the host
+#   chown -R 100:101 <mount>   # the app uid:gid inside the image
+# or by recreating the volume so the first-boot path runs again.
 APP_UID=$(id -u app)
 
 ensure_owner() {
