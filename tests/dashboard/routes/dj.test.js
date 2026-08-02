@@ -124,6 +124,47 @@ describe('POST /cue', () => {
     expect(cuedPath).toMatch(/\.(flac|ogg|aac|m4a)$/);
   });
 
+  it('attributes an S3 fetch failure to S3, not to the DJ', async () => {
+    // The /cue split exists so each of its three failure sources reports
+    // itself. Without a pin here the attribution could be silently wrong — the
+    // request would still 502 and still look correct.
+    const origEnabled = s3.S3_ENABLED;
+    s3.S3_ENABLED = true;
+    spy(vi.spyOn(console, 'error').mockImplementation(() => {}));
+    spy(vi.spyOn(fs.promises, 'readdir').mockResolvedValue(['track.mp3']));
+    spy(vi.spyOn(s3, 'ensureCached').mockRejectedValue(new Error('NoSuchKey')));
+    const cueSpy = spy(vi.spyOn(liqClient, 'cueTrack').mockResolvedValue({ data: {} }));
+
+    const router = createDjRouter('/music');
+    const handler = getRouteHandler(router, 'post', '/cue');
+    const res = mockRes();
+
+    await handler({}, res);
+
+    expect(res.status).toHaveBeenCalledWith(502);
+    expect(res.body).toEqual({ error: 's3 unavailable' });
+    // and it stops there rather than cueing a track that was never fetched.
+    expect(cueSpy).not.toHaveBeenCalled();
+
+    s3.S3_ENABLED = origEnabled;
+  });
+
+  it('attributes a cueTrack failure to the DJ', async () => {
+    spy(vi.spyOn(console, 'error').mockImplementation(() => {}));
+    spy(vi.spyOn(fs.promises, 'readdir').mockResolvedValue(['track.mp3']));
+    spy(vi.spyOn(liqClient, 'cueTrack').mockRejectedValue(new Error('getaddrinfo ENOTFOUND dj')));
+
+    const router = createDjRouter('/music');
+    const handler = getRouteHandler(router, 'post', '/cue');
+    const res = mockRes();
+
+    await handler({}, res);
+
+    expect(res.status).toHaveBeenCalledWith(502);
+    expect(res.body).toEqual({ error: 'DJ unavailable' });
+    expect(JSON.stringify(res.body)).not.toContain('ENOTFOUND');
+  });
+
   it('returns 500 when readdir of the processed dir fails — a LOCAL fault', async () => {
     // Deliberately still a 500. /cue touches three separate things (the local
     // directory, S3, the DJ) and the hotfix split them so each reports its own
@@ -157,6 +198,20 @@ describe('POST /resume', () => {
 
     expect(liqClient.resumePlayback).toHaveBeenCalled();
     expect(res.body.ok).toBe(true);
+  });
+  it('reports a resumePlayback failure as a DJ 502', async () => {
+    spy(vi.spyOn(console, 'error').mockImplementation(() => {}));
+    spy(vi.spyOn(liqClient, 'resumePlayback').mockRejectedValue(new Error('ECONNREFUSED dj:7000')));
+
+    const router = createDjRouter('/music');
+    const handler = getRouteHandler(router, 'post', '/resume');
+    const res = mockRes();
+
+    await handler({}, res);
+
+    expect(res.status).toHaveBeenCalledWith(502);
+    expect(res.body).toEqual({ error: 'DJ unavailable' });
+    expect(JSON.stringify(res.body)).not.toContain('dj:7000');
   });
 });
 

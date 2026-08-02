@@ -1394,7 +1394,12 @@ describe('readers skip unparseable stored records', () => {
     return { router: createScheduleRouter(), writes };
   }
 
-  beforeEach(() => vi.restoreAllMocks());
+  beforeEach(() => {
+    vi.restoreAllMocks();
+    // The report memo is module state that outlives a single call by design;
+    // without this a logging assertion inherits the previous test's memory.
+    mod._test._resetSkipReports();
+  });
 
   it('getCurrentSlot does not match a malformed weekly slot', () => {
     // Worth being precise about which readers actually threw, because
@@ -1508,6 +1513,50 @@ describe('readers skip unparseable stored records', () => {
     expect(warn).toHaveBeenCalledTimes(1);
     expect(warn.mock.calls[0][0]).toContain('skipping 2 unparseable weekly slots');
     expect(warn.mock.calls[0][0]).toContain('a, b');
+  });
+
+  it('reports weekly slots and events separately when BOTH are broken', () => {
+    // The memo used to be one shared string, so these two overwrote each
+    // other's memory and BOTH lines reprinted on every pass — the noise the
+    // memo exists to prevent, in the one case where it mattered most.
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    mockScheduleFile(scheduleWith({
+      weekly: { ws_bad: { ...BROKEN_SLOT } },
+      events: { ev_bad: { ...BROKEN_EVENT } },
+    }));
+
+    getCurrentSlot();
+    getCurrentSlot();
+    getCurrentSlot();
+
+    const lines = warn.mock.calls.map((c) => c[0]);
+    expect(lines.filter((l) => l.includes('weekly slots'))).toHaveLength(1);
+    expect(lines.filter((l) => l.includes('events'))).toHaveLength(1);
+    expect(lines).toHaveLength(2);
+  });
+
+  it('reports again when a fault comes back after a clean pass', () => {
+    // Without clearing the memo on a clean pass, a repaired-then-rebroken file
+    // stays silent forever because the message matches what was last seen.
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+
+    mockScheduleFile(scheduleWith({ weekly: { ws_bad: { ...BROKEN_SLOT } } }));
+    getCurrentSlot();
+    expect(warn).toHaveBeenCalledTimes(1);
+
+    // Repaired.
+    vi.restoreAllMocks();
+    const warn2 = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    mockScheduleFile(scheduleWith({ weekly: { ws_ok: { ...GOOD_SLOT } } }));
+    getCurrentSlot();
+    expect(warn2).not.toHaveBeenCalled();
+
+    // Broken again, the same way.
+    vi.restoreAllMocks();
+    const warn3 = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    mockScheduleFile(scheduleWith({ weekly: { ws_bad: { ...BROKEN_SLOT } } }));
+    getCurrentSlot();
+    expect(warn3).toHaveBeenCalledTimes(1);
   });
 
   it('does not reprint the same complaint on every executor tick', () => {

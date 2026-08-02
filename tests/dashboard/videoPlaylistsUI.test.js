@@ -210,7 +210,11 @@ describe('video-playlists UI characterization (window.FRVideoPlaylists)', () => 
       await flush(10);
       expect(doc.getElementById('vpl-video-grid').querySelectorAll('.video-tile').length).toBe(1);
 
-      win.fetch = () => new Promise(() => {});
+      // The recorder is WRAPPED rather than replaced: a bare never-settling
+      // stub over win.fetch detaches stub.calls, and the no-PUT assertion below
+      // then cannot fail whatever the grid does. Record first, then hang.
+      const recording = win.fetch;
+      win.fetch = (url, opts) => { recording(url, opts); return new Promise(() => {}); };
       vpl.renderVideoPlaylistDetail({ id: 'p2', name: 'Second', type: 'manual', tracks: [] });
       await flush(10);
 

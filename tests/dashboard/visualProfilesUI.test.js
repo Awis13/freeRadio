@@ -344,7 +344,12 @@ describe('visual-profiles UI characterization (window.FRVisualProfiles)', () => 
       expect(doc.getElementById('vp-video-grid').querySelectorAll('.video-tile').length).toBe(1);
 
       // Second render whose fetch never settles — the in-flight state, held.
-      win.fetch = () => new Promise(() => {});
+      // The recorder is WRAPPED rather than replaced: assigning a bare
+      // never-settling stub over win.fetch detaches stub.calls, and the no-PUT
+      // assertion below then cannot fail no matter what the grid does. Record
+      // first, then hang.
+      const recording = win.fetch;
+      win.fetch = (url, opts) => { recording(url, opts); return new Promise(() => {}); };
       vp.renderVisualProfileDetail({ id: 'p2', name: 'Second', videos: [] });
       await flush(10);
 
@@ -371,6 +376,7 @@ describe('visual-profiles UI characterization (window.FRVisualProfiles)', () => 
       expect(grid.querySelector('.grid-load-failed')).toBeTruthy();
 
       win.fetch = () => new Promise(() => {});
+      // No recorder here on purpose: this case asserts DOM state only.
       vp.renderVisualProfileDetail({ id: 'p3', name: 'Third', videos: [] });
       await flush(10);
 
