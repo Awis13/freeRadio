@@ -1228,3 +1228,136 @@ describe('createScheduleRouter — settings shape guard', () => {
     expect(writes).toHaveLength(1);
   });
 });
+
+describe('createScheduleRouter — one-time event write validation', () => {
+  const { createScheduleRouter } = mod;
+
+  function harness(initial) {
+    const writes = [];
+    vi.spyOn(fs, 'existsSync').mockReturnValue(true);
+    vi.spyOn(fs, 'readFileSync').mockReturnValue(JSON.stringify(initial));
+    vi.spyOn(fs, 'writeFileSync').mockImplementation((f, d) => { writes.push(JSON.parse(d)); });
+    vi.spyOn(fs, 'renameSync').mockImplementation(() => {});
+    vi.spyOn(fs, 'mkdirSync').mockImplementation(() => {});
+    return { router: createScheduleRouter(), writes };
+  }
+
+  const validEvent = { id: 'ev1', date: '2026-08-20', startTime: '20:00', endTime: '23:00', playlistId: null, videoPlaylistId: null, label: 'Guest DJ', priority: 10 };
+
+  function postEvent(body) {
+    const { router, writes } = harness(emptySchedule());
+    const res = mockRes();
+    getRouteHandler(router, 'post', '/events')({ body }, res);
+    return { res, writes };
+  }
+
+  function putEvent(initial, id, body) {
+    const { router, writes } = harness(initial);
+    const res = mockRes();
+    getRouteHandler(router, 'put', '/events/:id')({ params: { id }, body }, res);
+    return { res, writes };
+  }
+
+  function seeded() {
+    const initial = emptySchedule();
+    initial.events = { ev1: { ...validEvent } };
+    return initial;
+  }
+
+  beforeEach(() => vi.restoreAllMocks());
+
+  it('accepts the payload the client actually sends', () => {
+    // bindAddEventButton posts <input type="date"> and two <input type="time">.
+    const { res, writes } = postEvent({
+      date: '2026-08-20', startTime: '20:00', endTime: '23:00',
+      playlistId: null, videoPlaylistId: null, label: 'Guest DJ',
+    });
+
+    expect(res.statusCode).toBe(200);
+    expect(res.body).toMatchObject({ date: '2026-08-20', startTime: '20:00', endTime: '23:00', priority: 10 });
+    expect(Object.values(writes[0].events)[0]).toMatchObject({ date: '2026-08-20' });
+  });
+
+  it('refuses a time that getNextSlot could not parse — the silent-skip case', () => {
+    // getNextSlot builds new Date(date + 'T' + startTime + ':00'). 'evening'
+    // makes that an Invalid Date, the minutes-until-start become NaN, and
+    // `NaN < nearestMinutes` is false — so the event is passed over on every
+    // pass, forever, while still appearing in the events list.
+    const { res, writes } = postEvent({ date: '2026-08-20', startTime: 'evening', endTime: '23:00' });
+
+    expect(res.statusCode).toBe(400);
+    expect(res.body.error).toBe('startTime must be HH:MM (24-hour)');
+    expect(writes).toHaveLength(0);
+  });
+
+  it('refuses a date that is not YYYY-MM-DD', () => {
+    for (const bad of ['20-08-2026', '2026/08/20', 'tomorrow', 20260820]) {
+      const { res, writes } = postEvent({ date: bad, startTime: '20:00', endTime: '23:00' });
+      expect(res.statusCode).toBe(400);
+      expect(res.body.error).toBe('date must be YYYY-MM-DD');
+      expect(writes).toHaveLength(0);
+    }
+  });
+
+  it('refuses a well-shaped date that is not a real calendar day', () => {
+    // Date rolls '2026-02-30' forward to March 1, so this would have been
+    // accepted and then silently fired a day the caller never asked for.
+    const { res, writes } = postEvent({ date: '2026-02-30', startTime: '20:00', endTime: '23:00' });
+
+    expect(res.statusCode).toBe(400);
+    expect(res.body.error).toBe('date must be YYYY-MM-DD');
+    expect(writes).toHaveLength(0);
+  });
+
+  it('accepts a real leap day', () => {
+    const { res } = postEvent({ date: '2028-02-29', startTime: '20:00', endTime: '23:00' });
+    expect(res.statusCode).toBe(200);
+  });
+
+  it('refuses a non-numeric priority, which would make the event sort meaningless', () => {
+    const { res, writes } = postEvent({ date: '2026-08-20', startTime: '20:00', endTime: '23:00', priority: 'high' });
+
+    expect(res.statusCode).toBe(400);
+    expect(res.body.error).toBe('priority must be a number');
+    expect(writes).toHaveLength(0);
+  });
+
+  it('still 400s on the pre-existing required-fields check', () => {
+    const { res, writes } = postEvent({ date: '2026-08-20', endTime: '23:00' });
+
+    expect(res.statusCode).toBe(400);
+    expect(res.body.error).toBe('date, startTime, endTime required');
+    expect(writes).toHaveLength(0);
+  });
+
+  it('PUT still applies a valid partial edit', () => {
+    const { res, writes } = putEvent(seeded(), 'ev1', { label: 'Renamed' });
+
+    expect(res.statusCode).toBe(200);
+    expect(res.body).toMatchObject({ label: 'Renamed', date: '2026-08-20' });
+    expect(writes[0].events.ev1.label).toBe('Renamed');
+  });
+
+  it('PUT refuses a null startTime instead of overwriting a good one', () => {
+    const { res, writes } = putEvent(seeded(), 'ev1', { startTime: null });
+
+    expect(res.statusCode).toBe(400);
+    expect(res.body.error).toBe('startTime must be HH:MM (24-hour)');
+    expect(writes).toHaveLength(0);
+  });
+
+  it('PUT validates the merged result, so a broken stored event cannot ride along', () => {
+    const initial = emptySchedule();
+    initial.events = { ev1: { id: 'ev1', date: 'someday', startTime: '20:00', endTime: '23:00' } };
+    const { res, writes } = putEvent(initial, 'ev1', { label: 'still broken' });
+
+    expect(res.statusCode).toBe(400);
+    expect(res.body.error).toBe('date must be YYYY-MM-DD');
+    expect(writes).toHaveLength(0);
+  });
+
+  it('PUT on an unknown id still 404s before validation', () => {
+    const { res } = putEvent(emptySchedule(), 'nope', { date: 'nonsense' });
+    expect(res.statusCode).toBe(404);
+  });
+});

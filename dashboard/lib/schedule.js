@@ -434,6 +434,35 @@ function slotFieldError(slot) {
   return null;
 }
 
+// One-time events carry a date as well. A malformed one does not throw the way
+// a malformed weekly slot does — it goes quiet instead. getNextSlot builds
+// `new Date(ev.date + 'T' + ev.startTime + ':00')`, and an unparseable pair
+// yields NaN minutes; `NaN < nearestMinutes` is false, so the event is skipped
+// on every pass forever. It sits in the events list looking scheduled and never
+// fires, which is harder to notice than a blank grid.
+const EVENT_DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
+
+// Calendar-valid, not merely well-shaped: Date rolls 2026-02-30 forward to
+// March 1, so an impossible date would quietly schedule a different day.
+function isCalendarDate(value) {
+  if (typeof value !== 'string' || !EVENT_DATE_RE.test(value)) return false;
+  const parsed = new Date(value + 'T00:00:00Z');
+  return !Number.isNaN(parsed.getTime()) && parsed.toISOString().slice(0, 10) === value;
+}
+
+function eventFieldError(ev) {
+  if (!isCalendarDate(ev.date)) return 'date must be YYYY-MM-DD';
+  if (!SLOT_TIME_RE.test(ev.startTime)) return 'startTime must be HH:MM (24-hour)';
+  if (!SLOT_TIME_RE.test(ev.endTime)) return 'endTime must be HH:MM (24-hour)';
+  // Events are sorted by `(a.priority || 10) - (b.priority || 10)`; a
+  // non-number makes that difference NaN and the ordering meaningless.
+  if (ev.priority !== undefined && ev.priority !== null
+      && (typeof ev.priority !== 'number' || !Number.isFinite(ev.priority))) {
+    return 'priority must be a number';
+  }
+  return null;
+}
+
 const SETTINGS_TYPES = {
   timezone: (v) => typeof v === 'string',
   defaultPlaylistId: (v) => v === null || typeof v === 'string',
@@ -578,10 +607,13 @@ function createScheduleRouter() {
 
   // POST /api/schedule/events — add one-time event
   router.post('/events', (req, res) => {
-    const { date, startTime, endTime, playlistId, videoPlaylistId, label, priority } = req.body;
+    const { date, startTime, endTime, playlistId, videoPlaylistId, label, priority } = req.body || {};
     if (!date || !startTime || !endTime) {
       return res.status(400).json({ error: 'date, startTime, endTime required' });
     }
+    const fieldError = eventFieldError({ date, startTime, endTime, priority });
+    if (fieldError) return res.status(400).json({ error: fieldError });
+
     const data = loadSchedule();
     const id = 'ev_' + Date.now();
     data.events[id] = { id, date, startTime, endTime, playlistId: playlistId || null, videoPlaylistId: videoPlaylistId || null, label: label || '', priority: priority || 10 };
@@ -595,9 +627,17 @@ function createScheduleRouter() {
     const ev = data.events[req.params.id];
     if (!ev) return res.status(404).json({ error: 'not found' });
     const ALLOWED_FIELDS = ["date", "startTime", "endTime", "playlistId", "videoPlaylistId", "label", "priority"];
+    const body = req.body || {};
+    const merged = { ...ev };
     for (const key of ALLOWED_FIELDS) {
-      if (req.body[key] !== undefined) ev[key] = req.body[key];
+      if (body[key] !== undefined) merged[key] = body[key];
     }
+    // The merged result is what gets stored, so it is what gets validated —
+    // same rule as the weekly slots.
+    const fieldError = eventFieldError(merged);
+    if (fieldError) return res.status(400).json({ error: fieldError });
+    Object.assign(ev, merged);
+
     saveSchedule(data);
     res.json(ev);
   });
