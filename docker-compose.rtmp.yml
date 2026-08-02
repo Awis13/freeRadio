@@ -9,10 +9,15 @@ services:
     volumes:
       - ./configs/nginx/rtmp.conf:/etc/nginx/nginx.conf
     # Unlike the ingest container this config DOES declare an http server on 80
-    # (rtmp.conf), so an HTTP probe is meaningful here. busybox wget verified
-    # present in the image.
+    # (rtmp.conf), so an HTTP probe is meaningful here — but it has to be /stat,
+    # not /. The server's root (/www/static) ships crossdomain.xml, player.html
+    # and stat.xsl and no index, and there is no `index` directive, so / is a
+    # permanent 403 and busybox wget exits non-zero on it: the healthcheck would
+    # have reported this container unhealthy forever. Live-probed in the
+    # container with rtmp.conf mounted: / -> 403, /stat -> 200. /stat also
+    # exercises rtmp_stat, so it fails if the rtmp module is not actually up.
     healthcheck:
-      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:80/"]
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:80/stat"]
       interval: 30s
       timeout: 5s
       retries: 3

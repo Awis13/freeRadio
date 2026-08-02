@@ -1,4 +1,9 @@
-FROM node:24-alpine
+# Pinned 2026-08-02: 'node:24-alpine' is a moving tag that today resolves to the
+# same image as 24.18.1-alpine3.24 (identical layer set, pushed 2026-07-30 —
+# the v24.18.1 a container off this tag reports). This is the base of the only
+# image we build, so leaving it floating meant every rebuild could change the
+# runtime under a lockfile-pinned dependency tree.
+FROM node:24.18.1-alpine3.24
 
 RUN apk add --no-cache ffmpeg su-exec
 
