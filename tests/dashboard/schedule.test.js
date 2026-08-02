@@ -1361,3 +1361,165 @@ describe('createScheduleRouter — one-time event write validation', () => {
     expect(res.statusCode).toBe(404);
   });
 });
+
+// ─── Read-side guards (legacy malformed records already on disk) ──────────────
+//
+// The write edge cannot vouch for a file that predates it, was hand-edited, or
+// came back from an older backup. These pin the readers refusing to be taken
+// down by one such record: they skip it and serve the rest.
+
+describe('readers skip unparseable stored records', () => {
+  const { createScheduleRouter } = mod;
+  const { getCurrentSlot, getNextSlot, slotsOverlap } = mod._test;
+
+  // Parseable JSON, unparseable content: exactly what an old file looks like.
+  const BROKEN_SLOT = { id: 'ws_bad', day: 1, startTime: null, endTime: '12:00' };
+  const GOOD_SLOT = { id: 'ws_ok', day: 1, startTime: '10:00', endTime: '11:00' };
+  const BROKEN_EVENT = { id: 'ev_bad', date: 'someday', startTime: '20:00', endTime: '23:00' };
+
+  function scheduleWith(overrides) {
+    const data = emptySchedule();
+    Object.assign(data, overrides);
+    return data;
+  }
+
+  function harness(initial) {
+    const writes = [];
+    vi.spyOn(fs, 'existsSync').mockReturnValue(true);
+    vi.spyOn(fs, 'readFileSync').mockReturnValue(JSON.stringify(initial));
+    vi.spyOn(fs, 'writeFileSync').mockImplementation((f, d) => { writes.push(JSON.parse(d)); });
+    vi.spyOn(fs, 'renameSync').mockImplementation(() => {});
+    vi.spyOn(fs, 'mkdirSync').mockImplementation(() => {});
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+    return { router: createScheduleRouter(), writes };
+  }
+
+  beforeEach(() => vi.restoreAllMocks());
+
+  it('getCurrentSlot does not match a malformed weekly slot', () => {
+    // Worth being precise about which readers actually threw, because
+    // getCurrentSlot is NOT one of them: it reaches the times through
+    // isTimeInRange, which only compares them, so a null startTime silently
+    // fails to match rather than raising. The throwers are getNextSlot (which
+    // splits) and slotsOverlap (via toMinutes). Filtering here buys consistency
+    // and the skip report, not a crash fix — the report is what the log pins
+    // below discriminate on.
+    //
+    // The slot carries TODAY's weekday so the reader genuinely reaches its
+    // times; with any other day the `ws.day === weekday` test short-circuits
+    // first and the case proves nothing.
+    const { weekday } = getNowInTimezone('UTC');
+    const data = scheduleWith({ weekly: { ws_bad: { ...BROKEN_SLOT, day: weekday } } });
+    data.settings.timezone = 'UTC';
+    mockScheduleFile(data);
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+
+    expect(() => getCurrentSlot()).not.toThrow();
+    expect(getCurrentSlot().source).toBe('default');
+  });
+
+  it('a malformed slot does not hide a good one that IS active', () => {
+    const { weekday, timeStr } = getNowInTimezone('UTC');
+    const [h] = timeStr.split(':').map(Number);
+    const data = scheduleWith({
+      weekly: {
+        ws_bad: { ...BROKEN_SLOT, day: weekday },
+        ws_ok: {
+          id: 'ws_ok', day: weekday,
+          startTime: String(Math.max(0, h - 1)).padStart(2, '0') + ':00',
+          endTime: String(Math.min(23, h + 1)).padStart(2, '0') + ':00',
+          playlistId: 'pl-good',
+        },
+      },
+    });
+    // The one-hour window collapses at the very top of the day; skip rather than
+    // assert something the clock makes impossible.
+    if (h === 0 || h === 23) return;
+    data.settings.timezone = 'UTC';
+    mockScheduleFile(data);
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+
+    const slot = getCurrentSlot();
+    expect(slot.source).toBe('weekly');
+    expect(slot.slotId).toBe('ws_ok');
+  });
+
+  it('getNextSlot survives malformed weekly slots and events', () => {
+    mockScheduleFile(scheduleWith({
+      weekly: { ws_bad: { ...BROKEN_SLOT } },
+      events: { ev_bad: { ...BROKEN_EVENT } },
+    }));
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+
+    expect(() => getNextSlot()).not.toThrow();
+    expect(getNextSlot()).toBeNull();
+  });
+
+  it('slotsOverlap reports no overlap for an unparseable slot rather than throwing', () => {
+    expect(() => slotsOverlap(GOOD_SLOT, BROKEN_SLOT)).not.toThrow();
+    expect(slotsOverlap(GOOD_SLOT, BROKEN_SLOT)).toBe(false);
+    expect(slotsOverlap(BROKEN_SLOT, GOOD_SLOT)).toBe(false);
+  });
+
+  it('GET /current answers 200 with the bad slot skipped', () => {
+    const { router } = harness(scheduleWith({ weekly: { ws_bad: { ...BROKEN_SLOT } } }));
+    const res = mockRes();
+    getRouteHandler(router, 'get', '/current')({}, res);
+
+    expect(res.statusCode).toBe(200);
+    expect(res.body.source).toBe('default');
+  });
+
+  it('POST of a VALID slot succeeds even with a broken record in the same file', () => {
+    // The overlap check walks every stored slot, so before the guard this
+    // request died on someone else's bad data.
+    const { router, writes } = harness(scheduleWith({ weekly: { ws_bad: { ...BROKEN_SLOT } } }));
+    const res = mockRes();
+    getRouteHandler(router, 'post', '/weekly')(
+      { body: { day: 3, startTime: '09:00', endTime: '10:00' } }, res);
+
+    expect(res.statusCode).toBe(200);
+    expect(res.body).toMatchObject({ day: 3, startTime: '09:00' });
+    // The broken record is preserved, not silently dropped by the write.
+    expect(writes[0].weekly.ws_bad).toMatchObject({ id: 'ws_bad' });
+  });
+
+  it('GET / still lists the broken record verbatim', () => {
+    // Filtering the listing would hide the thing an operator has to fix.
+    const { router } = harness(scheduleWith({ weekly: { ws_bad: { ...BROKEN_SLOT } } }));
+    const res = mockRes();
+    getRouteHandler(router, 'get', '/')({}, res);
+
+    expect(res.statusCode).toBe(200);
+    expect(res.body.weekly.ws_bad).toMatchObject({ id: 'ws_bad', startTime: null });
+  });
+
+  it('reports the skip once per pass, not once per record', () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    mockScheduleFile(scheduleWith({
+      weekly: {
+        a: { id: 'a', day: 1, startTime: null, endTime: '12:00' },
+        b: { id: 'b', day: 1, startTime: 'noon', endTime: '12:00' },
+      },
+    }));
+
+    getCurrentSlot();
+
+    expect(warn).toHaveBeenCalledTimes(1);
+    expect(warn.mock.calls[0][0]).toContain('skipping 2 unparseable weekly slots');
+    expect(warn.mock.calls[0][0]).toContain('a, b');
+  });
+
+  it('does not reprint the same complaint on every executor tick', () => {
+    // getCurrentSlot runs on a 30s tick; an unconditional per-pass line would
+    // be the same log-noise problem the track-poller had.
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    mockScheduleFile(scheduleWith({ weekly: { ws_bad: { ...BROKEN_SLOT } } }));
+
+    getCurrentSlot();
+    getCurrentSlot();
+    getCurrentSlot();
+
+    expect(warn).toHaveBeenCalledTimes(1);
+  });
+});
