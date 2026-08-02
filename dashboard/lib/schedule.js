@@ -60,16 +60,27 @@ function isUsableEvent(ev) {
     && SLOT_TIME_RE.test(ev.endTime);
 }
 
-// One line per pass rather than one per record, and only when the situation
-// changes. getCurrentSlot runs on a 30s executor tick, so an unconditional
-// per-pass line would reprint the same complaint twice a minute forever.
-let lastSkipReport = '';
+// One line per pass per KIND rather than one per record, and only when that
+// kind's situation changes. getCurrentSlot runs on a 30s executor tick, so an
+// unconditional per-pass line would reprint the same complaint twice a minute
+// forever.
+//
+// Keyed by kind because weekly slots and events are reported separately: with a
+// single shared memo the two overwrote each other, so a file with both kinds
+// broken re-logged BOTH lines on every pass — the exact noise the memo exists
+// to prevent, and only in the case where it mattered most.
+const lastSkipReport = new Map();
 
 function reportSkipped(kind, ids) {
-  if (ids.length === 0) return;
+  // A clean pass forgets that kind, so a fault returning after a repair is
+  // reported again instead of being silenced by the memory of the old one.
+  if (ids.length === 0) {
+    lastSkipReport.delete(kind);
+    return;
+  }
   const message = `[schedule] skipping ${ids.length} unparseable ${kind}: ${ids.join(', ')}`;
-  if (message === lastSkipReport) return;
-  lastSkipReport = message;
+  if (lastSkipReport.get(kind) === message) return;
+  lastSkipReport.set(kind, message);
   console.warn(message);
 }
 
@@ -77,9 +88,8 @@ function reportSkipped(kind, ids) {
 function usableWeekly(data) {
   const all = Object.values(data.weekly || {});
   const usable = all.filter(isUsableSlot);
-  if (usable.length !== all.length) {
-    reportSkipped('weekly slots', all.filter((ws) => !isUsableSlot(ws)).map((ws) => (ws && ws.id) || '?'));
-  }
+  // Called even when nothing is skipped — that is what clears the memo.
+  reportSkipped('weekly slots', all.filter((ws) => !isUsableSlot(ws)).map((ws) => (ws && ws.id) || '?'));
   return usable;
 }
 
@@ -87,9 +97,7 @@ function usableWeekly(data) {
 function usableEvents(data) {
   const all = Object.values(data.events || {});
   const usable = all.filter(isUsableEvent);
-  if (usable.length !== all.length) {
-    reportSkipped('events', all.filter((ev) => !isUsableEvent(ev)).map((ev) => (ev && ev.id) || '?'));
-  }
+  reportSkipped('events', all.filter((ev) => !isUsableEvent(ev)).map((ev) => (ev && ev.id) || '?'));
   return usable;
 }
 
@@ -738,6 +746,10 @@ module.exports = { createScheduleRouter, startExecutor, onTrackChange, getCurren
 
 // Export internal functions for unit tests
 module.exports._test = {
+  // The skip-report memo is module-level and deliberately survives calls, so a
+  // test that asserts on logging has to clear it or it inherits whatever an
+  // earlier test in the same file left behind.
+  _resetSkipReports: () => lastSkipReport.clear(),
   isTimeInRange, slotsOverlap, getNowInTimezone, getCurrentSlot,
   getNextSlot, cleanupPastEvents, prevDate, loadSchedule, saveSchedule,
   executeScheduleTick, startExecutor
