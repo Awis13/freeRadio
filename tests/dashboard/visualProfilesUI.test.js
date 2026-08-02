@@ -329,6 +329,55 @@ describe('visual-profiles UI characterization (window.FRVisualProfiles)', () => 
       expect(grid.querySelector('.grid-load-failed')).toBeTruthy();
     });
 
+    it('an IN-FLIGHT load leaves no clickable tile from the previous profile', async () => {
+      // ADDED IN THE TRACK-CLOSE HOTFIX. The failure paths were covered; the
+      // window BEFORE resolution was not. The title is written synchronously,
+      // so between navigating to a profile and its videos arriving the panel
+      // said "Second" while still showing First's tiles — each wired to p1.
+      // A click in that window saved into the profile the user had left.
+      const { win, doc, vp } = boot();
+      const stub = withFetch(win, [
+        routeExact('GET', '/api/visuals', [{ name: 'a.mp4', size: 10 }]),
+      ]);
+      vp.renderVisualProfileDetail({ id: 'p1', name: 'First', videos: ['a.mp4'] });
+      await flush(10);
+      expect(doc.getElementById('vp-video-grid').querySelectorAll('.video-tile').length).toBe(1);
+
+      // Second render whose fetch never settles — the in-flight state, held.
+      win.fetch = () => new Promise(() => {});
+      vp.renderVisualProfileDetail({ id: 'p2', name: 'Second', videos: [] });
+      await flush(10);
+
+      const grid = doc.getElementById('vp-video-grid');
+      expect(doc.getElementById('vp-detail-title').textContent).toBe('Second');
+      expect(grid.querySelectorAll('.video-tile').length).toBe(0);
+
+      // Nothing left to click means nothing can PUT, least of all into p1.
+      stub.calls.length = 0;
+      grid.querySelectorAll('*').forEach((el) => { if (el.onclick) el.onclick(); });
+      await flush(10);
+      expect(stub.calls.filter((c) => c.method === 'PUT').length).toBe(0);
+    });
+
+    it('navigating on clears a failure box left by the previous profile', async () => {
+      // The retry button in a failure box closes over the profile that failed.
+      // Left standing while a third profile loads, it offers to re-render the
+      // wrong one under the new title.
+      const { win, doc, vp } = boot();
+      win.fetch = () => Promise.reject(new Error('offline'));
+      vp.renderVisualProfileDetail({ id: 'p2', name: 'Second', videos: [] });
+      await flush(10);
+      const grid = doc.getElementById('vp-video-grid');
+      expect(grid.querySelector('.grid-load-failed')).toBeTruthy();
+
+      win.fetch = () => new Promise(() => {});
+      vp.renderVisualProfileDetail({ id: 'p3', name: 'Third', videos: [] });
+      await flush(10);
+
+      expect(doc.getElementById('vp-detail-title').textContent).toBe('Third');
+      expect(grid.querySelector('.grid-load-failed')).toBeNull();
+    });
+
     it('a failed render cannot leave a tile that saves into the PREVIOUS profile', async () => {
       // The regression this contract exists to prevent: render A, then have
       // render B fail, then click whatever is left. Nothing clickable may

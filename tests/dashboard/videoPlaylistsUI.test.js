@@ -197,6 +197,51 @@ describe('video-playlists UI characterization (window.FRVideoPlaylists)', () => 
       expect(grid.querySelector('.grid-load-failed')).toBeTruthy();
     });
 
+    it('an IN-FLIGHT load leaves no clickable tile from the previous playlist', async () => {
+      // ADDED IN THE TRACK-CLOSE HOTFIX, same contract as the visual-profiles
+      // twin. The failure paths were pinned; the window before resolution was
+      // not. The title is written synchronously, so the panel read "Second"
+      // while First's tiles were still up and still wired to p1.
+      const { win, doc, vpl } = boot();
+      const stub = withFetch(win, [
+        routeExact('GET', '/api/visuals-processed', [{ name: 'b.mp4', size: 10 }]),
+      ]);
+      vpl.renderVideoPlaylistDetail({ id: 'p1', name: 'First', type: 'manual', tracks: ['b.mp4'] });
+      await flush(10);
+      expect(doc.getElementById('vpl-video-grid').querySelectorAll('.video-tile').length).toBe(1);
+
+      win.fetch = () => new Promise(() => {});
+      vpl.renderVideoPlaylistDetail({ id: 'p2', name: 'Second', type: 'manual', tracks: [] });
+      await flush(10);
+
+      const grid = doc.getElementById('vpl-video-grid');
+      expect(doc.getElementById('vpl-detail-title').textContent).toBe('Second');
+      expect(grid.querySelectorAll('.video-tile').length).toBe(0);
+
+      stub.calls.length = 0;
+      grid.querySelectorAll('*').forEach((el) => { if (el.onclick) el.onclick(); });
+      await flush(10);
+      expect(stub.calls.filter((c) => c.method === 'PUT').length).toBe(0);
+    });
+
+    it('navigating on clears a failure box left by the previous playlist', async () => {
+      // The retry button closes over the playlist that failed; left standing it
+      // offers to re-render the wrong one under the new title.
+      const { win, doc, vpl } = boot();
+      win.fetch = () => Promise.reject(new Error('offline'));
+      vpl.renderVideoPlaylistDetail({ id: 'p2', name: 'Second', type: 'manual', tracks: [] });
+      await flush(10);
+      const grid = doc.getElementById('vpl-video-grid');
+      expect(grid.querySelector('.grid-load-failed')).toBeTruthy();
+
+      win.fetch = () => new Promise(() => {});
+      vpl.renderVideoPlaylistDetail({ id: 'p3', name: 'Third', type: 'manual', tracks: [] });
+      await flush(10);
+
+      expect(doc.getElementById('vpl-detail-title').textContent).toBe('Third');
+      expect(grid.querySelector('.grid-load-failed')).toBeNull();
+    });
+
     it('a failed render cannot leave a tile that saves into the PREVIOUS playlist', async () => {
       const { win, doc, vpl } = boot();
       const stub = withFetch(win, [
