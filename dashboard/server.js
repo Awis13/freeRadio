@@ -120,7 +120,7 @@ function getInitState() {
   };
 }
 
-const wss = setupWs(server, null, getInitState);
+setupWs(server, getInitState);
 
 // --- Middleware ---
 app.use((req, res, next) => {
@@ -277,7 +277,7 @@ if (process.env.NODE_ENV !== 'test') {
     try {
     const tlsOpts = { cert: fs.readFileSync(TLS_CERT), key: fs.readFileSync(TLS_KEY) };
     const tlsServer = https.createServer(tlsOpts, app);
-    setupTlsWs(tlsServer, null, getInitState, wss);
+    setupTlsWs(tlsServer, getInitState);
     tlsServer.listen(TLS_PORT, '0.0.0.0', () => {
       console.log(`[dashboard] https://0.0.0.0:${TLS_PORT}`);
     });
