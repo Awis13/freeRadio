@@ -2,23 +2,23 @@
  * tests/dashboard/notifyUI.test.js
  *
  * Characterization pins for the logging + error-toast ("notify") cluster, which
- * currently lives inline in the app.js IIFE and is slated for extraction into
- * dashboard/public/notify.js (window.FRNotify). These tests pin the AS-IS
+ * now lives in dashboard/public/notify.js (window.FRNotify). These tests pin the
+ * AS-IS
  * observable contract of two co-located DOM fan-out primitives:
  *
  *   - log(msg)        in-page ring-buffer logger -> #log debug console
  *   - showError(msg)  transient #error-banner toast (auto-hide after 5000ms)
  *   plus the #dbg-clear / #dbg-pause control buttons.
  *
- * They were authored in C1 against the code in app.js (driven via the
- * window.__appNotify hook + the REAL #dbg-clear / #dbg-pause buttons) and will
- * be re-pointed in C2 to window.FRNotify, with assertions UNCHANGED to prove
- * behavioural equivalence.
+ * They were authored against the code while it was inline in app.js (driven via
+ * the window.__appNotify hook + the REAL #dbg-clear / #dbg-pause buttons) and
+ * re-pointed to window.FRNotify with assertions UNCHANGED, which is what makes
+ * them an equivalence proof for the extraction.
  *
  * This cluster is PURE DOM (zero fetch): the only backend control needed is
  * vi fake timers for showError's 5000ms auto-hide setTimeout.
  *
- * AS-IS facts pinned (app.js:195-221):
+ * AS-IS facts pinned:
  *   - ring-buffer cap is exactly 500 (logs.length > 500 -> logs.shift()).
  *   - each entry is prefixed '[HH:MM:SS.mmm] ' (ISO time, slice(11,23)).
  *   - #log textContent === logs.join('\n') ONLY when not paused.

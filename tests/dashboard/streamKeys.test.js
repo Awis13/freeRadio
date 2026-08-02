@@ -289,11 +289,11 @@ describe('setPlatform — tier platform limits', () => {
 // v1 legacy key file — data-loss chain characterization
 //
 // A pre-v2 keys file ('iv-less' 3-part format from crypto.createCipher) can no
-// longer be decrypted: on Node 22+ crypto.createDecipher does not exist
-// (TypeError), on Node 20 it exists (deprecated) but the GCM auth tag check
-// fails for data we cannot reproduce without createCipher. Both paths land in
-// decrypt()'s catch and return null — version-agnostic outcome: loadKeys()
-// silently returns {platforms:{}} and all v1 keys are invisible.
+// longer be decrypted. crypto.createDecipher was removed in Node 22, and this
+// project is Node 24 everywhere — engines >=24, CI on 24, the image on
+// node:24.18.1-alpine3.24 — so decryptLegacy() raises a TypeError before it
+// can attempt anything. It lands in decrypt()'s catch and returns null:
+// loadKeys() silently returns {platforms:{}} and all v1 keys are invisible.
 //
 // The next WRITE (any setPlatform/deletePlatform) then re-encrypts that empty
 // state as v2 and overwrites the v1 file — the original keys are permanently
@@ -323,11 +323,12 @@ describe('v1 legacy key file — data-loss chain', () => {
     expect(Object.keys(getPlatforms())).toEqual(['youtube']);
   });
 
-  // Note: crypto.createDecipher was removed in Node 22; dashboard/lib/streamKeys.js
-  // decryptLegacy() still calls it, so v1 records are undecryptable there even
-  // in principle. On Node 20 (Docker/CI) the function exists but is deprecated.
-  // Tracked as a known data-loss issue; the fix is a separate ticket. The chain
-  // tests above carry the real pin — both Node paths land in decrypt()'s catch.
+  // Note: dashboard/lib/streamKeys.js decryptLegacy() still calls
+  // crypto.createDecipher, which no longer exists on any Node this project
+  // supports — so v1 records are undecryptable in principle, not merely in
+  // practice. Recovering them would need a Node 20 runtime that the repo no
+  // longer runs anywhere. Tracked as a known data-loss issue; the fix is a
+  // separate ticket. The chain tests above carry the real pin.
 });
 
 // ---------------------------------------------------------------------------

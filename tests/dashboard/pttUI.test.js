@@ -1,15 +1,14 @@
 /**
  * tests/dashboard/pttUI.test.js
  *
- * Characterization pins for the push-to-talk (PTT) UI cluster, currently living
- * inside the app.js IIFE (DOM refs app.js:60-76, vars app.js:2240-2253 + 2523,
- * functions + bindings app.js:2255-2573). These tests pin the AS-IS observable
- * contract of the deterministic, jsdom-runnable PTT logic before the C2
- * extraction into dashboard/public/ptt.js (window.FRPtt).
+ * Characterization pins for the push-to-talk (PTT) UI cluster, which now lives in
+ * dashboard/public/ptt.js (window.FRPtt). These tests pin the AS-IS observable
+ * contract of the deterministic, jsdom-runnable PTT logic.
  *
- * They are authored in C1 against window.__appPtt (a test-only hook in the
- * bottom __APP_TEST__ guard of app.js) and will be re-pointed in C2 to
- * window.FRPtt with assertions UNCHANGED, proving behavioural equivalence.
+ * They were authored against window.__appPtt (a test-only hook in the bottom
+ * __APP_TEST__ guard of app.js, back when the cluster was inline there) and
+ * re-pointed to window.FRPtt with assertions UNCHANGED, proving behavioural
+ * equivalence.
  *
  * NOT pinned (cannot run in jsdom — getUserMedia/MediaRecorder/AudioContext/Audio):
  *   pttStartRecording, pttStopRecording, pttDown, pttUp, pttDrawWaveform,

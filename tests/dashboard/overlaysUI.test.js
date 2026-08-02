@@ -1,12 +1,12 @@
 /**
  * tests/dashboard/overlaysUI.test.js
  *
- * Characterization pins for the OVERLAYS config UI cluster, currently living in
- * the app.js IIFE (app.js:1320-1512). These tests pin the AS-IS observable
- * contract of the overlay domain functions. They are authored in C1 against the
- * code in app.js (driven via the window.__appOverlays test hook) and will be
- * re-pointed in C2 to the extracted module (window.FROverlays) with assertions
- * UNCHANGED to prove behavioural equivalence.
+ * Characterization pins for the OVERLAYS config UI cluster, which now lives in
+ * dashboard/public/overlays.js (window.FROverlays). They were authored against
+ * the code while it was still inline in the app.js IIFE, driven through the
+ * window.__appOverlays hook, and re-pointed to the module with the assertions
+ * UNCHANGED — which is what makes them an equivalence proof for the extraction
+ * rather than a fresh description of the module.
  *
  * This domain has NO init/dependency-injection surface in C1: window.__appOverlays
  * holds the REAL closure fns, which use the REAL deps (authFetch -> win.fetch,
