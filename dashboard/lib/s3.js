@@ -15,13 +15,21 @@ const S3_ENABLED = process.env.S3_ENABLED === 'true';
 
 let client = null;
 
-function defaultClientFactory() {
-  return new S3Client({
+// Split out of defaultClientFactory so the composition can be asserted without
+// constructing a client. The endpoint conditional is the part worth pinning:
+// S3_ENDPOINT is documented bare (host only) but is also routinely set with a
+// scheme, and the SDK rejects a bare host.
+function clientConfig() {
+  return {
     endpoint: S3_ENDPOINT.startsWith('http') ? S3_ENDPOINT : `https://${S3_ENDPOINT}`,
     region: S3_REGION,
     credentials: { accessKeyId: S3_ACCESS_KEY, secretAccessKey: S3_SECRET_KEY },
     forcePathStyle: true
-  });
+  };
+}
+
+function defaultClientFactory() {
+  return new S3Client(clientConfig());
 }
 
 let clientFactory = defaultClientFactory;
@@ -175,5 +183,9 @@ module.exports = {
   upload, uploadBuffer, download, list, remove, exists,
   ensureCached, syncDir, tenantKey,
   S3_ENABLED, TENANT_ID,
-  _setClientFactory
+  _setClientFactory,
+  // Surface used by the characterization tests to drive the module: the real
+  // client factory and the config it builds, neither of which production code
+  // reaches for by name (getClient calls the factory through clientFactory).
+  clientConfig, defaultClientFactory
 };

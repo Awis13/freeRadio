@@ -7,6 +7,7 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { createRequire } from 'module';
 import crypto from 'crypto';
+import { mockRes } from '../helpers.js';
 
 const require = createRequire(import.meta.url);
 const ssoModule = require('../../../dashboard/routes/sso');
@@ -28,16 +29,6 @@ function makeToken(payload, secret) {
 
 function nowTs() {
   return Math.floor(Date.now() / 1000);
-}
-
-function mockRes() {
-  const res = { statusCode: 200, body: null, redirectUrl: null, headers: {} };
-  res.status = (code) => { res.statusCode = code; return res; };
-  res.send = (html) => { res.body = html; return res; };
-  res.redirect = (url) => { res.redirectUrl = url; return res; };
-  res.set = (k, v) => { res.headers[k] = v; return res; };
-  res.setHeader = (k, v) => { res.headers[k] = v; return res; };
-  return res;
 }
 
 let origToken;
