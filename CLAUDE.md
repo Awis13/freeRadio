@@ -9,8 +9,10 @@ right — say so rather than working around it.
 
 ## Standing rules
 
-- **English only.** No Cyrillic anywhere in the repo — code, comments, commit
-  messages, test names. It is checked.
+- **English only.** No Cyrillic anywhere in the repo — code, comments, test
+  names. CI enforces it: the "No Cyrillic in tracked text files" step in
+  `.github/workflows/ci.yml` greps every tracked text file and fails the job on a
+  hit. Commit messages are not reachable by that grep, so those stay on you.
 - **Never run `npm install` inside `dashboard/`.** Dependencies resolve from the
   repo root; a `dashboard/node_modules` breaks module resolution in the suite and
   shadows the image's strict install (see `dashboard/.dockerignore`). Root
@@ -68,14 +70,17 @@ decide whether that was intended, and if it was, update the pin in the same
 commit with a comment saying why. Do not "fix" a pin to make a build green.
 
 - `appBoot.js` boots a jsdom window from the real `index.html` and returns
-  `{win, doc, warnings, close}`. Call `close()`; `closeAllWindows()` covers a file.
+  `{win, doc, loadError, warnings, close}`. Call `close()`; `closeAllWindows()`
+  covers a whole file.
 - `helpers/serverAgent.js` + supertest is the default for **new** router suites —
   it exercises the middleware the router actually runs behind. The older
   `mockRes`/`getRouteHandler` style calls handlers directly and is blind to
   composition; keep it for branch-level pinning on routers already covered
   end-to-end.
 - Coverage thresholds in `vitest.config.js` are **floors**, not targets. Totals
-  wobble by under a percent between runs on an unchanged tree; do not read that
+  are not stable run to run on an unchanged tree — a few async-timing-dependent
+  callbacks in small files swing the *functions* aggregate by around two points,
+  the others by less. Read the note above the thresholds before treating a dip
   as a regression.
 
 **Realm traps.** jsdom runs page code in its own realm, so `setTimeout`,

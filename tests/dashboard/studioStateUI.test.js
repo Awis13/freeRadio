@@ -1,13 +1,13 @@
 /**
  * tests/dashboard/studioStateUI.test.js
  *
- * Characterization pins for the studio/interaction state getter FACADE, currently
- * living inside the app.js IIFE (app.js ~38 and ~250). These pin the AS-IS
- * observable contract of the two read-only getters BEFORE any consumer is
- * re-sourced (this is C1 of the core facade-foundation PR, mirroring
- * audioFacadeUI.test.js for the WebAudio graph getters). They must stay green
- * after the consumers are rerouted through these getters, to prove zero behaviour
- * change.
+ * Characterization pins for the studio/interaction state getter FACADE. Unlike the
+ * clusters that were extracted into their own modules, this one genuinely still
+ * lives in the app.js IIFE — studioPlayer and userInteracted are part of the
+ * substrate app.js kept, and the modules receive them as injected deps. These
+ * pin the AS-IS observable contract of the two read-only getters, and have
+ * stayed green while consumers were rerouted through them, proving that
+ * rerouting changed no behaviour.
  *
  * The two closure handles — studioPlayer and userInteracted — are unreachable
  * from a test, so they are exposed via the guarded window.__appStudio hook

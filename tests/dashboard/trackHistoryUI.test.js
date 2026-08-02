@@ -1,12 +1,12 @@
 /**
  * tests/dashboard/trackHistoryUI.test.js
  *
- * Characterization pins for the track-history sidebar cluster, currently living
- * inside the app.js IIFE and exposed (C1) via the window.__APP_TEST__-guarded
- * window.__appTrackHistory hook. In C2 this cluster is extracted into
- * dashboard/public/trackhistory.js (window.FRTrackHistory) and this file is
- * re-pointed to win.FRTrackHistory with assertions UNCHANGED, proving
- * behavioural equivalence.
+ * Characterization pins for the track-history sidebar cluster, which now lives in
+ * dashboard/public/trackhistory.js (window.FRTrackHistory). They were authored
+ * while the cluster was inline in the app.js IIFE, reached through the
+ * window.__APP_TEST__-guarded window.__appTrackHistory hook, then re-pointed to
+ * win.FRTrackHistory with assertions UNCHANGED, proving behavioural
+ * equivalence.
  *
  * The cluster owns ZERO state. Two functions:
  *   - loadTrackHistory()        GET /api/history?limit=10 -> renderTrackHistory

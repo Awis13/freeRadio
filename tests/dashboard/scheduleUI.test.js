@@ -1,14 +1,14 @@
 /**
  * tests/dashboard/scheduleUI.test.js
  *
- * Characterization pins for the SCHEDULE UI domain, currently living inside the
- * app.js IIFE (app.js ~1264-1498). These tests pin the AS-IS observable contract
- * of the schedule functions BEFORE any code moves (this is C1 of a 2-commit
- * extraction PR). C2 will extract the domain into dashboard/public/schedule.js
- * (window.FRSchedule); these pins must stay green there to prove equivalence.
+ * Characterization pins for the SCHEDULE UI domain, which now lives in
+ * dashboard/public/schedule.js (window.FRSchedule). These tests pin the AS-IS
+ * observable contract of the schedule functions; they were authored before the
+ * code moved out of the app.js IIFE and have stayed green across the move, which
+ * is what proves the extraction equivalent.
  *
- * The domain has NO init/dependency-injection surface: window.__appSchedule holds
- * the REAL closure fns, which use the REAL deps (authFetch -> win.fetch, log,
+ * The domain has NO init/dependency-injection surface: the hook held the
+ * REAL closure fns, which use the REAL deps (authFetch -> win.fetch, log,
  * showError, escapeHtml/pad from FRUtils, FRPlaylists.loadForSelect,
  * openGenericModal/closeGenericModal). The only backend control is replacing the
  * boot's never-resolving win.fetch with a recording makeFetchStub AFTER boot,

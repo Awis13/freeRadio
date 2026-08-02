@@ -1,13 +1,13 @@
 /**
  * tests/dashboard/genericModalUI.test.js
  *
- * Characterization pins for the generic-modal UI cluster, currently living inside
- * the app.js IIFE closure (openGenericModal / window.closeGenericModal / the
- * #generic-modal-save + backdrop onclick wiring / the genericModalCallback state).
- * These tests pin the AS-IS observable contract; they were authored in C1 against
- * the code in app.js and will be re-pointed in C2 to the extracted
- * dashboard/public/genericModal.js (window.FRGenericModal) with assertions
- * unchanged, to prove behavioural equivalence.
+ * Characterization pins for the generic-modal UI cluster — openGenericModal,
+ * window.closeGenericModal, the #generic-modal-save + backdrop onclick wiring and
+ * the genericModalCallback state — which now lives in
+ * dashboard/public/genericModal.js (window.FRGenericModal). These tests pin the
+ * AS-IS observable contract; they were authored against the code while it was
+ * inline in the app.js IIFE and re-pointed to the module with assertions
+ * unchanged, which is what makes them an equivalence proof.
  *
  * The cluster is pure DOM — no fetch / WebSocket / timer. So there is no backend
  * to control: tests boot the window, grab the hook, drive openGenericModal /

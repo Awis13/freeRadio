@@ -1,17 +1,16 @@
 /**
  * tests/dashboard/audioFacadeUI.test.js
  *
- * Characterization pins for the WebAudio graph getter FACADE, currently living
- * inside the app.js IIFE (app.js ~2541-2560). These pin the AS-IS observable
- * contract of the five read-only graph getters BEFORE any consumer is
- * re-sourced (this is C1 of the core facade-foundation PR, mirroring the
- * wsReconnectUI getWs/setWs pins). They must stay green after the consumers are
- * rerouted through these getters, to prove zero behaviour change.
+ * Characterization pins for the WebAudio graph getter FACADE. The graph itself
+ * now lives in dashboard/public/analyzer.js, with mixer.js as its other
+ * consumer; these pins were authored while it was inline in the app.js IIFE and
+ * have stayed green across the move, which is what proves the facade changed no
+ * behaviour.
  *
- * The five closure handles — azAudioCtx, azGainNode, azMain, azL, azR — are
- * unreachable from a test, so they are exposed via the guarded
- * window.__appAudio hook (app.js inside the existing `if (window.__APP_TEST__)`
- * block, after __appWs; inert in production).
+ * The five graph handles — azAudioCtx, azGainNode, azMain, azL, azR — are
+ * unreachable from a test, so they are read through the guarded
+ * window.__appAudio hook, which app.js still publishes inside its
+ * `if (window.__APP_TEST__)` block; inert in production.
  *
  * IDENTITY-to-null equivalence proof: on boot in jsdom azInit (the sole writer
  * of azAudioCtx/azGainNode, which also feeds azInitAnalysers) is NEVER called —
