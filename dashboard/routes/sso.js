@@ -4,11 +4,19 @@
  * SSO endpoint for signed token authentication from the control plane.
  * GET /auth/sso?token=base64url(payload):base64url(signature)
  *
- * payload = "userID:tenantID:unixTimestamp"
- * signature = HMAC-SHA256(payload, DASHBOARD_TOKEN)
+ * The token is a CP-4 assertion signed by the control plane with Ed25519:
  *
- * On successful verification — stores DASHBOARD_TOKEN in localStorage
- * (same mechanism as manual token entry) and redirects to /.
+ *   payload = "v1|<userID>|<tenantID>|<tier>|<issuedUnix>|<expiresUnix>|<issuer>|<audience>"
+ *   signature = Ed25519(payload, controlplane private key)
+ *
+ * The control plane's public key is provided to the tenant as SSO_PUBLIC_KEY
+ * (hex-encoded 32-byte Ed25519 public key); TENANT_ID is the audience this
+ * instance will accept. Verification is done with Node's crypto.verify against
+ * that public key — the browser never holds the signing key, so a tenant owner
+ * cannot self-sign a tier upgrade.
+ *
+ * On successful verification — stores DASHBOARD_TOKEN in localStorage (same
+ * mechanism as manual token entry) and redirects to /.
  */
 
 const crypto = require('crypto');
@@ -16,6 +24,13 @@ const tierLimits = require('../lib/tierLimits');
 const authGate = require('../lib/authGate');
 
 const SSO_MAX_AGE_SECONDS = 60;
+const SSO_VERSION = 'v1';
+const SSO_ISSUER = 'controlplane';
+
+// DER SPKI prefix for an Ed25519 public key (AlgorithmIdentifier + BIT STRING
+// header). Prepending it to the raw 32-byte key yields a valid SPKI structure
+// that crypto.createPublicKey can parse.
+const ED25519_SPKI_PREFIX = Buffer.from('302a300506032b6570032100', 'hex');
 
 // --- HTML pages for SSO ---
 
@@ -55,16 +70,46 @@ function ssoSuccessPage(token, tier) {
 </body></html>`;
 }
 
+// --- SSO public key loading ---
+
+/**
+ * Build the control plane's Ed25519 public key from SSO_PUBLIC_KEY (hex-encoded
+ * 32-byte raw key). Returns null when the key is missing or malformed — the
+ * caller must treat that as "SSO unavailable", never as "open auth".
+ */
+function loadPublicKey() {
+  const hex = process.env.SSO_PUBLIC_KEY;
+  if (!hex) return null;
+  const raw = Buffer.from(hex, 'hex');
+  if (raw.length !== 32) return null;
+  try {
+    const der = Buffer.concat([ED25519_SPKI_PREFIX, raw]);
+    return crypto.createPublicKey({ key: der, format: 'der', type: 'spki' });
+  } catch (e) {
+    return null;
+  }
+}
+
 // --- SSO token verification ---
 
-function verifySsoToken(tokenParam, dashboardToken) {
+function verifySsoToken(tokenParam) {
   if (!tokenParam) {
     return { error: 'Missing token parameter', status: 400 };
   }
 
+  const publicKey = loadPublicKey();
+  if (!publicKey) {
+    return { error: 'SSO is not configured (SSO_PUBLIC_KEY missing or invalid)', status: 503 };
+  }
+
+  const tenantID = process.env.TENANT_ID;
+  if (!tenantID) {
+    return { error: 'SSO is not configured (TENANT_ID missing)', status: 503 };
+  }
+
   // Format: base64url(payload):base64url(signature)
-  // payload contains colons (userID:tenantID:timestamp),
-  // so we split by the LAST colon
+  // The payload contains no colons (it is '|'-separated), but split by the last
+  // colon anyway to stay robust against any future field that does.
   const lastColon = tokenParam.lastIndexOf(':');
   if (lastColon <= 0) {
     return { error: 'Invalid token format', status: 400 };
@@ -80,47 +125,61 @@ function verifySsoToken(tokenParam, dashboardToken) {
   // Decode base64url
   let payload, signature;
   try {
-    payload = Buffer.from(payloadB64, 'base64url').toString('utf8');
+    payload = Buffer.from(payloadB64, 'base64url');
     signature = Buffer.from(signatureB64, 'base64url');
   } catch (e) {
     return { error: 'Invalid token encoding', status: 400 };
   }
 
-  // Verify HMAC-SHA256 signature
-  const expectedSig = crypto
-    .createHmac('sha256', dashboardToken)
-    .update(payload)
-    .digest();
-
-  if (signature.length !== expectedSig.length ||
-      !crypto.timingSafeEqual(signature, expectedSig)) {
+  // Verify the Ed25519 signature over the original payload bytes. A signature
+  // that fails to verify (or a malformed signature) is rejected outright — there
+  // is no fallback to any shared-secret scheme.
+  let valid;
+  try {
+    valid = crypto.verify(null, payload, publicKey, signature);
+  } catch (e) {
+    return { error: 'Invalid signature', status: 401 };
+  }
+  if (!valid) {
     return { error: 'Invalid signature', status: 401 };
   }
 
-  // Parse payload: userID:tenantID:tier:timestamp (or userID:tenantID:timestamp for backward compatibility)
-  const parts = payload.split(':');
-  let userID, tenantID, tier, tsStr;
-  if (parts.length === 4) {
-    [userID, tenantID, tier, tsStr] = parts;
-  } else if (parts.length === 3) {
-    [userID, tenantID, tsStr] = parts;
-    tier = 'free';
-  } else {
+  // Parse payload: v1|userID|tenantID|tier|issuedUnix|expiresUnix|issuer|audience
+  const parts = payload.toString('utf8').split('|');
+  if (parts.length !== 8) {
     return { error: 'Invalid payload format', status: 400 };
   }
+  const [version, userID, tokenTenantID, tier, issuedStr, expiresStr, issuer, audience] = parts;
 
-  const timestamp = parseInt(tsStr, 10);
-  if (isNaN(timestamp)) {
+  if (version !== SSO_VERSION) {
+    return { error: 'Invalid payload version', status: 401 };
+  }
+  if (issuer !== SSO_ISSUER) {
+    return { error: 'Invalid issuer', status: 401 };
+  }
+  if (audience !== tenantID) {
+    return { error: 'Invalid audience', status: 401 };
+  }
+  if (!tokenTenantID || tokenTenantID !== tenantID) {
+    return { error: 'Invalid tenant', status: 401 };
+  }
+  if (!userID) {
+    return { error: 'Invalid user', status: 401 };
+  }
+
+  const issuedUnix = parseInt(issuedStr, 10);
+  const expiresUnix = parseInt(expiresStr, 10);
+  if (isNaN(issuedUnix) || isNaN(expiresUnix)) {
     return { error: 'Invalid timestamp', status: 400 };
   }
 
-  // Check token TTL
+  // Check token TTL: now must fall within [issuedUnix, expiresUnix].
   const now = Math.floor(Date.now() / 1000);
-  if (Math.abs(now - timestamp) > SSO_MAX_AGE_SECONDS) {
+  if (now < issuedUnix || now > expiresUnix) {
     return { error: 'Token expired', status: 401 };
   }
 
-  return { ok: true, userID, tenantID, tier, timestamp };
+  return { ok: true, userID, tenantID: tokenTenantID, tier, issuedUnix, expiresUnix };
 }
 
 // --- Express handler ---
@@ -136,7 +195,7 @@ function ssoHandler(req, res) {
     return res.status(401).send(ssoErrorPage('Auth is not configured'));
   }
 
-  const result = verifySsoToken(req.query.token, DASHBOARD_TOKEN);
+  const result = verifySsoToken(req.query.token);
 
   if (result.error) {
     return res.status(result.status).send(ssoErrorPage(result.error));
